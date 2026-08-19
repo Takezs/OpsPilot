@@ -50,7 +50,11 @@
 - 创建：`.env.example`
 - 创建：`.github/workflows/ci.yml`
 
-- [ ] **步骤 1：编写失败的健康检查测试**
+- [ ] **步骤 1：创建 Python 项目配置并安装开发依赖**
+
+在 `pyproject.toml` 配置 Python 3.12、FastAPI、Pydantic Settings、SQLAlchemy async、Alembic、asyncpg、pgvector、Redis、ARQ、httpx、PyMuPDF、python-docx、PyJWT、pwdlib、OpenTelemetry，以及 pytest、pytest-asyncio、ruff、mypy、coverage、testcontainers。创建 `.venv` 并以 editable 模式安装开发依赖；本步骤只建立工具链，不实现应用行为。
+
+- [ ] **步骤 2：编写失败的健康检查测试**
 
 ```python
 from fastapi.testclient import TestClient
@@ -62,16 +66,16 @@ def test_health() -> None:
     assert response.json() == {"status": "ok"}
 ```
 
-- [ ] **步骤 2：运行并确认应用尚不存在**
+- [ ] **步骤 3：运行并确认应用尚不存在**
 
 运行：`cd backend && python -m pytest tests/test_health.py -q`
 预期：FAIL，`ModuleNotFoundError: opspilot`。
 
-- [ ] **步骤 3：创建 Python 项目与最小应用**
+- [ ] **步骤 4：创建最小应用**
 
-在 `pyproject.toml` 配置 Python 3.12、FastAPI、Pydantic Settings、SQLAlchemy async、Alembic、asyncpg、pgvector、Redis、ARQ、httpx、PyMuPDF、python-docx、PyJWT、pwdlib、OpenTelemetry，以及 pytest、pytest-asyncio、ruff、mypy、coverage、testcontainers。`main.py` 创建 `FastAPI(title="OpsPilot", version="0.1.0")` 和异步 `/health`。
+`main.py` 创建 `FastAPI(title="OpsPilot", version="0.1.0")` 和异步 `/health`。
 
-- [ ] **步骤 4：增加统一错误对象与配置**
+- [ ] **步骤 5：增加统一错误对象与配置**
 
 ```python
 class ApiError(BaseModel):
@@ -86,11 +90,11 @@ class ErrorResponse(BaseModel):
 
 配置必须从环境读取 `DATABASE_URL`、`REDIS_URL`、`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和模型名；`.env.example` 只放空值。
 
-- [ ] **步骤 5：建立质量命令并验证**
+- [ ] **步骤 6：建立质量命令并验证**
 
 `make check` 依次运行 `ruff check backend`、`ruff format --check backend`、`mypy backend/src` 和 `pytest --cov=opspilot`。运行 `make check`，预期全部通过。
 
-- [ ] **步骤 6：提交**
+- [ ] **步骤 7：提交**
 
 ```bash
 git add backend Makefile .env.example .github/workflows/ci.yml
