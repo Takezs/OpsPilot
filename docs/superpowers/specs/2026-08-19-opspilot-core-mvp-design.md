@@ -40,7 +40,7 @@ Vue Web 通过 REST 和 SSE 访问 FastAPI 模块化单体。FastAPI 包含 Auth
 
 - Auth 是所有受保护 API 的横切能力。Token 恢复 `user_id`、角色、部门集合和最大访问级别。
 - Knowledge 管理知识库、文档版本、原始文件和入库状态，不执行检索。
-- Retrieval 接收 Query 和 `KnowledgeScope`，在数据库检索阶段过滤权限，输出 Dense、FTS、RRF、Reranker 各阶段候选。它不调用 LLM。
+- Retrieval 接收已经确定的 Query 和 `KnowledgeScope`，在数据库检索阶段过滤权限，输出 Dense、FTS、RRF、Reranker 各阶段候选。它不调用 LLM。需要 LLM 的 Query Rewrite 由 Agent Orchestrator 调用 Generation Provider 完成，再把改写结果传给 Retrieval。
 - Generation 只消费 Context Builder 产出的上下文，不直接查询数据库。它调用 Chat Provider 并校验结构化引用。
 - Agent Orchestrator 决定检索、回答、追问或提出 Tool Call。它不能直接调用外部业务服务。
 - Tool Gateway 是 Agent 工具调用的唯一出口，由 Registry、Schema Validator、Policy Engine、Approval Service 和 Durable Executor 组成。
@@ -76,10 +76,12 @@ Vue Web 通过 REST 和 SSE 访问 FastAPI 模块化单体。FastAPI 包含 Auth
 
 ### 4.3 可靠执行
 
-- `tool_definitions`：名称、输入 Schema、风险级别、审批规则和是否支持核对。
+- `tool_definitions`：名称、输入 Schema、风险级别、审批规则、`effect`（`read_only` 或 `side_effect`）、幂等能力和是否支持核对。
 - `tool_operations`：Run、工具名、规范化参数、`arguments_hash`、服务端幂等键、状态、`version`、`claim_token`、`lease_owner`、`lease_expires_at`、Provider reference ID 和结果。
 - `operation_attempts`：Attempt 编号、脱敏且限长的请求、响应与错误。
 - `approval_requests`：Operation、参数哈希、Operation 版本、状态、审核人、意见和过期时间。
+- `event_outbox`：`run_id`、`seq`、投递状态、尝试次数和投递时间；只通知事件身份，不复制 Event payload。
+- `manual_review_resolutions`：原 Operation、管理员、处置结果、备注和关闭时间；用于审计关闭 MANUAL_REVIEW，不改变原 Operation 的终态事实。
 
 约束 `UNIQUE(tool_operations.tool_name, tool_operations.idempotency_key)`。幂等键必须由服务端根据规范化业务参数派生，例如退款使用 `refund:{order_id}`；不得信任 Agent 提供的幂等键。
 
@@ -98,7 +100,7 @@ Vue Web 通过 REST 和 SSE 访问 FastAPI 模块化单体。FastAPI 包含 Auth
 
 ### 5.2 查询链路
 
-用户身份 → `KnowledgeScope` → Query Rewrite → 数据库权限过滤 → Dense + PostgreSQL FTS → RRF → Reranker → Context Builder → DeepSeek 结构化回答 → Citation Validator → 返回答案。
+用户身份 → `KnowledgeScope` → Agent Orchestrator 按需调用 Generation Provider 完成 Query Rewrite → 数据库权限过滤 → Dense + PostgreSQL FTS → RRF → Reranker → Context Builder → DeepSeek 结构化回答 → Citation Validator → 返回答案。
 
 权限必须进入 Dense 和 FTS 的数据库查询条件。不能先检索机密 Chunk，再依靠 Prompt 隐藏。
 
@@ -120,17 +122,19 @@ Operation 与幂等键必须在审批前持久化。审批固定绑定 `operatio
 
 主要状态为 CREATED、VALIDATING、POLICY_CHECKING、WAITING_APPROVAL、READY、EXECUTING、RETRYING、OUTCOME_UNKNOWN、RECONCILING、SUCCEEDED、FAILED、DENIED、REJECTED 和 MANUAL_REVIEW。
 
-工具调用超时后先分类：明确未执行则 RETRYING；可能已经产生副作用则进入 OUTCOME_UNKNOWN，随后 RECONCILING。支付状态显示已退款则 SUCCEEDED，确认未退款则 RETRYING，无法确认则 MANUAL_REVIEW。进入结果不确定状态后禁止盲目再次退款。
+失败处理先读取 ToolDefinition 的 `effect`、幂等能力和 `supports_reconciliation`。只读工具可以对连接错误、429 和可重试 5xx 进行退避重试。副作用工具只有在 Provider 明确返回“未执行”或传输层能确定请求未送达时才能直接进入 RETRYING；读取响应超时、发送后连接中断和语义不明确的 5xx 都表示请求可能到达 Provider，必须进入 OUTCOME_UNKNOWN，随后 RECONCILING。支付状态显示已退款则 SUCCEEDED，核对确认未退款才允许 RETRYING，无法确认则 MANUAL_REVIEW。进入结果不确定状态后禁止盲目再次退款。
+
+MANUAL_REVIEW 是原 Operation 的终态。管理员可通过专用审计接口写入 `manual_review_resolutions`，将人工调查标记为已解决并记录处置说明，但原 Operation 仍保持 MANUAL_REVIEW。若管理员决定再次尝试，必须创建新的 Operation，重新派生幂等与参数哈希，并重新经过 Policy 和 Approval；禁止复用原 Operation 自动执行。
 
 ### 6.3 Claim/Lease 与 fencing
 
-ARQ 只负责投递，不提供业务级租约。Worker 通过 PostgreSQL 条件更新认领 Operation，更新 `version` 并生成不可复用的 `claim_token`，同时写入 `lease_owner` 和 `lease_expires_at`。提交结果时必须匹配当前 Operation 版本和 claim token。
+ARQ 只负责投递，不提供业务级租约。Worker 只能直接认领 READY 或 RETRYING 的 Operation，通过 PostgreSQL 条件更新增加 `version`、生成不可复用的 `claim_token`，同时写入 `lease_owner` 和 `lease_expires_at`。提交结果时必须匹配当前 Operation 版本和 claim token。
 
-旧 Worker 即使外部调用稍后返回，也不能覆盖新持有者的结果。长任务必须续租；续租失败或租约过期后，旧持有者立即失去数据库写权。外部调用返回的 Provider operation/reference ID 必须保存，以便 Reconciliation 查询真实状态。
+旧 Worker 即使外部调用稍后返回，也不能覆盖新持有者的数据库结果。长任务必须续租；续租失败或租约过期后，旧持有者立即失去数据库写权。fencing 本身不能阻止外部副作用重复，因此 EXECUTING 的租约过期后，新 Worker 不得直接再次调用副作用工具；它必须原子地把 Operation 转为 OUTCOME_UNKNOWN/RECONCILING，并使用 Provider operation/reference ID 或服务端业务幂等键查询真实状态。只有核对明确确认副作用不存在，状态才可转为 RETRYING 并重新认领执行。
 
 ### 6.4 事务与审计
 
-Operation 状态更新与对应 `run_event` 必须在同一个 PostgreSQL 事务提交，避免业务状态改变而时间线缺失。Redis 实时通知采用事务提交后发布或 Outbox；Redis 失败不能回滚 PostgreSQL 事实状态。
+MVP 固定采用 Transactional Outbox。每次 Operation 状态更新、对应 `run_event` 和 `event_outbox` row 必须在同一个 PostgreSQL 事务提交，避免业务状态、审计时间线和通知意图不一致。独立 Publisher 重试未投递 Outbox row，向 Redis 发布仅包含 `run_id + seq` 的通知，成功后幂等标记 delivered。Redis 发布失败不回滚 PostgreSQL 事实状态；Publisher 可安全重复发布，消费者按 `(run_id, seq)` 去重。
 
 Attempt、Journal、日志和 Trace 写入前必须脱敏并限制长度。API Key、Authorization Header、完整邮箱、手机号和其他完整 PII 不得进入这些载荷。
 
@@ -147,12 +151,13 @@ Attempt、Journal、日志和 Trace 写入前必须脱敏并限制长度。API K
 - `APPROVAL_EXPIRED`：409，不执行并要求重新发起审批。
 - `APPROVAL_VERSION_CONFLICT`：409，参数或 Operation 版本已变化。
 - `LEASE_CONFLICT`：Worker 放弃本次写入并重读，不暴露成用户 500。
+- `LEASE_EXPIRED_DURING_SIDE_EFFECT`：EXECUTING 租约过期且请求可能已送达，原子转入 OUTCOME_UNKNOWN/RECONCILING，禁止直接再次调用。
 - `OUTCOME_UNKNOWN`：状态查询明确显示核对待处理或进行中。
-- `MANUAL_REVIEW_REQUIRED`：只读终态，禁止自动重复副作用。
+- `MANUAL_REVIEW_REQUIRED`：原 Operation 的只读终态，禁止自动重复副作用；管理员只能记录审计处置，人工重试必须新建 Operation 并重新审批。
 
 ## 8. Run Journal 与 SSE
 
-SSE 的 `Last-Event-ID` 对应单个 Run 内的 `seq`。API 必须从 PostgreSQL 补历史，再切换到 Redis 实时通知，并通过订阅水位或等价算法处理补发与订阅窗口，不能丢事件。
+SSE 的 `Last-Event-ID` 对应单个 Run 内的 `seq`。SSE 服务先订阅该 Run 的 Redis 通知通道，再从 PostgreSQL 查询并发送 `seq > Last-Event-ID` 的历史事实事件。此后每个 Redis 通知只提供 `run_id + seq`，SSE 服务按 seq 从 PostgreSQL 读取事实 Event 并去重。服务同时周期性查询 PostgreSQL 的最大 seq；发现水位高于已发送连续 seq 时主动补拉缺失区间，因此即使 Redis 通知永久丢失也不会丢 Event。Redis 订阅先于历史补拉，补拉期间到达的通知先缓冲，历史发送完成后按 seq 归并。
 
 前端为每个 Run 维护 `expected_seq` 和乱序 `buffer`：
 
@@ -195,7 +200,7 @@ SSE 断线只显示正在重连，不把 Run 标记为失败。
 - Reranker 超时降级到 RRF；记录 `reranker_status=degraded`。
 - Embedding 或解析失败写入 Document 失败原因，重复任务不得产生重复 Chunk。
 - 无有效引用的事实型回答转为证据不足。
-- 权限拒绝、参数错误和业务拒绝不可重试；仅连接错误、429 和 5xx 可按策略退避重试。
+- 权限拒绝、参数错误和业务拒绝不可重试。只读工具可对连接错误、429 和明确可重试的 5xx 退避重试。副作用工具按“请求是否可能到达 Provider”分类：只有明确未送达或 Provider 明确未执行才能 RETRYING；任何可能已送达的失败必须 OUTCOME_UNKNOWN → RECONCILING，核对确认未产生副作用后才可 RETRYING。
 - 用户只看到安全摘要；管理员可查看脱敏、限长的诊断。
 
 ## 11. 测试策略与 MVP 验收
@@ -203,8 +208,8 @@ SSE 断线只显示正在重连，不把 Run 标记为失败。
 ### 11.1 测试层级
 
 - 单元测试：结构切分、RRF、引用校验、策略、幂等键派生、状态转换、脱敏、SSE buffer reducer。
-- PostgreSQL/Redis 集成：pgvector、PostgreSQL FTS、权限过滤、唯一约束、状态与 Event 原子提交、Claim/Lease/fencing、Outbox 或提交后发布。
-- 服务集成与故障注入：审批参数篡改、审批过期、timeout-before-effect、timeout-after-effect、Worker 重启、并发 Worker 与租约过期。
+- PostgreSQL/Redis 集成：pgvector、PostgreSQL FTS、权限过滤、唯一约束、Operation/Event/Outbox 原子提交、Outbox 重复发布、Redis 通知永久丢失后的 PG 水位补发、Claim/Lease/fencing。
+- 服务集成与故障注入：审批参数篡改、审批过期、只读工具退避重试、副作用请求明确未送达、未知 5xx、timeout-before-effect、timeout-after-effect、Worker 重启、并发 Worker 与租约过期。
 - Playwright E2E：上传、引用问答、审批退款、核对、时间线、SSE 断线/重复/乱序。
 
 ### 11.2 核心验收
@@ -215,7 +220,8 @@ SSE 断线只显示正在重连，不把 Run 标记为失败。
 - 超过阈值的退款在审批前不能执行，审批参数变化后原批准不能复用。
 - 10 个并发同语义退款只产生一个外部退款副作用，调用方获得同一 Operation。
 - timeout-after-effect 必须通过 Provider reference ID 或业务幂等键核对成功，不得再次退款。
-- Worker 或 API 重启后可从 PostgreSQL 恢复；旧 Worker 的迟到结果被 fencing 拒绝。
+- Worker 或 API 重启后可从 PostgreSQL 恢复；旧 Worker 的迟到数据库结果被 fencing 拒绝。
+- 旧 Worker 的退款调用已生效但 EXECUTING 租约过期时，新 Worker 接管必须先进入 RECONCILING 并确认已退款，外部退款记录仍只有一条。
 - Operation 状态与审计事件不存在单边提交。
 - SSE 在断线、重复、乱序和补发窗口下，客户端最终 seq 集合与 PostgreSQL 完全一致，每个事件只渲染一次。
 - `docker compose up --build` 在具备 Docker 环境后启动 Web、API、Worker、PostgreSQL、Redis 和演示服务。
