@@ -14,6 +14,8 @@ class FileStorage(Protocol):
 
     def open(self, storage_path: str) -> AbstractAsyncContextManager[BinaryIO]: ...
 
+    async def delete(self, storage_path: str) -> None: ...
+
 
 class VolumeFileStorage:
     allowed_suffixes = frozenset({".md", ".txt", ".pdf", ".docx"})
@@ -46,6 +48,12 @@ class VolumeFileStorage:
             yield content
 
         return await self.save(chunks(), suffix)
+
+    async def delete(self, storage_path: str) -> None:
+        path = Path(storage_path).resolve()  # noqa: ASYNC240
+        if path.parent != self.root:
+            raise InvalidFile("storage path escapes configured root")
+        path.unlink(missing_ok=True)  # noqa: ASYNC240
 
     @asynccontextmanager
     async def open(self, storage_path: str) -> AsyncIterator[BinaryIO]:

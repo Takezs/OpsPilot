@@ -45,8 +45,7 @@ def upgrade() -> None:
     op.create_index("ix_chunks_document_id", "chunks", ["document_id"])
     op.create_index("ix_chunks_embedding_cache_key", "chunks", ["embedding_cache_key"])
     op.execute(
-        "CREATE INDEX ix_chunks_embedding_hnsw ON chunks "
-        "USING hnsw (embedding vector_cosine_ops)"
+        "CREATE INDEX ix_chunks_embedding_hnsw ON chunks USING hnsw (embedding vector_cosine_ops)"
     )
     op.execute("CREATE INDEX ix_chunks_search_vector ON chunks USING gin (search_vector)")
 

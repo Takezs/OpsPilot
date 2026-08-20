@@ -16,7 +16,9 @@ class KnowledgeScope:
     max_access_level: AccessLevel
 
     def allows(self, department: str, access_level: AccessLevel) -> bool:
-        return department in self.departments and access_level <= self.max_access_level
+        return (
+            department in self.departments or "*" in self.departments
+        ) and access_level <= self.max_access_level
 
 
 @dataclass(frozen=True)

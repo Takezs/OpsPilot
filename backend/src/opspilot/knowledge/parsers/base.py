@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
-from typing import Protocol
+from typing import BinaryIO, Protocol
 
 
 class BlockKind(StrEnum):
@@ -19,4 +18,4 @@ class ParsedBlock:
 
 
 class DocumentParser(Protocol):
-    def parse(self, path: Path) -> list[ParsedBlock]: ...
+    def parse(self, stream: BinaryIO) -> list[ParsedBlock]: ...

@@ -18,6 +18,7 @@ class ChunkRecord:
     content: str
     section_path: list[str]
     token_count: int
+    page: int | None
     embedding: list[float]
     embedding_cache_key: str
 
@@ -57,6 +58,7 @@ class SqlAlchemyChunkSink:
                 content=record.content,
                 section_path=record.section_path,
                 token_count=record.token_count,
+                page=record.page,
                 embedding=record.embedding,
                 embedding_cache_key=record.embedding_cache_key,
             )
@@ -88,6 +90,7 @@ async def index_chunks(
                 content=chunk.content,
                 section_path=chunk.section_path,
                 token_count=chunk.token_count,
+                page=chunk.page,
                 embedding=embedding,
                 embedding_cache_key=embedding_cache_key(provider.model, chunk.content),
             )

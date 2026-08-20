@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from opspilot.config import Settings
 from opspilot.knowledge.embedding import DeterministicEmbeddingProvider
 from opspilot.knowledge.indexer import InMemoryChunkSink, index_chunks
 from opspilot.knowledge.parsers.base import BlockKind, ParsedBlock
+from opspilot.knowledge.storage import InvalidFile, VolumeFileStorage
 from opspilot.knowledge.tasks import index_document
 
 
@@ -16,7 +18,9 @@ async def test_indexer_batches_in_order_and_is_idempotent() -> None:
     provider = DeterministicEmbeddingProvider(dimensions=4)
     sink = InMemoryChunkSink()
     document_id = uuid.uuid4()
-    blocks = [ParsedBlock(BlockKind.PARAGRAPH, f"paragraph {index}") for index in range(7)]
+    blocks = [
+        ParsedBlock(BlockKind.PARAGRAPH, f"paragraph {index}", page=index) for index in range(7)
+    ]
 
     first_count = await index_chunks(document_id, blocks, provider, sink, batch_size=3)
     second_count = await index_chunks(document_id, blocks, provider, sink, batch_size=3)
@@ -28,6 +32,21 @@ async def test_indexer_batches_in_order_and_is_idempotent() -> None:
     assert all(
         record.embedding_cache_key.startswith(f"{provider.model}:") for record in sink.records
     )
+
+
+@pytest.mark.asyncio
+async def test_indexer_preserves_source_page() -> None:
+    provider = DeterministicEmbeddingProvider(dimensions=4)
+    sink = InMemoryChunkSink()
+
+    await index_chunks(
+        uuid.uuid4(),
+        [ParsedBlock(BlockKind.PARAGRAPH, "page citation", page=7)],
+        provider,
+        sink,
+    )
+
+    assert sink.records[0].page == 7
 
 
 @pytest.mark.integration
@@ -72,6 +91,28 @@ async def test_pgvector_chunk_and_fts_are_queryable() -> None:
         )
         assert matches == 1
         assert distance == 0
+        indexes = {
+            row["indexname"]
+            for row in await connection.fetch(
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'chunks'"
+            )
+        }
+        assert {"ix_chunks_embedding_hnsw", "ix_chunks_search_vector"} <= indexes
+        await connection.execute(
+            "UPDATE chunks SET content = 'exchange policy' WHERE document_id = $1", document_id
+        )
+        assert (
+            await connection.fetchval(
+                "SELECT search_vector @@ plainto_tsquery('simple', 'exchange') "
+                "FROM chunks WHERE document_id = $1",
+                document_id,
+            )
+            is True
+        )
+        assert (
+            await connection.fetchval("SELECT page FROM chunks WHERE document_id = $1", document_id)
+            is None
+        )
     finally:
         await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
         await connection.close()
@@ -102,7 +143,10 @@ async def test_worker_reads_storage_path_and_reaches_ready(tmp_path: Path) -> No
             str(source),
         )
         await index_document(
-            {"embedding_provider": DeterministicEmbeddingProvider(dimensions=1024)},
+            {
+                "embedding_provider": DeterministicEmbeddingProvider(dimensions=1024),
+                "file_storage": VolumeFileStorage(tmp_path),
+            },
             str(document_id),
         )
         status = await connection.fetchval(
@@ -113,6 +157,97 @@ async def test_worker_reads_storage_path_and_reaches_ready(tmp_path: Path) -> No
         )
         assert status == "READY"
         assert chunk_count == 1
+    finally:
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_jobs_converge_to_ready(tmp_path: Path) -> None:
+    source = tmp_path / "concurrent.md"
+    source.write_text("# Policy\nConcurrent indexing is safe.", encoding="utf-8")  # noqa: ASYNC240
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    knowledge_base_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    await connection.execute(
+        "INSERT INTO knowledge_bases (id, name, department, access_level) "
+        "VALUES ($1, $2, 'support', 1)",
+        knowledge_base_id,
+        f"concurrent-kb-{knowledge_base_id}",
+    )
+    await connection.execute(
+        "INSERT INTO documents "
+        "(id, knowledge_base_id, title, version, content_sha256, storage_path, status) "
+        "VALUES ($1, $2, 'concurrent', 1, $3, $4, 'UPLOADED')",
+        document_id,
+        knowledge_base_id,
+        uuid.uuid4().hex.ljust(64, "0"),
+        str(source),
+    )
+    context = {
+        "embedding_provider": DeterministicEmbeddingProvider(dimensions=1024),
+        "file_storage": VolumeFileStorage(tmp_path),
+    }
+    try:
+        results = await asyncio.gather(
+            index_document(context, str(document_id)),
+            index_document(context, str(document_id)),
+            return_exceptions=True,
+        )
+        assert results == [None, None]
+        assert (
+            await connection.fetchval("SELECT status FROM documents WHERE id = $1", document_id)
+            == "READY"
+        )
+        assert (
+            await connection.fetchval(
+                "SELECT count(*) FROM chunks WHERE document_id = $1", document_id
+            )
+            == 1
+        )
+    finally:
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_worker_rejects_storage_path_outside_root(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    outside = tmp_path / "outside.md"
+    outside.write_text("must not be read", encoding="utf-8")  # noqa: ASYNC240
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    knowledge_base_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    await connection.execute(
+        "INSERT INTO knowledge_bases (id, name, department, access_level) "
+        "VALUES ($1, $2, 'support', 1)",
+        knowledge_base_id,
+        f"escape-kb-{knowledge_base_id}",
+    )
+    await connection.execute(
+        "INSERT INTO documents "
+        "(id, knowledge_base_id, title, version, content_sha256, storage_path, status) "
+        "VALUES ($1, $2, 'escape', 1, $3, $4, 'UPLOADED')",
+        document_id,
+        knowledge_base_id,
+        uuid.uuid4().hex.ljust(64, "0"),
+        str(outside),
+    )
+    try:
+        with pytest.raises(InvalidFile, match="escapes"):
+            await index_document(
+                {
+                    "embedding_provider": DeterministicEmbeddingProvider(dimensions=1024),
+                    "file_storage": VolumeFileStorage(root),
+                },
+                str(document_id),
+            )
+        assert (
+            await connection.fetchval("SELECT status FROM documents WHERE id = $1", document_id)
+            == "FAILED"
+        )
     finally:
         await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
         await connection.close()

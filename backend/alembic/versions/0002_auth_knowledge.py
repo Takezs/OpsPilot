@@ -14,8 +14,14 @@ depends_on: str | Sequence[str] | None = None
 
 user_role = postgresql.ENUM("USER", "REVIEWER", "ADMIN", name="user_role", create_type=False)
 document_status = postgresql.ENUM(
-    "UPLOADED", "PARSING", "CHUNKING", "INDEXING", "READY", "FAILED",
-    name="document_status", create_type=False,
+    "UPLOADED",
+    "PARSING",
+    "CHUNKING",
+    "INDEXING",
+    "READY",
+    "FAILED",
+    name="document_status",
+    create_type=False,
 )
 
 

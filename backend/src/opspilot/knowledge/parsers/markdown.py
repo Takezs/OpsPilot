@@ -1,10 +1,10 @@
-from pathlib import Path
+from typing import BinaryIO
 
 from opspilot.knowledge.parsers.base import BlockKind, ParsedBlock
 
 
 class MarkdownParser:
-    def parse(self, path: Path) -> list[ParsedBlock]:
+    def parse(self, stream: BinaryIO) -> list[ParsedBlock]:
         blocks: list[ParsedBlock] = []
         paragraph: list[str] = []
 
@@ -13,7 +13,7 @@ class MarkdownParser:
                 blocks.append(ParsedBlock(BlockKind.PARAGRAPH, " ".join(paragraph)))
                 paragraph.clear()
 
-        for raw_line in path.read_text(encoding="utf-8").splitlines():
+        for raw_line in stream.read().decode("utf-8").splitlines():
             line = raw_line.strip()
             if not line:
                 flush()
