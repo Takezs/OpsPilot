@@ -8,14 +8,20 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from opspilot.auth.dependencies import get_current_principal
 from opspilot.auth.schemas import Principal
 from opspilot.config import Settings
 from opspilot.db import get_session
-from opspilot.knowledge.models import Document, DocumentStatus, KnowledgeBase
+from opspilot.knowledge.models import (
+    Document,
+    DocumentIndexOutbox,
+    DocumentStatus,
+    KnowledgeBase,
+)
 from opspilot.knowledge.schemas import AccessLevel
 from opspilot.knowledge.storage import FileStorage, InvalidFile, VolumeFileStorage
 
@@ -23,15 +29,15 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 
 class DocumentQueue(Protocol):
-    async def enqueue_document(self, document_id: str) -> None: ...
+    async def enqueue_document(self, document_id: str, job_id: str) -> None: ...
 
 
 class ArqDocumentQueue:
     def __init__(self, redis: ArqRedis) -> None:
         self.redis = redis
 
-    async def enqueue_document(self, document_id: str) -> None:
-        await self.redis.enqueue_job("index_document", document_id)
+    async def enqueue_document(self, document_id: str, job_id: str) -> None:
+        await self.redis.enqueue_job("index_document", document_id, _job_id=job_id)
 
 
 class UploadResponse(BaseModel):
@@ -63,7 +69,6 @@ async def upload_document(
     file: Annotated[UploadFile, File()],
     principal: Annotated[Principal, Depends(get_current_principal)],
     storage: Annotated[FileStorage, Depends(get_file_storage)],
-    queue: Annotated[DocumentQueue, Depends(get_document_queue)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> UploadResponse:
     knowledge_base = await session.get(KnowledgeBase, knowledge_base_id)
@@ -86,6 +91,10 @@ async def upload_document(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(error)) from error
 
     content_sha256 = digest.hexdigest()
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"document-upload:{knowledge_base_id}"},
+    )
     duplicate = await session.scalar(
         select(Document.id).where(
             Document.knowledge_base_id == knowledge_base_id,
@@ -93,6 +102,7 @@ async def upload_document(
         )
     )
     if duplicate is not None:
+        await session.rollback()
         await storage.delete(storage_path)
         raise HTTPException(status.HTTP_409_CONFLICT, "document content already exists")
     latest_version = await session.scalar(
@@ -101,7 +111,9 @@ async def upload_document(
             Document.title == title,
         )
     )
+    document_id = uuid.uuid4()
     document = Document(
+        id=document_id,
         knowledge_base_id=knowledge_base_id,
         title=title,
         version=int(latest_version or 0) + 1,
@@ -110,7 +122,17 @@ async def upload_document(
         status=DocumentStatus.UPLOADED,
     )
     session.add(document)
-    await session.commit()
-    await session.refresh(document)
-    await queue.enqueue_document(str(document.id))
+    session.add(
+        DocumentIndexOutbox(
+            document_id=document_id,
+            job_id=f"document-index:{document_id}",
+        )
+    )
+    try:
+        await session.commit()
+        await session.refresh(document)
+    except IntegrityError as error:
+        await session.rollback()
+        await storage.delete(storage_path)
+        raise HTTPException(status.HTTP_409_CONFLICT, "document upload conflicts") from error
     return UploadResponse(document_id=document.id, version=document.version, status=document.status)

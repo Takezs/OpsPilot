@@ -2,14 +2,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from opspilot.config import Settings
 from opspilot.db import engine
 from opspilot.knowledge.embedding import BgeM3EmbeddingProvider, EmbeddingProvider
 from opspilot.knowledge.indexer import SqlAlchemyChunkSink, index_chunks
-from opspilot.knowledge.models import Document, DocumentStatus
+from opspilot.knowledge.models import Chunk, Document, DocumentStatus
 from opspilot.knowledge.parsers.base import DocumentParser
 from opspilot.knowledge.parsers.docx import DocxParser
 from opspilot.knowledge.parsers.markdown import MarkdownParser
@@ -31,7 +31,11 @@ def parser_for(path: Path) -> DocumentParser:
 
 
 async def index_document(ctx: dict[str, Any], document_id: str) -> None:
-    """ARQ entry point; the queue payload contains only document_id."""
+    """Index one immutable source document.
+
+    Intermediate states are crash-recoverable and rebuild from scratch under the document lock.
+    FAILED requires an explicit ``allow_failed_retry`` context flag.
+    """
     identifier = uuid.UUID(document_id)
     lock_statement = text("SELECT pg_advisory_lock(hashtextextended(:document_id, 0))")
     unlock_statement = text("SELECT pg_advisory_unlock(hashtextextended(:document_id, 0))")
@@ -45,10 +49,20 @@ async def index_document(ctx: dict[str, Any], document_id: str) -> None:
                     raise ValueError("document not found")
                 if document.status == DocumentStatus.READY:
                     return
-                if document.status != DocumentStatus.UPLOADED:
+                recoverable = {
+                    DocumentStatus.UPLOADED,
+                    DocumentStatus.PARSING,
+                    DocumentStatus.CHUNKING,
+                    DocumentStatus.INDEXING,
+                }
+                if document.status == DocumentStatus.FAILED and ctx.get("allow_failed_retry"):
+                    recoverable.add(DocumentStatus.FAILED)
+                if document.status not in recoverable:
                     return
                 try:
+                    await session.execute(delete(Chunk).where(Chunk.document_id == identifier))
                     document.status = DocumentStatus.PARSING
+                    document.failure_reason = None
                     await session.commit()
                     settings = Settings()
                     storage: FileStorage = ctx.get("file_storage") or VolumeFileStorage(

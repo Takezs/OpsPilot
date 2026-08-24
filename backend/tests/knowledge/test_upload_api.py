@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from pathlib import Path
 
@@ -17,15 +18,15 @@ from opspilot.main import app
 
 class RecordingQueue:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, str]]] = []
+        self.calls: list[tuple[str, str]] = []
 
-    async def enqueue_document(self, document_id: str) -> None:
-        self.calls.append(("index_document", {"document_id": document_id}))
+    async def enqueue_document(self, document_id: str, job_id: str) -> None:
+        self.calls.append((document_id, job_id))
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_upload_persists_versions_and_enqueues_id_only(tmp_path: Path) -> None:
+async def test_upload_persists_versions_and_outbox_intents(tmp_path: Path) -> None:
     connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
     knowledge_base_id = uuid.uuid4()
     await connection.execute(
@@ -59,8 +60,7 @@ async def test_upload_persists_versions_and_enqueues_id_only(tmp_path: Path) -> 
         assert first.status_code == 202
         assert second.status_code == 202
         assert [first.json()["version"], second.json()["version"]] == [1, 2]
-        assert len(queue.calls) == 2
-        assert all(set(payload) == {"document_id"} for _, payload in queue.calls)
+        assert queue.calls == []
         rows = await connection.fetch(
             "SELECT version, storage_path FROM documents WHERE knowledge_base_id = $1 "
             "ORDER BY version",
@@ -70,6 +70,15 @@ async def test_upload_persists_versions_and_enqueues_id_only(tmp_path: Path) -> 
         assert all(
             Path(row["storage_path"]).parent == tmp_path.resolve()  # noqa: ASYNC240
             for row in rows
+        )
+        assert (
+            await connection.fetchval(
+                "SELECT count(*) FROM document_index_outbox "
+                "WHERE document_id IN "
+                "(SELECT id FROM documents WHERE knowledge_base_id = $1)",
+                knowledge_base_id,
+            )
+            == 2
         )
     finally:
         app.dependency_overrides.clear()
@@ -146,8 +155,104 @@ async def test_upload_rejects_duplicate_sha_without_queueing(tmp_path: Path) -> 
             )
         assert first.status_code == 202
         assert duplicate.status_code == 409
-        assert len(queue.calls) == 1
+        assert queue.calls == []
         assert len(list(tmp_path.iterdir())) == 1  # noqa: ASYNC240
+    finally:
+        app.dependency_overrides.clear()
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_concurrent_same_content_creates_one_document_and_one_file(tmp_path: Path) -> None:
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    knowledge_base_id = uuid.uuid4()
+    await connection.execute(
+        "INSERT INTO knowledge_bases (id, name, department, access_level) "
+        "VALUES ($1, $2, 'support', 1)",
+        knowledge_base_id,
+        f"same-content-kb-{knowledge_base_id}",
+    )
+    principal = Principal(
+        user_id=str(uuid.uuid4()),
+        role=Role.USER,
+        allowed_departments=frozenset({"support"}),
+        max_access_level=AccessLevel.INTERNAL,
+    )
+    app.dependency_overrides[get_current_principal] = lambda: principal
+    app.dependency_overrides[get_file_storage] = lambda: VolumeFileStorage(tmp_path)
+    app.dependency_overrides[get_document_queue] = RecordingQueue
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            responses = await asyncio.gather(
+                client.post(
+                    f"/api/v1/knowledge/{knowledge_base_id}/documents",
+                    data={"title": "Concurrent"},
+                    files={"file": ("one.md", b"same bytes", "text/markdown")},
+                ),
+                client.post(
+                    f"/api/v1/knowledge/{knowledge_base_id}/documents",
+                    data={"title": "Concurrent"},
+                    files={"file": ("two.md", b"same bytes", "text/markdown")},
+                ),
+            )
+        assert sorted(response.status_code for response in responses) == [202, 409]
+        assert (
+            await connection.fetchval(
+                "SELECT count(*) FROM documents WHERE knowledge_base_id = $1", knowledge_base_id
+            )
+            == 1
+        )
+        assert len(list(tmp_path.iterdir())) == 1  # noqa: ASYNC240
+    finally:
+        app.dependency_overrides.clear()
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_concurrent_same_title_assigns_contiguous_versions(tmp_path: Path) -> None:
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    knowledge_base_id = uuid.uuid4()
+    await connection.execute(
+        "INSERT INTO knowledge_bases (id, name, department, access_level) "
+        "VALUES ($1, $2, 'support', 1)",
+        knowledge_base_id,
+        f"version-kb-{knowledge_base_id}",
+    )
+    principal = Principal(
+        user_id=str(uuid.uuid4()),
+        role=Role.USER,
+        allowed_departments=frozenset({"support"}),
+        max_access_level=AccessLevel.INTERNAL,
+    )
+    app.dependency_overrides[get_current_principal] = lambda: principal
+    app.dependency_overrides[get_file_storage] = lambda: VolumeFileStorage(tmp_path)
+    app.dependency_overrides[get_document_queue] = RecordingQueue
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            responses = await asyncio.gather(
+                client.post(
+                    f"/api/v1/knowledge/{knowledge_base_id}/documents",
+                    data={"title": "Versioned"},
+                    files={"file": ("one.md", b"version a", "text/markdown")},
+                ),
+                client.post(
+                    f"/api/v1/knowledge/{knowledge_base_id}/documents",
+                    data={"title": "Versioned"},
+                    files={"file": ("two.md", b"version b", "text/markdown")},
+                ),
+            )
+        assert [response.status_code for response in responses] == [202, 202]
+        assert sorted(response.json()["version"] for response in responses) == [1, 2]
+        rows = await connection.fetch(
+            "SELECT version FROM documents WHERE knowledge_base_id = $1 ORDER BY version",
+            knowledge_base_id,
+        )
+        assert [row["version"] for row in rows] == [1, 2]
+        assert len(list(tmp_path.iterdir())) == 2  # noqa: ASYNC240
     finally:
         app.dependency_overrides.clear()
         await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
