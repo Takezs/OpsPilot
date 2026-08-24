@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Sequence
 
 import asyncpg
 import pytest
@@ -6,7 +7,7 @@ import pytest
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.knowledge.embedding import DeterministicEmbeddingProvider
-from opspilot.knowledge.models import Chunk, Document, KnowledgeBase
+from opspilot.knowledge.models import Chunk, Document, DocumentStatus, KnowledgeBase
 from opspilot.knowledge.schemas import AccessLevel, KnowledgeScope
 from opspilot.retrieval.dense import dense_search
 from opspilot.retrieval.fts import fts_search
@@ -43,12 +44,14 @@ async def seed_scope_fixture() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UU
         version=1,
         content_sha256=uuid.uuid4().hex,
         storage_path="/tmp/finance.md",
+        status=DocumentStatus.READY,
     )
     support_doc = Document(
         title="support policy",
         version=1,
         content_sha256=uuid.uuid4().hex,
         storage_path="/tmp/support.md",
+        status=DocumentStatus.READY,
     )
     finance_chunk = Chunk(
         position=0,
@@ -79,12 +82,13 @@ async def seed_scope_fixture() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UU
     return finance_chunk.id, support_chunk.id, finance_kb.id, support_kb.id
 
 
-async def cleanup_knowledge_bases(kb_ids: tuple[uuid.UUID, uuid.UUID]) -> None:
+async def cleanup_knowledge_bases(kb_ids: Sequence[uuid.UUID]) -> None:
     connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
     try:
-        await connection.execute(
-            "DELETE FROM knowledge_bases WHERE id IN ($1, $2)", kb_ids[0], kb_ids[1]
-        )
+        if kb_ids:
+            await connection.execute(
+                "DELETE FROM knowledge_bases WHERE id = ANY($1::uuid[])", list(kb_ids)
+            )
     finally:
         await connection.close()
 
@@ -141,3 +145,139 @@ async def test_elevated_scope_returns_confidential_chunks() -> None:
         assert str(support_chunk_id) in chunk_ids(fts)
     finally:
         await cleanup_knowledge_bases((finance_kb_id, support_kb_id))
+
+
+ALL_STATUSES = [
+    DocumentStatus.UPLOADED,
+    DocumentStatus.PARSING,
+    DocumentStatus.CHUNKING,
+    DocumentStatus.INDEXING,
+    DocumentStatus.READY,
+    DocumentStatus.FAILED,
+]
+
+
+async def seed_status_fixture() -> tuple[uuid.UUID, uuid.UUID, set[uuid.UUID]]:
+    """Seed one support KB with six documents (one per status), each holding one chunk.
+
+    Every chunk carries the query term so the SQL ``Document.status == READY``
+    predicate is what excludes non-READY documents from candidate results.
+    """
+    provider = DeterministicEmbeddingProvider(dimensions=1024)
+    content = "refund policy for status verification"
+    embedding = (await _embed(provider, [content]))[0]
+    knowledge_base = KnowledgeBase(
+        name=f"status-kb-{uuid.uuid4()}",
+        department="support",
+        access_level=int(AccessLevel.INTERNAL),
+    )
+    ready_chunk_id = uuid.uuid4()
+    non_ready_chunk_ids: set[uuid.UUID] = set()
+    for position, status in enumerate(ALL_STATUSES):
+        chunk_id = ready_chunk_id if status is DocumentStatus.READY else uuid.uuid4()
+        if status is not DocumentStatus.READY:
+            non_ready_chunk_ids.add(chunk_id)
+        document = Document(
+            id=uuid.uuid4(),
+            title=f"status-doc-{status.value.lower()}",
+            version=1,
+            content_sha256=uuid.uuid4().hex,
+            storage_path="/tmp/status.md",
+            status=status,
+        )
+        chunk = Chunk(
+            id=chunk_id,
+            position=position,
+            content=content,
+            section_path=[],
+            token_count=10,
+            page=1,
+            embedding=embedding,
+            embedding_cache_key=f"det:{uuid.uuid4().hex}",
+        )
+        document.chunks.append(chunk)
+        knowledge_base.documents.append(document)
+
+    async with async_session_factory() as session:
+        session.add(knowledge_base)
+        await session.commit()
+    return knowledge_base.id, ready_chunk_id, non_ready_chunk_ids
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_only_ready_documents_are_retrievable() -> None:
+    knowledge_base_id, ready_chunk_id, non_ready_chunk_ids = await seed_status_fixture()
+    provider = DeterministicEmbeddingProvider(dimensions=1024)
+    scope = KnowledgeScope(frozenset({"support"}), AccessLevel.INTERNAL)
+    query_vector = (await _embed(provider, [QUERY]))[0]
+    try:
+        async with async_session_factory() as session:
+            dense = await dense_search(session, query_vector, scope)
+            fts = await fts_search(session, QUERY, scope)
+
+        assert str(ready_chunk_id) in chunk_ids(dense)
+        assert str(ready_chunk_id) in chunk_ids(fts)
+        assert not (chunk_ids(dense) & {str(cid) for cid in non_ready_chunk_ids})
+        assert not (chunk_ids(fts) & {str(cid) for cid in non_ready_chunk_ids})
+    finally:
+        await cleanup_knowledge_bases([knowledge_base_id])
+
+
+async def seed_tie_fixture() -> tuple[uuid.UUID, list[uuid.UUID]]:
+    """Seed two READY documents with byte-identical chunks so Dense/FTS scores tie."""
+    provider = DeterministicEmbeddingProvider(dimensions=1024)
+    content = "exact duplicate refund policy text"
+    embedding = (await _embed(provider, [content]))[0]
+    chunk_ids = [uuid.uuid4(), uuid.uuid4()]
+    knowledge_base = KnowledgeBase(
+        name=f"tie-kb-{uuid.uuid4()}",
+        department="support",
+        access_level=int(AccessLevel.INTERNAL),
+    )
+    for position, chunk_id in enumerate(chunk_ids):
+        document = Document(
+            id=uuid.uuid4(),
+            title=f"tie-doc-{position}",
+            version=1,
+            content_sha256=uuid.uuid4().hex,
+            storage_path="/tmp/tie.md",
+            status=DocumentStatus.READY,
+        )
+        chunk = Chunk(
+            id=chunk_id,
+            position=0,
+            content=content,
+            section_path=[],
+            token_count=10,
+            page=1,
+            embedding=embedding,
+            embedding_cache_key=f"det:{uuid.uuid4().hex}",
+        )
+        document.chunks.append(chunk)
+        knowledge_base.documents.append(document)
+
+    async with async_session_factory() as session:
+        session.add(knowledge_base)
+        await session.commit()
+        knowledge_base_id = knowledge_base.id
+    return knowledge_base_id, chunk_ids
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_tied_scores_order_stably_by_chunk_id() -> None:
+    knowledge_base_id, chunk_ids = await seed_tie_fixture()
+    provider = DeterministicEmbeddingProvider(dimensions=1024)
+    scope = KnowledgeScope(frozenset({"support"}), AccessLevel.INTERNAL)
+    query_vector = (await _embed(provider, ["exact duplicate refund policy text"]))[0]
+    expected = [str(chunk_id) for chunk_id in sorted(chunk_ids)]
+    try:
+        async with async_session_factory() as session:
+            dense = await dense_search(session, query_vector, scope)
+            fts = await fts_search(session, "exact duplicate refund policy text", scope)
+
+        assert [candidate.chunk_id for candidate in dense] == expected
+        assert [candidate.chunk_id for candidate in fts] == expected
+    finally:
+        await cleanup_knowledge_bases([knowledge_base_id])

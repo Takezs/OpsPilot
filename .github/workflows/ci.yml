@@ -7,6 +7,32 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: opspilot
+          POSTGRES_USER: opspilot
+          POSTGRES_PASSWORD: opspilot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U opspilot -d opspilot"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      DATABASE_URL: postgresql+asyncpg://opspilot:opspilot@localhost:5432/opspilot
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -15,5 +41,33 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - run: python -m pip install -e "backend[dev]"
-      - run: make check
+      - name: Verify PostgreSQL and Redis health
+        run: |
+          python - <<'EOF'
+          import asyncio
 
+          import asyncpg
+          import redis
+
+          async def check_postgres() -> None:
+              connection = await asyncpg.connect(
+                  "postgresql://opspilot:opspilot@localhost:5432/opspilot"
+              )
+              assert await connection.fetchval("SELECT 1") == 1
+              rows = await connection.fetch("SELECT extname FROM pg_extension")
+              assert {"vector", "pgcrypto"} <= {row["extname"] for row in rows}
+              await connection.close()
+
+          async def main() -> None:
+              await check_postgres()
+              assert redis.Redis.from_url("redis://localhost:6379/0").ping()
+              print("postgres and redis health checks passed")
+
+          asyncio.run(main())
+          EOF
+      - name: Run database migrations
+        run: python -m alembic -c backend/alembic.ini upgrade head
+      - name: Verify migration head
+        run: python -m alembic -c backend/alembic.ini current
+      - name: Run quality gates and full test suite
+        run: make check

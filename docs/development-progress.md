@@ -70,15 +70,24 @@
 
 ## 当前验证基线
 
-任务 5 完成并复审时的真实结果：
+任务 5 复审修复后的真实结果：
 
-- 完整测试：`69 passed in 19.55s`（M1 基线 63 + fusion 4 + scope 集成 2）。
-- Ruff format：63 个文件格式正确。
+- 完整测试：`72 passed`（M1 基线 63 + fusion 4 + scope 集成 2 + READY 状态 1 + 稳定排序 1 + effective_at 上传 1）。
+- Ruff format：64 个文件格式正确。
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：38 个源文件无问题。
-- Alembic：`0008_document_retry_lifecycle (head)`。
+- Alembic：`0009_document_effective_at (head)`；0001→0009 全链在全新数据库验证通过。
 - PostgreSQL：healthy，`pg_isready` 为 accepting connections。
 - Redis：healthy，`redis-cli ping` 返回 `PONG`。
+
+### 任务 5 复审修复
+
+- Dense/FTS 候选 SQL 现在同时过滤 `KnowledgeScope` 与 `Document.status == READY`；真实 PG 集成测试覆盖六种状态，仅 READY 可检索，非 READY（UPLOADED/PARSING/CHUNKING/INDEXING/FAILED）均在候选层被排除。
+- Dense 与 FTS 相同分数按 `chunk_id` 稳定排序，保证跨运行结果确定。
+- GitHub CI 启动 PostgreSQL/pgvector 与 Redis 服务，执行健康检查与 Alembic upgrade head 后再运行完整测试（含集成）。
+- 明确权限为 KB 级：部门与访问级别定义在 KnowledgeBase，文档继承；规格、模型、上传与测试已同步。
+- Document 增加 `effective_at`（默认上传时间），新增 `0009_document_effective_at` 迁移。
+- 实现计划中任务 7/9/16 的固定迁移文件名（0004/0005/0006）已移除，改为基于当前 head 生成新 revision。
 
 ## 下一步：M2 / 任务 6
 

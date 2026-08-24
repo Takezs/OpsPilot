@@ -25,6 +25,8 @@
 
 每个任务严格执行 Red → Green → Refactor → Commit。未安装 Docker 时只执行纯单元步骤；任务 2 开始前必须安装 Docker Desktop，并以真实 PostgreSQL/pgvector 与 Redis 完成集成验证，禁止用 SQLite 替代。API Key 只写入未跟踪的 `.env`。
 
+新增数据库变更必须基于当前 Alembic head 执行 `alembic revision` 生成新 revision 文件，并保持 `backend/alembic/versions/` 内的顺序编号一致；禁止使用本文档历史步骤中残留的 `0004/0005/0006` 等固定迁移文件名——这些编号已被现有迁移（`0004_user_knowledge_scope`、`0005_chunk_page`、`0006_document_index_outbox`）占用。
+
 ## 文件结构
 
 - `backend/src/opspilot/api/`：路由组装、统一响应与错误映射。
@@ -310,7 +312,7 @@ git commit -m "feat: answer with reranked verified citations"
 
 **文件：**
 - 创建：`backend/src/opspilot/runs/models.py`、`journal.py`、`outbox.py`
-- 创建：`backend/alembic/versions/0004_runs_outbox.py`
+- 创建：`backend/alembic/versions/` 下基于当前 head 生成的新 revision（禁止使用固定名称 `0004_runs_outbox.py`）
 - 创建：`backend/tests/runs/test_journal.py`
 - 创建：`backend/tests/integration/test_outbox.py`
 
@@ -331,7 +333,7 @@ Publisher 使用 `FOR UPDATE SKIP LOCKED` 获取未投递 row，只向 Redis 发
 运行：`cd backend && pytest tests/runs tests/integration/test_outbox.py -q`。预期 PASS。
 
 ```bash
-git add backend/src/opspilot/runs backend/alembic/versions/0004_runs_outbox.py backend/tests/runs backend/tests/integration/test_outbox.py
+git add backend/src/opspilot/runs backend/alembic/versions backend/tests/runs backend/tests/integration/test_outbox.py
 git commit -m "feat: persist run events with transactional outbox"
 ```
 
@@ -371,7 +373,7 @@ git commit -m "feat: orchestrate bounded registered tools"
 **文件：**
 - 创建：`backend/src/opspilot/execution/models.py`、`policy.py`、`idempotency.py`
 - 创建：`backend/src/opspilot/approvals/models.py`、`schemas.py`、`service.py`、`router.py`
-- 创建：`backend/alembic/versions/0005_operations_approvals.py`
+- 创建：`backend/alembic/versions/` 下基于当前 head 生成的新 revision（禁止使用固定名称 `0005_operations_approvals.py`）
 - 创建：`backend/tests/execution/test_policy.py`
 - 创建：`backend/tests/approvals/test_approval.py`
 
@@ -396,7 +398,7 @@ MANUAL_REVIEW 保持终态；管理员只能创建 `manual_review_resolutions`�
 运行：`cd backend && pytest tests/execution/test_policy.py tests/approvals -q`。预期 PASS。
 
 ```bash
-git add backend/src/opspilot/execution backend/src/opspilot/approvals backend/alembic/versions/0005_operations_approvals.py backend/tests/execution backend/tests/approvals
+git add backend/src/opspilot/execution backend/src/opspilot/approvals backend/alembic/versions backend/tests/execution backend/tests/approvals
 git commit -m "feat: bind durable approvals to immutable operations"
 ```
 
@@ -588,7 +590,7 @@ git commit -m "feat: deliver auditable approval refund workflow"
 **文件：**
 - 创建：`evaluation/datasets/dev.jsonl`、`test.jsonl`、`agent_tasks.jsonl`、`attacks.jsonl`
 - 创建：`backend/src/opspilot/evaluation/models.py`、`schemas.py`、`retrieval_metrics.py`、`answer_metrics.py`、`agent_metrics.py`、`reliability_metrics.py`
-- 创建：`backend/alembic/versions/0006_evaluation.py`
+- 创建：`backend/alembic/versions/` 下基于当前 head 生成的新 revision（禁止使用固定名称 `0006_evaluation.py`）
 - 创建：`backend/tests/evaluation/test_schema.py`、`test_metrics.py`
 
 - [ ] **步骤 1：编写数据集 Schema 测试**
@@ -612,7 +614,7 @@ dev 60、test 140，攻击集独立；最终 test 集在参数冻结前禁止运
 运行：`cd backend && pytest tests/evaluation/test_schema.py tests/evaluation/test_metrics.py -q`。预期 PASS。
 
 ```bash
-git add evaluation/datasets backend/src/opspilot/evaluation backend/alembic/versions/0006_evaluation.py backend/tests/evaluation
+git add evaluation/datasets backend/src/opspilot/evaluation backend/alembic/versions backend/tests/evaluation
 git commit -m "test: add versioned opspilot evaluation corpus"
 ```
 

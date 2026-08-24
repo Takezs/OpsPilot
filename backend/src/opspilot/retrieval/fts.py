@@ -3,7 +3,7 @@
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from opspilot.knowledge.models import Chunk, Document, KnowledgeBase
+from opspilot.knowledge.models import Chunk, Document, DocumentStatus, KnowledgeBase
 from opspilot.knowledge.schemas import KnowledgeScope
 from opspilot.retrieval.types import RetrievalCandidate, RetrievalSource, scope_conditions
 
@@ -20,6 +20,8 @@ async def fts_search(
 
     Uses the same ``'simple'`` text search configuration as the persisted
     ``chunks.search_vector`` column. This is PostgreSQL FTS, not BM25.
+    Only chunks belonging to READY documents are candidates; documents in any
+    other ingestion state (or FAILED) are excluded in the candidate SQL.
     """
     tsquery = func.plainto_tsquery("simple", query)
     rank_expr = func.ts_rank(Chunk.search_vector, tsquery)
@@ -28,8 +30,9 @@ async def fts_search(
         .join(Document, Chunk.document_id == Document.id)
         .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
         .where(Chunk.search_vector.op("@@")(tsquery))
+        .where(Document.status == DocumentStatus.READY)
         .where(scope_conditions(scope))
-        .order_by(rank_expr.desc())
+        .order_by(rank_expr.desc(), Chunk.id)
         .limit(limit)
     )
     rows = (await session.execute(statement)).all()

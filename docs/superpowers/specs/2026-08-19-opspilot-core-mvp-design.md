@@ -29,7 +29,7 @@ MVP 不包含多 Agent、Graph RAG、真实支付、真实客户数据、动态�
 - Embedding：本地 BGE-M3；DeepSeek 不承担 Embedding。
 - Reranker：BGE Reranker；超时后降级到 RRF 顺序并记录降级事件。
 - 前端：Vue 3、TypeScript、Vite、Element Plus、Pinia、ECharts。
-- 部署：Docker Compose 是标准集成与发布环境。当前开发机未安装 Docker，因此可先完成纯单元层；进入 PostgreSQL FTS、pgvector、Redis/ARQ、并发 Worker 和恢复测试前必须安装 Docker Desktop，不能用 SQLite 替代相关集成测试。
+- 部署：Docker Compose 是标准集成与发布环境。PostgreSQL FTS、pgvector、Redis/ARQ、并发 Worker 和恢复测试必须使用真实服务验证，不能用 SQLite 替代相关集成测试。
 - 密钥只通过本地 `.env` 或部署密钥注入，不能提交到仓库或写入对话、日志、Run Event。
 
 ## 3. 系统架构与组件边界
@@ -62,8 +62,8 @@ Vue Web 通过 REST 和 SSE 访问 FastAPI 模块化单体。FastAPI 包含 Auth
 ### 4.1 身份与知识
 
 - `users`：用户名、密码哈希、角色、允许部门、最大访问级别。
-- `knowledge_bases`：名称、Embedding 模型和状态。
-- `documents`：知识库、标题、版本、生效时间、部门、访问级别、SHA-256、`storage_path` 和处理状态。
+- `knowledge_bases`：名称、部门、访问级别、Embedding 模型和状态。知识权限是 **KB 级**：部门与访问级别定义在 KnowledgeBase 上，文档继承所属知识库的权限，不再在 Document 上重复存储。
+- `documents`：知识库、标题、版本、生效时间（`effective_at`）、SHA-256、`storage_path` 和处理状态。部门与访问级别由所属 KnowledgeBase 决定。
 - `chunks`：文档版本、章节路径、页码、内容、Token 数、Embedding、`tsvector` 和元数据。
 
 ### 4.2 对话与审计
@@ -95,6 +95,8 @@ Vue Web 通过 REST 和 SSE 访问 FastAPI 模块化单体。FastAPI 包含 Auth
 ### 5.1 入库链路
 
 上传 → 共享文件存储 → Document 持久化 → 投递 `document_id` → Worker 解析 → 结构感知切分 → BGE-M3 批量 Embedding → Chunk、Vector 和 `tsvector` 入库 → Document READY。
+
+上传时 `effective_at` 默认取当前时间（由模型默认值写入）。生效时间供 Context Builder 生成引用时携带，任务 6 之前不参与检索过滤。
 
 切分先建立章节树，再按段落合并到配置 Token 范围；标题与正文保持同一 Chunk，表格不按行打散，相邻 Chunk 仅保留受控重叠。解析、Embedding 和索引任务通过 Document ID 与内容哈希保持幂等。
 

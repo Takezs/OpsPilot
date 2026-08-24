@@ -353,6 +353,45 @@ async def test_upload_stream_enforces_size_limit_before_persisting(tmp_path: Pat
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_upload_persists_effective_at(tmp_path: Path) -> None:
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    knowledge_base_id = uuid.uuid4()
+    await connection.execute(
+        "INSERT INTO knowledge_bases (id, name, department, access_level) "
+        "VALUES ($1, $2, 'support', 1)",
+        knowledge_base_id,
+        f"effective-kb-{knowledge_base_id}",
+    )
+    principal = Principal(
+        user_id=str(uuid.uuid4()),
+        role=Role.USER,
+        allowed_departments=frozenset({"support"}),
+        max_access_level=AccessLevel.INTERNAL,
+    )
+    app.dependency_overrides[get_current_principal] = lambda: principal
+    app.dependency_overrides[get_file_storage] = lambda: VolumeFileStorage(tmp_path)
+    app.dependency_overrides[get_document_queue] = RecordingQueue
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1/knowledge/{knowledge_base_id}/documents",
+                data={"title": "Effective"},
+                files={"file": ("effective.md", b"effective at policy", "text/markdown")},
+            )
+        assert response.status_code == 202
+        effective_at = await connection.fetchval(
+            "SELECT effective_at FROM documents WHERE knowledge_base_id = $1",
+            knowledge_base_id,
+        )
+        assert effective_at is not None
+    finally:
+        app.dependency_overrides.clear()
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 @pytest.mark.parametrize("fail_at", ["query", "commit", "cancel"])
 async def test_upload_failure_after_save_removes_owned_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_at: str
