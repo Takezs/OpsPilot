@@ -5,9 +5,8 @@
 - 仓库：`E:\JavaProjects\OpsPilot`
 - 分支：`plan/opspilot-core-mvp`
 - 任务 5（权限感知 Hybrid Retrieval）最新功能提交：`1bce950`
-- 复审修复（READY 过滤、CI、`effective_at`、文档同步）：见 review-fix 提交。
-- M1（任务 1–4）与 M2 / 任务 5 已批准（任务 5 督导验收提交 `d5ba8f3`、`b490bad`）
-- 下一任务：任务 6，Reranker、上下文预算与引用回答
+- M1（任务 1–4）与 M2 / 任务 5、任务 6 已批准（任务 6 督导验收提交 `955fe22`、`1f0e71c`、`05754bd`）
+- 下一任务：任务 7，Run Journal 与 Transactional Outbox
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
 
@@ -23,6 +22,7 @@
 - REVIEWER/ADMIN 人工重试、retry attempt lifecycle、ARQ 显式 Retry、lease reconciler。
 - 带历史数据的 `0007 → 0008` 安全迁移，以及 `0009` Document `effective_at`。
 - 权限感知 Dense/PostgreSQL FTS 检索与 RRF 融合（任务 5）：两路 SQL 在数据库候选层应用 `KnowledgeScope` 过滤、只检索 `Document.status == READY` 的 Chunk，相同分数按 `chunk_id` 稳定排序。
+- Reranker、上下文预算与引用回答（任务 6）：`rerank_with_fallback` 超时降级到 RRF（`reranker_status=degraded`，含真实 HTTP 超时与墙钟取消）；Context Builder 稳定引用 ID `[DOC:<document_id>#<chunk_id>]` 与令牌预算；DeepSeek 结构化回答；fail-closed Citation Validator（任一无效引用整体 `insufficient_evidence`）与引用快照；Query Rewrite 在 Generation。
 
 不要用历史数字当作新代码的验证结果，每次交接都必须重新运行并报告最新数字。
 
@@ -44,25 +44,24 @@ cd backend
 
 预期 PostgreSQL、Redis 为 healthy，`pg_isready` 接受连接，Redis 返回 `PONG`，Alembic 为 `0009_document_effective_at (head)`。
 
-## 任务 6（下一任务）范围
+## 任务 7（下一任务）范围
 
-目标：Reranker、上下文预算与引用回答。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 6”章节。
+目标：Run Journal 与 Transactional Outbox。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 7”章节。
 
-- 实现 BGE Reranker；超时保持 RRF 顺序并记录降级（`reranker_status=degraded`）。
-- 实现 Context Builder 与上下文预算，稳定引用 ID `[DOC:<document_id>#<chunk_id>]`，携带版本、章节、生效日期（`effective_at`）与页码。
-- 实现 DeepSeek 结构化回答与 Citation Validator；无有效引用的事实回答转为 `insufficient_evidence`。
-- 引用快照至少保存 `document_id + document_version + chunk_id + section_path + page`。
-- 任务 6 不包含 Query Rewrite 调用 Agent Orchestrator 之外的接线、Run Journal、Tool Gateway 或前端。
+- 并发追加 20 个 Event 后断言 `(run_id, seq)` 连续唯一；注入 Outbox insert 失败后断言业务状态与 Event 均回滚。
+- 实现事务内 Journal API：`append_event(session, run_id, event_type, payload)` 在调用者事务中锁定 Run seq，写 `run_events` 与 `event_outbox`，不得自行 commit。
+- 实现 Outbox Publisher：使用 `FOR UPDATE SKIP LOCKED` 获取未投递 row，只向 Redis 发布 `{run_id, seq}`，成功后标记 delivered；重复发布必须安全。
+- 任务 7 不实现 Tool Gateway、Agent Loop、SSE 或前端。
 
 注意：新增迁移必须基于当前 head `0009_document_effective_at` 生成新 revision（`alembic revision`），不得复用实现计划中旧的任务 7/9/16 固定迁移文件名（0004/0005/0006 已被现有迁移占用）。
 
-## 任务 6 建议 TDD 顺序
+## 任务 7 建议 TDD 顺序
 
-1. 写 `tests/retrieval/test_context.py` 与 `tests/generation/test_citations.py` 失败测试（预算、降级、引用校验）。
-2. 实现 Provider 契约与 Fake Provider，运行定向测试变绿。
-3. 实现 Context Builder 与 Citation Validator。
-4. 运行任务 6 定向测试，然后运行完整门禁。
-5. 更新 `docs/development-progress.md` 并单独提交任务 6。
+1. 写 `tests/runs/test_journal.py` 与 `tests/integration/test_outbox.py` 失败测试（并发 seq、原子回滚、SKIP LOCKED 发布）。
+2. 生成基于 `0009` 的新 Alembic revision，实现 Run/Event/Outbox 模型。
+3. 实现事务内 Journal API 与 Outbox Publisher。
+4. 运行任务 7 定向测试，然后运行完整门禁。
+5. 更新 `docs/development-progress.md` 并单独提交任务 7。
 
 ## 完整验证命令
 

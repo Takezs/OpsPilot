@@ -273,7 +273,7 @@ git commit -m "feat: add permission aware hybrid retrieval"
 
 ### 任务 6：Reranker、上下文预算与引用回答
 
-**状态：✅ 已完成，等待督导复审。**
+**状态：✅ 已完成，督导复审通过。**
 
 **文件：**
 - 创建：`backend/src/opspilot/retrieval/reranker.py`、`context_builder.py`
