@@ -2,14 +2,14 @@
 
 > 最后更新：2026-08-24  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2 / 任务 6 已通过督导复审；任务 7 已完成，等待督导复审
+> 当前阶段：M2 / 任务 5–7 已通过督导复审；下一项任务 8（Tool Registry、Agent Loop 与演示服务）
 
 ## 总体进度
 
 | 里程碑 | 任务 | 状态 | 当前结果 |
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
-| M2 可解释 RAG | 5–7 | 进行中 | 任务 5 与任务 6 已通过督导复审；任务 7（Run Journal 与 Transactional Outbox）已完成，等待督导复审；下一项任务 8 |
+| M2 可解释 RAG | 5–7 | 进行中 | 任务 5–7 已通过督导复审；下一项任务 8 |
 | M3 可靠 Agent | 8–12 | 待开发 | Tool、审批、Operation、核对、SSE |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
@@ -88,7 +88,7 @@
 - 实现 Outbox Publisher `publish_pending_events`：`FOR UPDATE SKIP LOCKED` 获取未投递 row，只向 Redis 发布 `{run_id, seq}`（频道 `run_events:{run_id}`），成功后标记 delivered；失败记录 `last_error` 并保持未投递以便重试；重复投递安全。
 - 真实 PostgreSQL 测试证明：20 个并发追加 seq 连续唯一、Outbox insert 失败时 Event 与 seq 一并回滚、publisher 投递后不重复、失败通知重试；真实 Redis pub/sub 收到 `run_events:{run_id}` 消息。
 - 新增 `0010_runs_journal_outbox` 迁移（基于 `0009_document_effective_at`），Alembic 位于 `0010` head。
-- 状态：**已完成，等待督导复审**。任务 7 实现提交为 `feat: persist run events with transactional outbox`。
+- 状态：**已通过督导复审（2026-08-24）**。任务 7 实现提交为 `911c5a0`（feat: persist run events with transactional outbox），复审修复提交 `43223ec`、`f81177e`、`c50a3c4`、`fac3b99`。非法 Unicode 字典键在序号更新前抛 `PayloadInvalidError`；Token 用量元数据（snake/camelCase）保留、access/session/id/refresh Token 继续脱敏；定向 28 passed、完整 123 passed。
 
 ### 任务 7 复审修复（P1）
 
@@ -121,7 +121,7 @@
 
 ## 下一步：M2 / 任务 8
 
-任务 7 已完成，等待督导复审；通过后进入任务 8（Tool Registry、Agent Loop 与演示服务）：
+任务 7 已通过督导复审，进入任务 8（Tool Registry、Agent Loop 与演示服务）：
 
 1. 严格 TDD：先写失败测试并记录正确红灯。
 2. 实现 Tool Registry、Agent Loop、演示服务与测试。
@@ -130,7 +130,7 @@
 ## 后续开发计划
 
 - 任务 6：BGE Reranker、上下文预算、DeepSeek 引用回答与 Citation Validator（✅ 已完成，督导复审通过）。
-- 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已完成，等待督导复审）。
+- 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已通过督导复审）。
 - 任务 8–12：Tool Registry、Agent、审批、Operation fencing、OUTCOME_UNKNOWN 核对和可靠 SSE。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。

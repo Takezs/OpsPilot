@@ -339,7 +339,7 @@ git add backend/src/opspilot/runs backend/alembic/versions backend/tests/runs ba
 git commit -m "feat: persist run events with transactional outbox"
 ```
 
-**状态：✅ 已完成，等待督导复审。**
+**状态：✅ 已通过督导复审（2026-08-24）。**
 
 ### 任务 8：Tool Registry、Agent Loop 与演示服务
 

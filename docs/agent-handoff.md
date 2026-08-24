@@ -6,7 +6,7 @@
 - 分支：`plan/opspilot-core-mvp`
 - 任务 5（权限感知 Hybrid Retrieval）最新功能提交：`1bce950`
 - M1（任务 1–4）与 M2 / 任务 5、任务 6 已批准（任务 6 督导验收提交 `955fe22`、`1f0e71c`、`05754bd`）
-- 任务 7（Run Journal 与 Transactional Outbox）已完成，等待督导复审
+- 任务 7（Run Journal 与 Transactional Outbox）已通过督导复审
 - 下一任务：任务 8，Tool Registry、Agent Loop 与演示服务
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
@@ -46,14 +46,14 @@ cd backend
 
 预期 PostgreSQL、Redis 为 healthy，`pg_isready` 接受连接，Redis 返回 `PONG`，Alembic 为 `0010_runs_journal_outbox (head)`。
 
-## 任务 7（已完成）范围与验收
+## 任务 7（已通过督导复审）范围与验收
 
 目标：Run Journal 与 Transactional Outbox。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 7”章节。
 
 - 并发追加 20 个 Event 后断言 `(run_id, seq)` 连续唯一；注入 Outbox insert 失败后断言业务状态与 Event 均回滚。
 - 事务内 Journal API：`append_event(session, run_id, event_type, payload)` 在调用者事务中锁定 Run seq，写 `run_events` 与 `event_outbox`，不自行 commit。
 - Outbox Publisher：`FOR UPDATE SKIP LOCKED` 获取未投递 row，只向 Redis 发布 `{run_id, seq}`，成功后标记 delivered；重复发布安全。
-- 真实 PostgreSQL/Redis 集成测试与 `0010_runs_journal_outbox` 迁移均已通过；当前等待督导复审。
+- 真实 PostgreSQL/Redis 集成测试与 `0010_runs_journal_outbox` 迁移均已通过；任务 7 已通过督导复审（2026-08-24）。
 
 ## 任务 8（下一任务）范围
 
