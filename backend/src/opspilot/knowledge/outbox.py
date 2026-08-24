@@ -8,7 +8,9 @@ from opspilot.knowledge.models import DocumentIndexOutbox
 
 
 class DocumentJobQueue(Protocol):
-    async def enqueue_document(self, document_id: str, job_id: str) -> None: ...
+    async def enqueue_document(
+        self, document_id: str, job_id: str, retry_attempt: int = 0
+    ) -> None: ...
 
 
 async def publish_pending_document_jobs(queue: DocumentJobQueue, batch_size: int = 100) -> int:
@@ -26,7 +28,7 @@ async def publish_pending_document_jobs(queue: DocumentJobQueue, batch_size: int
                 break
             row.attempts += 1
             try:
-                await queue.enqueue_document(str(row.document_id), row.job_id)
+                await queue.enqueue_document(str(row.document_id), row.job_id, row.attempt)
             except Exception as error:
                 row.last_error = f"{type(error).__name__}: enqueue failed"[:500]
                 await session.commit()

@@ -13,6 +13,18 @@ from opspilot.knowledge.storage import InvalidFile, VolumeFileStorage
 from opspilot.knowledge.tasks import index_document
 
 
+class BlockingEmbeddingProvider:
+    model = "blocking-test-embedding"
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
 @pytest.mark.asyncio
 async def test_indexer_batches_in_order_and_is_idempotent() -> None:
     provider = DeterministicEmbeddingProvider(dimensions=4)
@@ -236,6 +248,68 @@ async def test_concurrent_duplicate_jobs_converge_to_ready(tmp_path: Path) -> No
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_cancelled_worker_releases_document_lock_for_recovery(tmp_path: Path) -> None:
+    source = tmp_path / "cancelled.md"
+    source.write_text("# Recovery\nCancellation must release the lock.", encoding="utf-8")  # noqa: ASYNC240
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    knowledge_base_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    await connection.execute(
+        "INSERT INTO knowledge_bases (id, name, department, access_level) "
+        "VALUES ($1, $2, 'support', 1)",
+        knowledge_base_id,
+        f"cancel-kb-{knowledge_base_id}",
+    )
+    await connection.execute(
+        "INSERT INTO documents "
+        "(id, knowledge_base_id, title, version, content_sha256, storage_path, status) "
+        "VALUES ($1, $2, 'cancelled', 1, $3, $4, 'UPLOADED')",
+        document_id,
+        knowledge_base_id,
+        uuid.uuid4().hex.ljust(64, "0"),
+        str(source),
+    )
+    blocking = BlockingEmbeddingProvider()
+    task = asyncio.create_task(
+        index_document(
+            {"embedding_provider": blocking, "file_storage": VolumeFileStorage(tmp_path)},
+            str(document_id),
+        )
+    )
+    try:
+        await asyncio.wait_for(blocking.started.wait(), timeout=5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(
+            index_document(
+                {
+                    "embedding_provider": DeterministicEmbeddingProvider(dimensions=1024),
+                    "file_storage": VolumeFileStorage(tmp_path),
+                },
+                str(document_id),
+            ),
+            timeout=5,
+        )
+        assert (
+            await connection.fetchval("SELECT status FROM documents WHERE id = $1", document_id)
+            == "READY"
+        )
+        assert (
+            await connection.fetchval(
+                "SELECT count(*) FROM chunks WHERE document_id = $1", document_id
+            )
+            == 1
+        )
+    finally:
+        if not task.done():
+            task.cancel()
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_worker_rejects_storage_path_outside_root(tmp_path: Path) -> None:
     root = tmp_path / "root"
     outside = tmp_path / "outside.md"
@@ -338,7 +412,7 @@ async def test_worker_recovers_intermediate_state_without_duplicate_chunks(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_failed_document_requires_explicit_retry(tmp_path: Path) -> None:
+async def test_failed_document_rejects_untrusted_retry(tmp_path: Path) -> None:
     source = tmp_path / "failed.md"
     source.write_text("# Retry\nExplicit retry.", encoding="utf-8")  # noqa: ASYNC240
     connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
@@ -369,10 +443,10 @@ async def test_failed_document_requires_explicit_retry(tmp_path: Path) -> None:
             await connection.fetchval("SELECT status FROM documents WHERE id = $1", document_id)
             == "FAILED"
         )
-        await index_document({**context, "allow_failed_retry": True}, str(document_id))
+        await index_document(context, str(document_id), retry_attempt=99)
         assert (
             await connection.fetchval("SELECT status FROM documents WHERE id = $1", document_id)
-            == "READY"
+            == "FAILED"
         )
     finally:
         await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)

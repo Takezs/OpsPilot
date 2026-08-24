@@ -34,9 +34,11 @@ async def get_current_principal(
         raise unauthorized from error
     if user is None or not user.is_active or user.role is not subject.role:
         raise unauthorized
-    return Principal(
+    principal = Principal(
         user_id=str(user.id),
         role=user.role,
         allowed_departments=frozenset(user.allowed_departments),
         max_access_level=AccessLevel(user.max_access_level),
     )
+    await session.rollback()
+    return principal

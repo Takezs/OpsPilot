@@ -15,15 +15,15 @@ from opspilot.outbox_publisher import OutboxPublisherSettings
 
 class FlakyQueue:
     def __init__(self, index_context: dict[str, Any] | None = None) -> None:
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, int]] = []
         self.index_context = index_context
 
-    async def enqueue_document(self, document_id: str, job_id: str) -> None:
-        self.calls.append((document_id, job_id))
+    async def enqueue_document(self, document_id: str, job_id: str, retry_attempt: int = 0) -> None:
+        self.calls.append((document_id, job_id, retry_attempt))
         if len(self.calls) == 1:
             raise ConnectionError("redis unavailable")
         if self.index_context is not None:
-            await index_document(self.index_context, document_id)
+            await index_document(self.index_context, document_id, retry_attempt)
 
 
 def test_outbox_publisher_has_periodic_recovery_schedule() -> None:
@@ -69,8 +69,8 @@ async def test_failed_enqueue_is_recovered_with_stable_job_id(tmp_path: Path) ->
         assert await publish_pending_document_jobs(queue) == 1
         assert await publish_pending_document_jobs(queue) == 0
         assert queue.calls == [
-            (str(document_id), f"document-index:{document_id}"),
-            (str(document_id), f"document-index:{document_id}"),
+            (str(document_id), f"document-index:{document_id}", 0),
+            (str(document_id), f"document-index:{document_id}", 0),
         ]
         row = await connection.fetchrow(
             "SELECT delivered_at, attempts FROM document_index_outbox WHERE document_id = $1",
