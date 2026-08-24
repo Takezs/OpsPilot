@@ -7,7 +7,8 @@
 - 任务 5（权限感知 Hybrid Retrieval）最新功能提交：`1bce950`
 - M1（任务 1–4）与 M2 / 任务 5、任务 6 已批准（任务 6 督导验收提交 `955fe22`、`1f0e71c`、`05754bd`）
 - 任务 7（Run Journal 与 Transactional Outbox）已通过督导复审
-- 下一任务：任务 8，Tool Registry、Agent Loop 与演示服务
+- 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已完成，实现提交 `db2cae5`，等待督导复审
+- 下一任务：任务 9，Policy、审批绑定与 Operation 持久化
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
 
@@ -25,6 +26,7 @@
 - 权限感知 Dense/PostgreSQL FTS 检索与 RRF 融合（任务 5）：两路 SQL 在数据库候选层应用 `KnowledgeScope` 过滤、只检索 `Document.status == READY` 的 Chunk，相同分数按 `chunk_id` 稳定排序。
 - Reranker、上下文预算与引用回答（任务 6）：`rerank_with_fallback` 超时降级到 RRF（`reranker_status=degraded`，含真实 HTTP 超时与墙钟取消）；Context Builder 稳定引用 ID `[DOC:<document_id>#<chunk_id>]` 与令牌预算；DeepSeek 结构化回答；fail-closed Citation Validator（任一无效引用整体 `insufficient_evidence`）与引用快照；Query Rewrite 在 Generation。
 - Run Journal 与 Transactional Outbox（任务 7）：`agent_runs.next_seq` 单调计数器 + `append_event(session, run_id, event_type, payload)` 在调用者事务中 `UPDATE ... RETURNING` 原子递增并锁定 Run 行，写 `run_events` 与 `event_outbox` 且不自行 commit；`publish_pending_events` 用 `FOR UPDATE SKIP LOCKED` 按 `(run_id, seq)` 取未投递 row，只向 Redis 发布 `{run_id, seq}`（频道 `run_events:{run_id}`），成功标记 delivered，失败记录 `last_error` 待重试且不阻塞其他事件（poison row 隔离），重复投递安全；`sanitize_payload` 在写入边界按词元递归脱敏（强敏感名词 + `token`/`key` 语境规则——保留 `token_count`/`token_size` 与 `prompt_tokens`/`total_tokens`/`token_usage_count` 等用量元数据，继续脱敏 `access_token`/`refresh_token`/`session_token`/`id_token` 等 + 邮箱/手机号/Bearer 凭证）与限长（字符串截断 + 整体字节上限 fail-closed），并显式校验非字符串键、含孤立代理项（lone surrogate）的键与值、不支持的 value 类型、NaN/Infinity、循环引用与嵌套深度；迁移 `0010_runs_journal_outbox`。
+- Tool Registry、受限 Agent Loop 与演示服务（任务 8）：`ToolDefinition`（`effect: read_only|side_effect`、`idempotency_capable`、`supports_reconciliation`、`input_schema`、`invoke`）与 `ToolResult(ok/data/error)`，`ToolNotFoundError`/`ToolArgumentError`；`build_tool_registry(deps)` 只暴露 6 个工具，所有参数经 Pydantic schema 校验（Design B：适配器接收已校验参数模型）；`AgentRunner` 有界循环——每轮仅通过注册表执行工具，最多 8 轮/6 次工具调用即 `bounded` 终止，纯问答与澄清可直返；`DecisionProvider` Protocol 抽象 LLM、`DeepSeekAgentDecider` 以 JSON 模式解析 `answer`/`clarify`/`tool_call` 契约；HTTP 适配器把超时映射为可重试 `ToolResult`、非成功状态码映射为失败；`demo-services/` 提供 order/payment/email 三个 FastAPI 服务，payment 以订单号为服务端业务幂等键并支持 `timeout_before_effect`/`timeout_after_effect`/`unknown_5xx_after_effect` 故障模式（不引入 uvicorn，测试用 in-process `ASGITransport`）。
 
 不要用历史数字当作新代码的验证结果，每次交接都必须重新运行并报告最新数字。
 
@@ -55,9 +57,13 @@ cd backend
 - Outbox Publisher：`FOR UPDATE SKIP LOCKED` 获取未投递 row，只向 Redis 发布 `{run_id, seq}`，成功后标记 delivered；重复发布安全。
 - 真实 PostgreSQL/Redis 集成测试与 `0010_runs_journal_outbox` 迁移均已通过；任务 7 已通过督导复审（2026-08-24）。
 
-## 任务 8（下一任务）范围
+## 任务 8（已完成待复审）范围
 
-目标：Tool Registry、Agent Loop 与演示服务。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 8”章节。任务 8 不实现审批、Operation fencing、SSE 或前端（属任务 9–12/13–15）。新增迁移必须基于当前 head `0010_runs_journal_outbox` 生成新 revision，不得复用固定迁移文件名（0004/0005/0006 已被占用）。
+目标：Tool Registry、Agent Loop 与演示服务。实现提交 `db2cae5`，定向 23 passed（注册表 8 + 受限循环 7 + 演示服务 8）、完整 146 passed。任务 8 不实现审批、Operation fencing、SSE 或前端（属任务 9–12/13–15）。
+
+## 任务 9（下一任务）范围
+
+目标：Policy、审批绑定与 Operation 持久化。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 9”章节。新增迁移必须基于当前 head `0010_runs_journal_outbox` 生成新 revision，不得复用固定迁移文件名（0004/0005/0006 已被占用）。
 
 ## 完整验证命令
 
@@ -80,7 +86,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 不在 Python 层做权限后过滤；权限、READY 状态过滤必须保留在候选 SQL。
 - 不用 SQLite/Fake 数据库宣称检索集成通过。
 - 不把 PostgreSQL FTS 写成 BM25。
-- 不顺手实现任务 8。
+- 不顺手实现任务 9。
 - 不声称通过未实际运行的命令。
 - 不提交 `.env`、API Key、Authorization、PII、临时目录或本地文件。
 

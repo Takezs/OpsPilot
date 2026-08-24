@@ -2,15 +2,15 @@
 
 > 最后更新：2026-08-24  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2 / 任务 5–7 已通过督导复审；下一项任务 8（Tool Registry、Agent Loop 与演示服务）
+> 当前阶段：M2 / 任务 5–7 已通过督导复审；任务 8 已完成待督导复审；下一项任务 9（审批与 Operation 持久化）
 
 ## 总体进度
 
 | 里程碑 | 任务 | 状态 | 当前结果 |
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
-| M2 可解释 RAG | 5–7 | 进行中 | 任务 5–7 已通过督导复审；下一项任务 8 |
-| M3 可靠 Agent | 8–12 | 待开发 | Tool、审批、Operation、核对、SSE |
+| M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8 已完成待督导复审；审批、Operation、核对、SSE 待开发 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -98,14 +98,24 @@
   - 递归入口显式校验：非字符串键、不支持的 value 类型、`NaN`/`Infinity`、循环引用（`id()` 路径追踪）、超过 `MAX_DEPTH` 的嵌套、以及含孤立代理项（lone surrogate）的字符串（键与值一致校验），统一转为 `PayloadInvalidError`（全部在 `next_seq` 更新之前完成，不消耗 seq、不回写任何行）。
 - Publisher 采用 poison row 隔离：单条失败记录 `attempts`/`last_error` 后 `continue`，并在本次调用内排除已失败 ID，使一条永久失败的 poison row 不再阻塞其他可处理事件；投递按 `(run_id, seq)` 尽力排序（`SKIP LOCKED` 在并发 Publisher 下仅提供尽力排序，不保证严格顺序，SSE 契约容忍乱序并从 PostgreSQL 补拉）。新增“首条永久失败、后续事件仍成功投递”的回归测试。
 
+### 任务 8：Tool Registry、Agent Loop 与演示服务
+
+- 定义 `ToolDefinition`（`effect: read_only|side_effect`、`idempotency_capable`、`supports_reconciliation`、`input_schema: type[BaseModel]`、`invoke: Callable[..., Awaitable[ToolResult]]`）与 `ToolResult(ok/data/error)`；`ToolNotFoundError`/`ToolArgumentError` 区分未知工具与参数校验失败。
+- 受限 6 工具注册表 `build_tool_registry(deps)`：`search_knowledge`/`get_order`/`check_refund_eligibility`/`get_refund_status` 为 READ_ONLY，`refund_order`/`send_email` 为 SIDE_EFFECT；全部工具声明幂等能力与 `supports_reconciliation`，供任务 9/10 选择重试或核对。
+- 所有工具参数经 Pydantic 输入 schema 校验（`validate_arguments` 把 `ValidationError` 包装为 `ToolArgumentError`）；Design B：适配器接收已校验的参数模型而非裸标量。
+- 有界 Agent Loop `AgentRunner`：每轮从决策提供方取一个动作，仅通过注册表执行工具调用，最多 8 轮或 6 次工具调用即 `bounded` 终止；纯问答、澄清可直返；`DecisionProvider` Protocol 抽象 LLM，`DeepSeekAgentDecider` 以 JSON 模式对话并解析决策契约（`answer`/`clarify`/`tool_call`）。
+- HTTP 适配器（`get_order_adapter`/`check_refund_eligibility_adapter`/`refund_order_adapter`/`get_refund_status_adapter`/`send_email_adapter`）：超时映射为可重试 `ToolResult`、非成功状态码映射为失败结果；`mcp.py` 提供远期 MCP 适配器契约（当前 6 工具均不走 MCP）。
+- `demo-services/` 演示服务：order/payment/email 三个 FastAPI 服务；payment 以订单号为服务端业务幂等键（重复退款共享同一 `refund_id`/`provider_reference`，201-if-new-else-200），支持 `success`/`timeout_before_effect`/`timeout_after_effect`/`unknown_5xx_after_effect` 故障模式，供任务 9/10 验证重试与核对语义。项目不引入 uvicorn/Dockerfile，测试以 in-process `ASGITransport` 验证。
+- 状态：**已完成（待督导复审）**。实现提交 `db2cae5`（feat: orchestrate bounded registered tools）；定向 23 passed（注册表 8 + 受限循环 7 + 演示服务 8）、完整 146 passed。
+
 ## 当前验证基线
 
-任务 7 复审修复后的真实结果：
+任务 8 完成后的真实结果：
 
-- 完整测试：`123 passed`（任务 7 基线 98 + 复审修复定向 25：脱敏单测 18 + 持久化断言 6 + poison row 隔离 1）。
-- Ruff format：83 个文件格式正确。
+- 完整测试：`146 passed`（任务 7 基线 123 + 任务 8 定向 23：注册表 8 + 受限循环 7 + 演示服务 8）。
+- Ruff format：97 个文件格式正确。
 - Ruff check：全部通过。
-- Mypy `--no-incremental`：51 个源文件无问题。
+- Mypy `--no-incremental`：62 个源文件无问题。
 - Alembic：`0010_runs_journal_outbox (head)`；0001→0010 全链在全新数据库验证通过。
 - PostgreSQL：healthy，`pg_isready` 为 accepting connections。
 - Redis：healthy，`redis-cli ping` 返回 `PONG`。
@@ -119,19 +129,20 @@
 - Document 增加 `effective_at`（默认上传时间），新增 `0009_document_effective_at` 迁移。
 - 实现计划中任务 7/9/16 的固定迁移文件名（0004/0005/0006）已移除，改为基于当前 head 生成新 revision。
 
-## 下一步：M2 / 任务 8
+## 下一步：任务 9（审批与 Operation 持久化）
 
-任务 7 已通过督导复审，进入任务 8（Tool Registry、Agent Loop 与演示服务）：
+任务 8 已完成并通过完整验证，等待督导复审。复审通过后进入任务 9：
 
 1. 严格 TDD：先写失败测试并记录正确红灯。
-2. 实现 Tool Registry、Agent Loop、演示服务与测试。
+2. 实现 Policy、审批绑定与 Operation 持久化（任务 9 范围）。
 3. 通过定向测试、完整 pytest、Ruff、Mypy 后单独提交，等待复审。
 
 ## 后续开发计划
 
 - 任务 6：BGE Reranker、上下文预算、DeepSeek 引用回答与 Citation Validator（✅ 已完成，督导复审通过）。
 - 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已通过督导复审）。
-- 任务 8–12：Tool Registry、Agent、审批、Operation fencing、OUTCOME_UNKNOWN 核对和可靠 SSE。
+- 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已完成，待督导复审）。
+- 任务 9–12：审批、Operation fencing、OUTCOME_UNKNOWN 核对和可靠 SSE。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。
 - 任务 18：可观测性、脱敏、容器部署、文档与 v1.0 发布。

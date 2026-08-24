@@ -351,19 +351,19 @@ git commit -m "feat: persist run events with transactional outbox"
 - 创建：`backend/tests/tools/test_registry.py`
 - 创建：`backend/tests/agent/test_runner.py`
 
-- [ ] **步骤 1：编写 ToolDefinition 与 Agent 场景测试**
+- [x] **步骤 1：编写 ToolDefinition 与 Agent 场景测试**
 
 `ToolDefinition` 必须包含 `effect: read_only|side_effect`、幂等能力和 `supports_reconciliation`。覆盖纯问答、缺订单号追问、正确工具、最大 8 轮/6 次工具终止。
 
-- [ ] **步骤 2：实现 Registry 与受限 Agent**
+- [x] **步骤 2：实现 Registry 与受限 Agent**
 
 只暴露 `search_knowledge`、`get_order`、`check_refund_eligibility`、`refund_order`、`get_refund_status`、`send_email`；所有参数通过 Pydantic Schema。
 
-- [ ] **步骤 3：实现合成服务故障模式**
+- [x] **步骤 3：实现合成服务故障模式**
 
 Payment Service 支持 `success`、`timeout_before_effect`、`timeout_after_effect` 和 `unknown_5xx_after_effect`，按服务端业务幂等键保存唯一退款与 Provider reference ID。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
 运行：`cd backend && pytest tests/tools tests/agent -q`。预期 PASS。
 
@@ -371,6 +371,8 @@ Payment Service 支持 `success`、`timeout_before_effect`、`timeout_after_effe
 git add backend/src/opspilot/tools backend/src/opspilot/agent demo-services backend/tests/tools backend/tests/agent
 git commit -m "feat: orchestrate bounded registered tools"
 ```
+
+**状态：✅ 已完成（2026-08-24，提交 `db2cae5`，等待督导复审）。** 定向 23 passed（注册表 8 + 受限循环 7 + 演示服务 8）、完整 146 passed；Ruff format 97 文件、Ruff check 通过、Mypy 62 源文件无问题；`0010_runs_journal_outbox (head)`；PostgreSQL/Redis healthy。
 
 ### 任务 9：Policy、审批绑定与 Operation 持久化
 
