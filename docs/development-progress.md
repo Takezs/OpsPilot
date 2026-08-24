@@ -2,14 +2,14 @@
 
 > 最后更新：2026-08-24  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M1 已验收，准备开始 M2 / 任务 5
+> 当前阶段：M2 / 任务 5 已完成，等待复审
 
 ## 总体进度
 
 | 里程碑 | 任务 | 状态 | 当前结果 |
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
-| M2 可解释 RAG | 5–7 | 待开发 | 下一步为权限感知 Hybrid Retrieval |
+| M2 可解释 RAG | 5–7 | 进行中 | 任务 5 权限感知 Hybrid Retrieval 已完成 |
 | M3 可靠 Agent | 8–12 | 待开发 | Tool、审批、Operation、核对、SSE |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
@@ -58,29 +58,34 @@
 - `0007 → 0008` 会确定性回填历史 retry 状态，不留下 `QUEUED + NULL lease` 的永久阻塞记录。
 - 提交：`382f8ed fix: close retry attempt lifecycle`、`9701e3f fix: backfill retry lifecycle migration`。
 
+### 任务 5：权限感知 Hybrid Retrieval
+
+- 定义统一候选 `RetrievalCandidate(chunk_id, score, rank, source)` 与调试阶段 `RetrievalResult(dense, fts, rrf)`。
+- 实现 Dense 检索（pgvector 余弦距离，HNSW 索引）与 PostgreSQL FTS（`simple` 配置；术语不称为 BM25），各默认返回 30 条。
+- 两路检索 SQL 都在 JOIN knowledge base 时应用 `KnowledgeScope` 的部门与 access level 过滤，越权 Chunk 在数据库候选层即被排除，不在 Python 中后过滤。
+- 实现 Reciprocal Rank Fusion（k=60）按 chunk 去重融合到 20 条，调试响应保留 Dense、FTS、RRF 各阶段排名。
+- 真实 PostgreSQL 集成测试证明受限 scope 在 Dense/FTS/RRF 候选层排除越权 Chunk，提升 scope 可检索机密 Chunk。
+
 ## 当前验证基线
 
-M1 最终验收时的真实结果：
+任务 5 完成时的真实结果：
 
-- 完整测试：`63 passed in 16.99s`。
-- Ruff format：55 个文件格式正确。
+- 完整测试：`69 passed in 19.55s`（M1 基线 63 + fusion 4 + scope 集成 2）。
+- Ruff format：63 个文件格式正确。
 - Ruff check：全部通过。
-- Mypy `--no-incremental`：32 个源文件无问题。
-- Alembic：带历史数据完成 `0007 → 0008` 回填测试及 `0008 → 0006 → head` 回环。
-- 当前迁移：`0008_document_retry_lifecycle (head)`。
+- Mypy `--no-incremental`：38 个源文件无问题。
+- Alembic：`0008_document_retry_lifecycle (head)`。
 - PostgreSQL：healthy，`pg_isready` 为 accepting connections。
 - Redis：healthy，`redis-cli ping` 返回 `PONG`。
 
-## 下一步：M2 / 任务 5
+## 下一步：M2 / 任务 6
 
-目标是实现权限感知 Hybrid Retrieval：
+目标是实现 Reranker、上下文预算与引用回答：
 
-1. 定义统一 `RetrievalCandidate` 和调试阶段数据结构。
-2. 实现 Dense 检索，SQL 候选阶段强制应用 `KnowledgeScope`。
-3. 实现 PostgreSQL FTS 检索；术语保持 PostgreSQL FTS，不称为 BM25。
-4. 实现 Reciprocal Rank Fusion、去重和阶段排名调试响应。
-5. 使用真实 PostgreSQL 数据验证高权限 Chunk 在候选层被排除。
-6. 通过定向测试、完整 pytest、Ruff、Mypy 和真实索引查询后提交任务 5 检查点。
+1. 实现 BGE Reranker；超时保持 RRF 顺序并记录降级。
+2. 实现 Context Builder 与上下文预算，稳定引用 ID `[DOC:<id>#<chunk_id>]`，携带版本、章节、生效日期与页码。
+3. 实现 DeepSeek 结构化回答与 Citation Validator；无有效引用的事实回答转为证据不足。
+4. 通过定向测试、完整 pytest、Ruff、Mypy 后提交任务 6 检查点。
 
 ## 后续开发计划
 
