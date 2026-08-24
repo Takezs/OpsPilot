@@ -316,28 +316,30 @@ git commit -m "feat: answer with reranked verified citations"
 - 创建：`backend/src/opspilot/runs/models.py`、`journal.py`、`outbox.py`
 - 创建：`backend/alembic/versions/` 下基于当前 head 生成的新 revision（禁止使用固定名称 `0004_runs_outbox.py`）
 - 创建：`backend/tests/runs/test_journal.py`
-- 创建：`backend/tests/integration/test_outbox.py`
+- 创建：`backend/tests/integration/test_run_outbox.py`（与 `tests/knowledge/test_outbox.py` 同名会冲突，使用唯一 basename）
 
-- [ ] **步骤 1：编写并发 seq 与原子性测试**
+- [x] **步骤 1：编写并发 seq 与原子性测试**
 
 并发追加 20 个 Event 后断言 `(run_id, seq)` 连续唯一；注入 Outbox insert 失败后断言业务状态与 Event 均回滚。
 
-- [ ] **步骤 2：实现事务内 Journal API**
+- [x] **步骤 2：实现事务内 Journal API**
 
 `append_event(session, run_id, event_type, payload)` 在调用者事务中锁定 Run seq，写 `run_events` 与 `event_outbox`，不得自行 commit。
 
-- [ ] **步骤 3：实现 Outbox Publisher**
+- [x] **步骤 3：实现 Outbox Publisher**
 
 Publisher 使用 `FOR UPDATE SKIP LOCKED` 获取未投递 row，只向 Redis 发布 `{run_id, seq}`，成功后标记 delivered；重复发布必须安全。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
-运行：`cd backend && pytest tests/runs tests/integration/test_outbox.py -q`。预期 PASS。
+运行：`cd backend && pytest tests/runs tests/integration/test_run_outbox.py -q`。预期 PASS。
 
 ```bash
-git add backend/src/opspilot/runs backend/alembic/versions backend/tests/runs backend/tests/integration/test_outbox.py
+git add backend/src/opspilot/runs backend/alembic/versions backend/tests/runs backend/tests/integration/test_run_outbox.py
 git commit -m "feat: persist run events with transactional outbox"
 ```
+
+**状态：✅ 已完成，等待督导复审。**
 
 ### 任务 8：Tool Registry、Agent Loop 与演示服务
 

@@ -1,0 +1,155 @@
+"""Run Journal tests: continuous unique seq and atomic rollback.
+
+Task 7 guarantees:
+- concurrent appends to one run yield a continuous, unique ``(run_id, seq)`` set;
+- an event_outbox insert failure rolls back the event row and the run's seq
+  counter together with the caller's business transaction.
+"""
+
+import asyncio
+import uuid
+from collections.abc import Sequence
+
+import asyncpg
+import pytest
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
+
+from opspilot.config import Settings
+from opspilot.db import async_session_factory, engine
+from opspilot.runs.journal import RunNotFoundError, append_event
+from opspilot.runs.models import EventOutbox, Run, RunEvent, RunStatus
+
+
+async def cleanup_runs(run_ids: Sequence[uuid.UUID]) -> None:
+    """Delete runs with a fresh connection; FK CASCADE removes events + outbox."""
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    try:
+        if run_ids:
+            await connection.execute(
+                "DELETE FROM agent_runs WHERE id = ANY($1::uuid[])", list(run_ids)
+            )
+    finally:
+        await connection.close()
+
+
+async def _append_commit(run_id: uuid.UUID, marker: int) -> int:
+    async with async_session_factory() as session:
+        seq = await append_event(session, run_id, "retrieved", {"marker": marker})
+        await session.commit()
+        return seq
+
+
+async def test_append_event_assigns_continuous_unique_seq() -> None:
+    run_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.QUEUED))
+        await session.commit()
+    try:
+        async with async_session_factory() as session:
+            seqs = [await append_event(session, run_id, "retrieved", {"n": n}) for n in range(5)]
+            await session.commit()
+
+        assert seqs == [1, 2, 3, 4, 5]
+
+        async with async_session_factory() as session:
+            events = list(
+                await session.scalars(
+                    select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.seq)
+                )
+            )
+            outbox = list(
+                await session.scalars(select(EventOutbox).where(EventOutbox.run_id == run_id))
+            )
+
+        assert [event.seq for event in events] == [1, 2, 3, 4, 5]
+        assert {event.event_type for event in events} == {"retrieved"}
+        assert len(outbox) == 5
+    finally:
+        await cleanup_runs([run_id])
+
+
+async def test_concurrent_append_assigns_continuous_unique_seq() -> None:
+    run_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.QUEUED))
+        await session.commit()
+    try:
+        seqs = await asyncio.gather(*[_append_commit(run_id, n) for n in range(20)])
+
+        assert sorted(seqs) == list(range(1, 21))
+        assert len(set(seqs)) == 20
+    finally:
+        await cleanup_runs([run_id])
+
+
+async def test_append_event_requires_existing_run() -> None:
+    missing = uuid.uuid4()
+
+    async with async_session_factory() as session:
+        with pytest.raises(RunNotFoundError):
+            await append_event(session, missing, "retrieved", {})
+        await session.rollback()
+
+
+class _FailOutboxTrigger:
+    """Install a trigger that fails ``event_outbox`` inserts for a marker run."""
+
+    def __init__(self, run_id: uuid.UUID) -> None:
+        self.run_id = run_id
+        self.suffix = uuid.uuid4().hex[:8]
+
+    async def install(self) -> None:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    f"CREATE FUNCTION _fail_outbox_{self.suffix}() RETURNS trigger AS $$"
+                    "BEGIN RAISE EXCEPTION 'forced outbox insert failure'; END $$ "
+                    "LANGUAGE plpgsql"
+                )
+            )
+            # asyncpg rejects bound parameters in DDL, so the marker run_id is
+            # interpolated as a literal (a test-owned UUID, safe to inline).
+            await conn.execute(
+                text(
+                    f"CREATE TRIGGER _fail_outbox_trg_{self.suffix} BEFORE INSERT ON event_outbox "
+                    f"FOR EACH ROW WHEN (NEW.run_id = '{self.run_id}') "
+                    f"EXECUTE FUNCTION _fail_outbox_{self.suffix}()"
+                )
+            )
+
+    async def drop(self) -> None:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(f"DROP TRIGGER IF EXISTS _fail_outbox_trg_{self.suffix} ON event_outbox")
+            )
+            await conn.execute(text(f"DROP FUNCTION IF EXISTS _fail_outbox_{self.suffix}()"))
+
+
+async def test_outbox_insert_failure_rolls_back_events_and_seq() -> None:
+    run_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.QUEUED))
+        await session.commit()
+    trigger = _FailOutboxTrigger(run_id)
+    await trigger.install()
+    try:
+        async with async_session_factory() as session:
+            await append_event(session, run_id, "retrieved", {"n": 1})
+            with pytest.raises(SQLAlchemyError):
+                await session.commit()
+
+        async with async_session_factory() as session:
+            events = list(await session.scalars(select(RunEvent).where(RunEvent.run_id == run_id)))
+            outbox = list(
+                await session.scalars(select(EventOutbox).where(EventOutbox.run_id == run_id))
+            )
+            run = await session.get(Run, run_id)
+
+        assert events == []
+        assert outbox == []
+        assert run is not None
+        assert run.next_seq == 0
+    finally:
+        await trigger.drop()
+        await cleanup_runs([run_id])

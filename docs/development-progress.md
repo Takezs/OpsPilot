@@ -2,14 +2,14 @@
 
 > 最后更新：2026-08-24  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2 / 任务 6 已通过督导复审
+> 当前阶段：M2 / 任务 6 已通过督导复审；任务 7 已完成，等待督导复审
 
 ## 总体进度
 
 | 里程碑 | 任务 | 状态 | 当前结果 |
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
-| M2 可解释 RAG | 5–7 | 进行中 | 任务 5 与任务 6（Reranker/上下文预算/引用回答）已通过督导复审；下一项任务 7 |
+| M2 可解释 RAG | 5–7 | 进行中 | 任务 5 与任务 6 已通过督导复审；任务 7（Run Journal 与 Transactional Outbox）已完成，等待督导复审；下一项任务 8 |
 | M3 可靠 Agent | 8–12 | 待开发 | Tool、审批、Operation、核对、SSE |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
@@ -81,15 +81,24 @@
 - Citation Validator 改为 **fail-closed**：事实回答只要包含任一未检索、过期或不存在的引用，整体转为 `insufficient_evidence=True`，不再保留有效引用后继续输出确定性回答。
 - Reranker fallback 覆盖真实 HTTP 超时：`BgeReranker` 将 `httpx.TimeoutException` 在 Provider 边界转换为领域超时异常 `RerankerTimeoutError`（`TimeoutError` 子类），`rerank_with_fallback` 统一降级到 RRF 顺序；无关异常（如 `RuntimeError`）不被吞掉，直接传播。
 
+### 任务 7：Run Journal 与 Transactional Outbox
+
+- 新增 `agent_runs` 表持有单调 `next_seq` 计数器；`run_events`（`UNIQUE(run_id, seq)`）保存事件；`event_outbox`（`UNIQUE(run_id, seq)`）与事件同事务写入。
+- 实现事务内 Journal API `append_event(session, run_id, event_type, payload)`：用 `UPDATE agent_runs SET next_seq = next_seq + 1 WHERE id = :run_id RETURNING next_seq` 原子递增并锁定 Run 行，写 `run_events` 与 `event_outbox`，不自行 commit；不存在的 run 抛 `RunNotFoundError`。
+- 实现 Outbox Publisher `publish_pending_events`：`FOR UPDATE SKIP LOCKED` 获取未投递 row，只向 Redis 发布 `{run_id, seq}`（频道 `run_events:{run_id}`），成功后标记 delivered；失败记录 `last_error` 并保持未投递以便重试；重复投递安全。
+- 真实 PostgreSQL 测试证明：20 个并发追加 seq 连续唯一、Outbox insert 失败时 Event 与 seq 一并回滚、publisher 投递后不重复、失败通知重试；真实 Redis pub/sub 收到 `run_events:{run_id}` 消息。
+- 新增 `0010_runs_journal_outbox` 迁移（基于 `0009_document_effective_at`），Alembic 位于 `0010` head。
+- 状态：**已完成，等待督导复审**。任务 7 实现提交为 `feat: persist run events with transactional outbox`。
+
 ## 当前验证基线
 
-任务 5 督导验收后的真实结果：
+任务 7 实现后的真实结果：
 
-- 完整测试：`91 passed`（任务 5 基线 72 + 任务 6 定向 19：reranker 超时降级 1 + 真实 HTTP 超时 1 + 墙钟超时取消 1 + 无关异常传播 1 + 确定性重排 2 + citation_id 1 + 上下文预算 2 + 引用 ID 稳定 1 + 空上下文 1 + 引用校验 7 + 服务接线 1）。
-- Ruff format：74 个文件格式正确。
+- 完整测试：`98 passed`（任务 6 基线 91 + 任务 7 定向 7：journal 连续 seq 1 + 并发唯一 seq 1 + 不存在 run 1 + outbox 回滚 1 + publisher 投递/去重 1 + flaky 重试 1 + 真实 Redis 频道 1）。
+- Ruff format：81 个文件格式正确。
 - Ruff check：全部通过。
-- Mypy `--no-incremental`：46 个源文件无问题。
-- Alembic：`0009_document_effective_at (head)`；0001→0009 全链在全新数据库验证通过。
+- Mypy `--no-incremental`：50 个源文件无问题。
+- Alembic：`0010_runs_journal_outbox (head)`；0001→0010 全链在全新数据库验证通过。
 - PostgreSQL：healthy，`pg_isready` 为 accepting connections。
 - Redis：healthy，`redis-cli ping` 返回 `PONG`。
 
@@ -102,18 +111,18 @@
 - Document 增加 `effective_at`（默认上传时间），新增 `0009_document_effective_at` 迁移。
 - 实现计划中任务 7/9/16 的固定迁移文件名（0004/0005/0006）已移除，改为基于当前 head 生成新 revision。
 
-## 下一步：M2 / 任务 7
+## 下一步：M2 / 任务 8
 
-任务 6 已通过督导复审，进入任务 7：
+任务 7 已完成，等待督导复审；通过后进入任务 8（Tool Registry、Agent Loop 与演示服务）：
 
-1. 实现 Run Journal 与 Transactional Outbox：并发追加事件断言 `(run_id, seq)` 连续唯一。
-2. 事务内 Journal API 与 Outbox Publisher（`FOR UPDATE SKIP LOCKED` 只向 Redis 发布 `{run_id, seq}`）。
-3. 通过定向测试、完整 pytest、Ruff、Mypy 后单独提交。
+1. 严格 TDD：先写失败测试并记录正确红灯。
+2. 实现 Tool Registry、Agent Loop、演示服务与测试。
+3. 通过定向测试、完整 pytest、Ruff、Mypy 后单独提交，等待复审。
 
 ## 后续开发计划
 
 - 任务 6：BGE Reranker、上下文预算、DeepSeek 引用回答与 Citation Validator（✅ 已完成，督导复审通过）。
-- 任务 7：Run Journal、连续 seq 与 Transactional Outbox。
+- 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已完成，等待督导复审）。
 - 任务 8–12：Tool Registry、Agent、审批、Operation fencing、OUTCOME_UNKNOWN 核对和可靠 SSE。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。

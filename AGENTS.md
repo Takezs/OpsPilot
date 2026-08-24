@@ -50,8 +50,9 @@
 - M1 / 任务 1–4 已批准。
 - M2 / 任务 5：权限感知 Hybrid Retrieval 已通过督导复审。
 - M2 / 任务 6：Reranker、上下文预算与引用回答已通过督导复审。
-- 下一项是 M2 / 任务 7：Run Journal 与 Transactional Outbox。
-- 未经新的检查点批准，不要直接跳到任务 8 或更后任务。
+- M2 / 任务 7：Run Journal 与 Transactional Outbox 已完成，等待督导复审。
+- 下一项是 M2 / 任务 8：Tool Registry、Agent Loop 与演示服务。
+- 未经新的检查点批准，不要直接跳到任务 9 或更后任务。
 - `attempt=0` outbox lifecycle 是已记录的非阻塞技术债，不要顺带重构。
 
 ## 常用验证命令
