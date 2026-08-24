@@ -47,6 +47,11 @@ async def publish_pending_events(notifier: RunEventNotifier, batch_size: int = 1
     excluded for the remainder of this call so one permanently-poisoned row
     cannot block other processable events. Repeat delivery is safe because
     consumers deduplicate by ``(run_id, seq)``.
+
+    Rows are selected in ``(run_id, seq)`` order as a best-effort ordering;
+    ``SKIP LOCKED`` provides no strict cross-publisher ordering, so consumers
+    must tolerate out-of-order delivery and re-fetch missing events from
+    PostgreSQL.
     """
     delivered = 0
     attempted: list[uuid.UUID] = []

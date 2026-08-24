@@ -9,6 +9,7 @@ from opspilot.runs.sanitize import (
     REDACTED_EMAIL,
     REDACTED_PHONE,
     TRUNCATION_MARKER,
+    PayloadInvalidError,
     PayloadTooLargeError,
     sanitize_payload,
 )
@@ -25,6 +26,29 @@ def test_redacts_authorization_and_api_key_values() -> None:
     assert sanitized["headers"]["X-Api-Key"] == REDACTED
     assert sanitized["api_key"] == REDACTED
     assert sanitized["access_token"] == REDACTED
+
+
+def test_redacts_combination_key_variants() -> None:
+    payload = {
+        "client_secret": "cs-1",
+        "private_key": "pk-2",
+        "session_token": "st-3",
+        "id_token": "id-4",
+        "proxy_authorization": "Basic dXNlcjpwYXNz",
+    }
+    sanitized = sanitize_payload(payload)
+    assert sanitized["client_secret"] == REDACTED
+    assert sanitized["private_key"] == REDACTED
+    assert sanitized["session_token"] == REDACTED
+    assert sanitized["id_token"] == REDACTED
+    assert sanitized["proxy_authorization"] == REDACTED
+
+
+def test_does_not_redact_non_secret_suffix_fields() -> None:
+    payload = {"token_count": 42, "access_level": 1}
+    sanitized = sanitize_payload(payload)
+    assert sanitized["token_count"] == 42
+    assert sanitized["access_level"] == 1
 
 
 def test_redacts_email_and_phone_in_values() -> None:
@@ -69,3 +93,12 @@ def test_rejects_oversized_payload() -> None:
     payload = {"items": ["a" * 500 for _ in range(MAX_PAYLOAD_BYTES // 250 + 1)]}
     with pytest.raises(PayloadTooLargeError):
         sanitize_payload(payload)
+
+
+def test_rejects_nan_and_infinity() -> None:
+    with pytest.raises(PayloadInvalidError):
+        sanitize_payload({"score": float("nan")})
+    with pytest.raises(PayloadInvalidError):
+        sanitize_payload({"ratio": float("inf")})
+    with pytest.raises(PayloadInvalidError):
+        sanitize_payload({"nested": {"delta": float("-inf")}})

@@ -26,28 +26,27 @@ TRUNCATION_MARKER = "…"
 # corrupting it.
 MAX_PAYLOAD_BYTES = 64 * 1024  # 64 KiB
 
-# Keys that mark a whole value (and any nested subtree) as sensitive. Matching
-# is case-insensitive and ignores separators, so ``api_key``, ``API-Key`` and
-# ``access_token`` all resolve to the same normalized marker.
+# Keys that mark a whole value (and any nested subtree) as sensitive. Matching is
+# case-insensitive and ignores separators, and a key is sensitive when its
+# normalized form *ends with* one of these markers. Suffix matching catches
+# combination keys such as ``client_secret``, ``private_key``, ``session_token``,
+# ``id_token`` and ``proxy_authorization``, while a benign ``token_count`` is
+# left alone because its sensitive part is a prefix, not a suffix.
 SENSITIVE_KEY_MARKERS = frozenset(
     {
         "authorization",
-        "auth",
-        "apikey",
-        "apikeys",
-        "token",
-        "accesstoken",
-        "refreshtoken",
-        "secret",
-        "apisecret",
         "password",
         "passwd",
+        "secret",
+        "secrets",
+        "token",
+        "tokens",
+        "key",
+        "keys",
         "credential",
         "credentials",
         "cookie",
-        "setcookie",
-        "bearer",
-        "xapikey",
+        "cookies",
     }
 )
 
@@ -60,12 +59,25 @@ _PHONE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
 _AUTH_SCHEME_RE = re.compile(r"\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 
 
-class PayloadTooLargeError(ValueError):
+class PayloadError(ValueError):
+    """Base class for payload validation failures at the journal boundary."""
+
+
+class PayloadTooLargeError(PayloadError):
     """Raised when a sanitized payload exceeds ``MAX_PAYLOAD_BYTES``."""
+
+
+class PayloadInvalidError(PayloadError):
+    """Raised when a payload contains a value JSONB cannot represent (e.g. NaN)."""
 
 
 def _normalize_key(key: str) -> str:
     return re.sub(r"[^a-z0-9]", "", key.lower())
+
+
+def _is_sensitive_key(key: str) -> bool:
+    normalized = _normalize_key(key)
+    return any(normalized.endswith(marker) for marker in SENSITIVE_KEY_MARKERS)
 
 
 def _truncate(value: str) -> str:
@@ -90,7 +102,7 @@ def sanitize_value(value: Any) -> Any:
     """
     if isinstance(value, dict):
         return {
-            key: REDACTED if _normalize_key(key) in SENSITIVE_KEY_MARKERS else sanitize_value(item)
+            key: REDACTED if _is_sensitive_key(key) else sanitize_value(item)
             for key, item in value.items()
         }
     if isinstance(value, list):
@@ -105,11 +117,18 @@ def sanitize_value(value: Any) -> Any:
 def sanitize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Sanitize a payload and enforce its overall byte limit.
 
-    This is the single journal write boundary: redaction, truncation and the
-    overall size cap all happen here, before the payload is persisted.
+    This is the single journal write boundary: redaction, truncation, JSONB
+    serializability and the overall size cap all happen here, before the payload
+    is persisted. NaN/Infinity and any other value JSONB cannot represent raise
+    ``PayloadInvalidError`` rather than surfacing as a raw driver error after the
+    run's sequence counter has already been touched.
     """
     sanitized = sanitize_value(payload)
-    size = len(json.dumps(sanitized, ensure_ascii=False).encode("utf-8"))
+    try:
+        serialized = json.dumps(sanitized, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as error:
+        raise PayloadInvalidError(f"payload is not JSONB-serializable: {error}") from error
+    size = len(serialized.encode("utf-8"))
     if size > MAX_PAYLOAD_BYTES:
         raise PayloadTooLargeError(
             f"payload size {size} bytes exceeds limit {MAX_PAYLOAD_BYTES} bytes"

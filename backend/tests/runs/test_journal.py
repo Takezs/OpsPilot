@@ -23,6 +23,7 @@ from opspilot.runs.sanitize import (
     MAX_PAYLOAD_BYTES,
     MAX_STRING_LENGTH,
     REDACTED,
+    PayloadInvalidError,
     PayloadTooLargeError,
 )
 
@@ -204,6 +205,33 @@ async def test_append_event_rejects_oversized_payload() -> None:
         payload = {"items": ["a" * 500 for _ in range(MAX_PAYLOAD_BYTES // 250 + 1)]}
         async with async_session_factory() as session:
             with pytest.raises(PayloadTooLargeError):
+                await append_event(session, run_id, "retrieved", payload)
+            await session.rollback()
+
+        async with async_session_factory() as session:
+            events = list(await session.scalars(select(RunEvent).where(RunEvent.run_id == run_id)))
+            outbox = list(
+                await session.scalars(select(EventOutbox).where(EventOutbox.run_id == run_id))
+            )
+            run = await session.get(Run, run_id)
+
+        assert events == []
+        assert outbox == []
+        assert run is not None
+        assert run.next_seq == 0
+    finally:
+        await cleanup_runs([run_id])
+
+
+async def test_append_event_rejects_non_serializable_payload() -> None:
+    run_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.QUEUED))
+        await session.commit()
+    try:
+        payload = {"score": float("nan"), "metrics": {"ratio": float("inf")}}
+        async with async_session_factory() as session:
+            with pytest.raises(PayloadInvalidError):
                 await append_event(session, run_id, "retrieved", payload)
             await session.rollback()
 

@@ -92,14 +92,14 @@
 
 ### 任务 7 复审修复（P1）
 
-- Journal 写入边界统一递归脱敏与载荷限制：`sanitize_payload` 在 `append_event` 持久化前执行，脱敏敏感键（Authorization/API Key/token/secret/password/cookie 等，大小写与分隔符不敏感）、值内邮箱与手机号（`Bearer`/`Basic` 凭证方案一并脱敏）、超长字符串截断到 `MAX_STRING_LENGTH`、整体序列化字节数超过 `MAX_PAYLOAD_BYTES` 时 fail-closed 抛 `PayloadTooLargeError`（此时不消耗 seq、不回写任何行）。新增真实持久化断言与纯单元测试覆盖上述全部用例。
-- Publisher 采用 poison row 隔离：单条失败记录 `attempts`/`last_error` 后 `continue`，并在本次调用内排除已失败 ID，使一条永久失败的 poison row 不再阻塞其他可处理事件；投递顺序改为 `(run_id, seq)` 以保证同一 Run 内按 seq 顺序投递。新增“首条永久失败、后续事件仍成功投递”的回归测试。
+- Journal 写入边界统一递归脱敏与载荷限制：`sanitize_payload` 在 `append_event` 持久化前执行，脱敏敏感键（大小写与分隔符不敏感，后缀匹配 `secret`/`key`/`token`/`authorization`/`password`/`credential`/`cookie` 及其复数，可覆盖 `client_secret`、`private_key`、`session_token`、`id_token`、`proxy_authorization` 等组合键，同时不误伤 `token_count` 等非秘密字段）、值内邮箱与手机号（`Bearer`/`Basic` 凭证方案一并脱敏）、超长字符串截断到 `MAX_STRING_LENGTH`、整体序列化字节数超过 `MAX_PAYLOAD_BYTES` 时 fail-closed 抛 `PayloadTooLargeError`；`NaN`/`Infinity` 及其他不可序列化值经 `allow_nan=False` 统一转为 `PayloadInvalidError`（此时不消耗 seq、不回写任何行）。新增真实持久化断言与纯单元测试覆盖上述全部用例。
+- Publisher 采用 poison row 隔离：单条失败记录 `attempts`/`last_error` 后 `continue`，并在本次调用内排除已失败 ID，使一条永久失败的 poison row 不再阻塞其他可处理事件；投递按 `(run_id, seq)` 尽力排序（`SKIP LOCKED` 在并发 Publisher 下仅提供尽力排序，不保证严格顺序，SSE 契约容忍乱序并从 PostgreSQL 补拉）。新增“首条永久失败、后续事件仍成功投递”的回归测试。
 
 ## 当前验证基线
 
 任务 7 复审修复后的真实结果：
 
-- 完整测试：`107 passed`（任务 7 基线 98 + 复审修复定向 9：脱敏单测 6 + 持久化脱敏断言 1 + 超大载荷拒绝断言 1 + poison row 隔离 1）。
+- 完整测试：`111 passed`（任务 7 基线 98 + 复审修复定向 13：脱敏单测 9 + 持久化脱敏断言 1 + 超大载荷拒绝断言 1 + 非可序列化载荷拒绝断言 1 + poison row 隔离 1）。
 - Ruff format：83 个文件格式正确。
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：51 个源文件无问题。
