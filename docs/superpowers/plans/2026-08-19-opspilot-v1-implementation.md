@@ -273,17 +273,19 @@ git commit -m "feat: add permission aware hybrid retrieval"
 
 ### 任务 6：Reranker、上下文预算与引用回答
 
+**状态：✅ 已完成，等待督导复审。**
+
 **文件：**
 - 创建：`backend/src/opspilot/retrieval/reranker.py`、`context_builder.py`
 - 创建：`backend/src/opspilot/generation/provider.py`、`rewrite.py`、`prompts.py`、`citations.py`、`service.py`
 - 创建：`backend/tests/retrieval/test_context.py`
 - 创建：`backend/tests/generation/test_citations.py`
 
-- [ ] **步骤 1：编写预算、降级与引用测试**
+- [x] **步骤 1：编写预算、降级与引用测试**
 
 断言 Reranker 超时保持 RRF 顺序并设置 `degraded`；上下文不超预算且引用 ID 顺序稳定；未检索、过期或不存在的引用使事实回答转为 `insufficient_evidence=True`。
 
-- [ ] **步骤 2：实现 Provider 契约**
+- [x] **步骤 2：实现 Provider 契约**
 
 ```python
 class GroundedAnswer(BaseModel):
@@ -295,11 +297,11 @@ class GroundedAnswer(BaseModel):
 
 实现 DeepSeek V4 Flash OpenAI-compatible Provider、BGE Reranker 和 Fake Provider。Query Rewrite 放在 Generation，由 Agent Orchestrator 按需调用，不放入 Retrieval。
 
-- [ ] **步骤 3：实现 Context Builder 与 Citation Validator**
+- [x] **步骤 3：实现 Context Builder 与 Citation Validator**
 
 上下文标识为 `[DOC:<document_id>#<chunk_id>]`，携带版本、章节、生效日期和页码；保存消息引用快照。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
 运行：`cd backend && pytest tests/retrieval/test_context.py tests/generation/test_citations.py -q`。预期 PASS。
 

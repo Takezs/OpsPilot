@@ -1,0 +1,130 @@
+"""BGE reranker with an explicit degraded fallback to the RRF ordering.
+
+A reranker timeout must never be swallowed: ``rerank_with_fallback`` imposes a
+wall-clock timeout and, on expiry, returns the input (RRF) ordering with
+``RerankStatus.DEGRADED`` so the pipeline records the degradation event instead
+of silently losing ranking signal.
+"""
+
+import asyncio
+import hashlib
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Protocol
+
+import httpx
+
+from opspilot.retrieval.types import RetrievalCandidate
+
+
+class RerankStatus(StrEnum):
+    OK = "ok"
+    DEGRADED = "degraded"
+
+
+@dataclass(frozen=True)
+class RerankItem:
+    candidate: RetrievalCandidate
+    content: str
+
+
+@dataclass(frozen=True)
+class RerankedResult:
+    status: RerankStatus
+    candidates: tuple[RetrievalCandidate, ...]
+
+
+class RerankerProvider(Protocol):
+    async def rerank(self, query: str, items: Sequence[RerankItem]) -> RerankedResult: ...
+
+
+async def rerank_with_fallback(
+    provider: RerankerProvider,
+    query: str,
+    items: Sequence[RerankItem],
+    timeout_seconds: float,
+) -> RerankedResult:
+    """Rerank ``items``, degrading to the input ordering when the call times out.
+
+    The timeout is applied uniformly with ``asyncio.wait_for`` so every provider
+    (remote HTTP or local) degrades the same way. The fallback preserves the
+    RRF ordering and reports ``RerankStatus.DEGRADED``.
+    """
+    try:
+        return await asyncio.wait_for(provider.rerank(query, items), timeout=timeout_seconds)
+    except TimeoutError:
+        return RerankedResult(
+            status=RerankStatus.DEGRADED,
+            candidates=tuple(item.candidate for item in items),
+        )
+
+
+class BgeReranker:
+    """BGE reranker exposed over an OpenAI-compatible ``/rerank`` endpoint."""
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str = "BAAI/bge-reranker-v2-m3",
+        timeout_seconds: float = 60.0,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+        self._client = httpx.AsyncClient(timeout=timeout_seconds)
+
+    async def rerank(self, query: str, items: Sequence[RerankItem]) -> RerankedResult:
+        response = await self._client.post(
+            f"{self.base_url}/rerank",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={
+                "model": self.model,
+                "query": query,
+                "documents": [item.content for item in items],
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        scored: list[tuple[float, RerankItem]] = []
+        for entry in data.get("results", []):
+            item = items[entry["index"]]
+            scored.append((float(entry["score"]), item))
+        scored.sort(key=lambda pair: (-pair[0], pair[1].candidate.chunk_id))
+        return RerankedResult(
+            status=RerankStatus.OK,
+            candidates=tuple(item.candidate for _, item in scored),
+        )
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
+class DeterministicReranker:
+    """Deterministic reranker for unit tests; never calls an external service.
+
+    Scores come from an optional ``chunk_id -> score`` mapping and fall back to
+    a content hash so results are reproducible. Ties break by ascending chunk id
+    so the output is stable across runs.
+    """
+
+    def __init__(self, scores: Mapping[str, float] | None = None) -> None:
+        self._scores = dict(scores or {})
+
+    async def rerank(self, query: str, items: Sequence[RerankItem]) -> RerankedResult:
+        scored: list[tuple[float, RerankItem]] = []
+        for item in items:
+            score = self._scores.get(item.candidate.chunk_id, _content_score(item.content))
+            scored.append((score, item))
+        scored.sort(key=lambda pair: (-pair[0], pair[1].candidate.chunk_id))
+        return RerankedResult(
+            status=RerankStatus.OK,
+            candidates=tuple(item.candidate for _, item in scored),
+        )
+
+
+def _content_score(content: str) -> float:
+    digest = hashlib.sha256(content.encode()).digest()
+    return float(int.from_bytes(digest[:8], "big")) / float(2**64)

@@ -2,14 +2,14 @@
 
 > 最后更新：2026-08-24  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2 / 任务 5 已通过督导复审
+> 当前阶段：M2 / 任务 6 已完成（等待督导复审）
 
 ## 总体进度
 
 | 里程碑 | 任务 | 状态 | 当前结果 |
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
-| M2 可解释 RAG | 5–7 | 进行中 | 任务 5 权限感知 Hybrid Retrieval 已通过督导复审 |
+| M2 可解释 RAG | 5–7 | 进行中 | 任务 5 已通过督导复审；任务 6 Reranker/上下文预算/引用回答已完成、等待复审 |
 | M3 可靠 Agent | 8–12 | 待开发 | Tool、审批、Operation、核对、SSE |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
@@ -68,14 +68,22 @@
 - 提交：`1bce950 feat: add permission aware hybrid retrieval (task 5)`。
 - 状态：**已通过督导复审（2026-08-24）**，验收提交 `d5ba8f3`（READY 过滤、CI、`effective_at`、文档同步）与 `b490bad`（CI 顺序、KB 最小权限边界、状态文案）。0009 迁移链、READY/权限 SQL 过滤与真实 PostgreSQL 测试均无阻塞。
 
+### 任务 6：Reranker、上下文预算与引用回答
+
+- 实现 BGE Reranker（OpenAI-compatible `/rerank`）；超时通过 `rerank_with_fallback` 保持 RRF 顺序并记录 `reranker_status=degraded`，不吞掉错误。
+- 实现 Context Builder 与令牌预算：片段按输入（rerank 后）顺序贪心放入，永不超预算；稳定引用 ID `[DOC:<document_id>#<chunk_id>]`，携带标题、文档版本、章节、`effective_at` 与页码。
+- 实现 DeepSeek V4 Flash 结构化回答 Provider（`GroundedAnswer` 契约）与 Citation Validator：事实型回答无有效引用时转为 `insufficient_evidence=True`，不会只删无效引用后保留确定性回答；有效引用保存快照（`document_id + document_version + chunk_id + section_path + page`）。
+- Query Rewrite 放在 Generation（`rewrite.py`），由 Agent Orchestrator 按需调用，未放入 Retrieval；不实现 Run Journal、Tool Gateway、SSE 或前端。
+- 状态：**任务 6 实现完成，等待督导复审。**
+
 ## 当前验证基线
 
 任务 5 督导验收后的真实结果：
 
-- 完整测试：`72 passed`（M1 基线 63 + fusion 4 + scope 集成 2 + READY 状态 1 + 稳定排序 1 + effective_at 上传 1）。
-- Ruff format：64 个文件格式正确。
+- 完整测试：`88 passed`（任务 5 基线 72 + 任务 6 定向 16：reranker 超时降级 1 + 确定性重排 2 + citation_id 1 + 上下文预算 2 + 引用 ID 稳定 1 + 空上下文 1 + 引用校验 7 + 服务接线 1）。
+- Ruff format：74 个文件格式正确。
 - Ruff check：全部通过。
-- Mypy `--no-incremental`：38 个源文件无问题。
+- Mypy `--no-incremental`：46 个源文件无问题。
 - Alembic：`0009_document_effective_at (head)`；0001→0009 全链在全新数据库验证通过。
 - PostgreSQL：healthy，`pg_isready` 为 accepting connections。
 - Redis：healthy，`redis-cli ping` 返回 `PONG`。
@@ -89,18 +97,17 @@
 - Document 增加 `effective_at`（默认上传时间），新增 `0009_document_effective_at` 迁移。
 - 实现计划中任务 7/9/16 的固定迁移文件名（0004/0005/0006）已移除，改为基于当前 head 生成新 revision。
 
-## 下一步：M2 / 任务 6
+## 下一步：M2 / 任务 7
 
-目标是实现 Reranker、上下文预算与引用回答：
+任务 6 已完成并等待督导复审。复审通过后进入任务 7：
 
-1. 实现 BGE Reranker；超时保持 RRF 顺序并记录降级。
-2. 实现 Context Builder 与上下文预算，稳定引用 ID `[DOC:<id>#<chunk_id>]`，携带版本、章节、生效日期与页码。
-3. 实现 DeepSeek 结构化回答与 Citation Validator；无有效引用的事实回答转为证据不足。
-4. 通过定向测试、完整 pytest、Ruff、Mypy 后提交任务 6 检查点。
+1. 实现 Run Journal 与 Transactional Outbox：并发追加事件断言 `(run_id, seq)` 连续唯一。
+2. 事务内 Journal API 与 Outbox Publisher（`FOR UPDATE SKIP LOCKED` 只向 Redis 发布 `{run_id, seq}`）。
+3. 通过定向测试、完整 pytest、Ruff、Mypy 后单独提交。
 
 ## 后续开发计划
 
-- 任务 6：BGE Reranker、上下文预算、DeepSeek 引用回答与 Citation Validator。
+- 任务 6：BGE Reranker、上下文预算、DeepSeek 引用回答与 Citation Validator（✅ 已完成，等待督导复审）。
 - 任务 7：Run Journal、连续 seq 与 Transactional Outbox。
 - 任务 8–12：Tool Registry、Agent、审批、Operation fencing、OUTCOME_UNKNOWN 核对和可靠 SSE。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
