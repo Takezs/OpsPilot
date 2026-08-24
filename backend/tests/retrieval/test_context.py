@@ -67,6 +67,14 @@ class _TimeoutReranker:
         raise TimeoutError()
 
 
+class _SlowReranker:
+    """Stub provider that outlives the wall-clock guard to trigger cancellation."""
+
+    async def rerank(self, query: str, items: list[RerankItem]) -> object:
+        await asyncio.sleep(10)
+        raise AssertionError("must not finish within the wall-clock timeout")
+
+
 async def test_reranker_timeout_keeps_rrf_order_and_marks_degraded() -> None:
     rrf_order = [candidate("b", 1), candidate("a", 2), candidate("c", 3)]
     items = [RerankItem(candidate=item, content=f"content-{item.chunk_id}") for item in rrf_order]
@@ -91,6 +99,16 @@ async def test_reranker_degrades_on_real_http_timeout() -> None:
     assert result.status is RerankStatus.DEGRADED
     assert [candidate.chunk_id for candidate in result.candidates] == ["b", "a"]
     await client.aclose()
+
+
+async def test_reranker_degrades_on_wall_clock_timeout() -> None:
+    rrf_order = [candidate("b", 1), candidate("a", 2), candidate("c", 3)]
+    items = [RerankItem(candidate=item, content=f"content-{item.chunk_id}") for item in rrf_order]
+
+    result = await rerank_with_fallback(_SlowReranker(), "query", items, timeout_seconds=0.001)
+
+    assert result.status is RerankStatus.DEGRADED
+    assert [candidate.chunk_id for candidate in result.candidates] == ["b", "a", "c"]
 
 
 class _BoomReranker:
