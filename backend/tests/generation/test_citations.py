@@ -110,7 +110,7 @@ def test_nonexistent_citation_marks_factual_answer_insufficient() -> None:
     assert validated.citations == ()
 
 
-def test_partial_invalid_citations_are_filtered_keeping_valid() -> None:
+def test_any_invalid_citation_degrades_whole_factual_answer() -> None:
     doc_id = str(uuid.uuid4())
     valid = citation_id(doc_id, "chunk-1")
     ctx = context_for(fragment("chunk-1", doc_id))
@@ -118,9 +118,11 @@ def test_partial_invalid_citations_are_filtered_keeping_valid() -> None:
 
     validated = validate_citations(answer, ctx)
 
-    assert validated.insufficient_evidence is False
-    assert validated.citations == (valid,)
-    assert len(validated.snapshots) == 1
+    # Fail-closed: the mixed valid/invalid citation set degrades the whole
+    # factual answer instead of keeping the valid reference.
+    assert validated.insufficient_evidence is True
+    assert validated.citations == ()
+    assert validated.snapshots == ()
 
 
 def test_follow_up_question_does_not_require_citations() -> None:

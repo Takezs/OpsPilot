@@ -1,9 +1,10 @@
 """Citation validation against the built context.
 
-A factual answer whose citations are absent from the context must become
-``insufficient_evidence`` rather than silently dropping the invalid references
-and keeping a confident answer. Valid citations carry a snapshot that locates
-the generation-time document version, section and page.
+Validation is fail-closed: a factual answer that cites any reference absent
+from the context (un-retrieved, outdated or nonexistent) must become
+``insufficient_evidence`` in full, never silently keeping the valid references
+alongside a confident answer. Valid citations carry a snapshot that locates the
+generation-time document version, section and page.
 """
 
 from collections.abc import Mapping
@@ -29,21 +30,31 @@ class ValidatedAnswer:
 
 def validate_citations(answer: GroundedAnswer, context: BuiltContext) -> ValidatedAnswer:
     by_id = {item.citation_id: item for item in context.fragments}
-    valid = [citation for citation in answer.citations if citation in by_id]
 
     if answer.follow_up_question is not None:
+        valid = [citation for citation in answer.citations if citation in by_id]
         return _build(answer, valid, by_id, insufficient_evidence=False)
 
-    if answer.insufficient_evidence or not valid:
-        return ValidatedAnswer(
-            answer=answer.answer,
-            citations=(),
-            snapshots=(),
-            insufficient_evidence=True,
-            follow_up_question=None,
-        )
+    if answer.insufficient_evidence or not answer.citations:
+        return _insufficient(answer)
+
+    valid = [citation for citation in answer.citations if citation in by_id]
+    if len(valid) != len(answer.citations):
+        # Fail-closed: any citation absent from the context degrades the whole
+        # factual answer instead of silently keeping the valid references.
+        return _insufficient(answer)
 
     return _build(answer, valid, by_id, insufficient_evidence=False)
+
+
+def _insufficient(answer: GroundedAnswer) -> ValidatedAnswer:
+    return ValidatedAnswer(
+        answer=answer.answer,
+        citations=(),
+        snapshots=(),
+        insufficient_evidence=True,
+        follow_up_question=None,
+    )
 
 
 def _build(

@@ -76,11 +76,16 @@
 - Query Rewrite 放在 Generation（`rewrite.py`），由 Agent Orchestrator 按需调用，未放入 Retrieval；不实现 Run Journal、Tool Gateway、SSE 或前端。
 - 状态：**任务 6 实现完成，等待督导复审。**
 
+### 任务 6 复审修复（P1）
+
+- Citation Validator 改为 **fail-closed**：事实回答只要包含任一未检索、过期或不存在的引用，整体转为 `insufficient_evidence=True`，不再保留有效引用后继续输出确定性回答。
+- Reranker fallback 覆盖真实 HTTP 超时：`BgeReranker` 将 `httpx.TimeoutException` 在 Provider 边界转换为领域超时异常 `RerankerTimeoutError`（`TimeoutError` 子类），`rerank_with_fallback` 统一降级到 RRF 顺序；无关异常（如 `RuntimeError`）不被吞掉，直接传播。
+
 ## 当前验证基线
 
 任务 5 督导验收后的真实结果：
 
-- 完整测试：`88 passed`（任务 5 基线 72 + 任务 6 定向 16：reranker 超时降级 1 + 确定性重排 2 + citation_id 1 + 上下文预算 2 + 引用 ID 稳定 1 + 空上下文 1 + 引用校验 7 + 服务接线 1）。
+- 完整测试：`90 passed`（任务 5 基线 72 + 任务 6 定向 18：reranker 超时降级 1 + 真实 HTTP 超时 1 + 无关异常传播 1 + 确定性重排 2 + citation_id 1 + 上下文预算 2 + 引用 ID 稳定 1 + 空上下文 1 + 引用校验 7 + 服务接线 1）。
 - Ruff format：74 个文件格式正确。
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：46 个源文件无问题。

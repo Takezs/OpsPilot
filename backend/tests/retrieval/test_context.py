@@ -9,6 +9,9 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
+import httpx
+import pytest
+
 from opspilot.retrieval.context_builder import (
     BuiltContext,
     ContextFragment,
@@ -16,6 +19,7 @@ from opspilot.retrieval.context_builder import (
     citation_id,
 )
 from opspilot.retrieval.reranker import (
+    BgeReranker,
     DeterministicReranker,
     RerankItem,
     RerankStatus,
@@ -71,6 +75,36 @@ async def test_reranker_timeout_keeps_rrf_order_and_marks_degraded() -> None:
 
     assert result.status is RerankStatus.DEGRADED
     assert [candidate.chunk_id for candidate in result.candidates] == ["b", "a", "c"]
+
+
+async def test_reranker_degrades_on_real_http_timeout() -> None:
+    def _raise_timeout(_request: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("simulated upstream timeout")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_raise_timeout))
+    reranker = BgeReranker(base_url="http://reranker.local", api_key="test", client=client)
+    rrf_order = [candidate("b", 1), candidate("a", 2)]
+    items = [RerankItem(candidate=item, content=f"content-{item.chunk_id}") for item in rrf_order]
+
+    result = await rerank_with_fallback(reranker, "query", items, timeout_seconds=5.0)
+
+    assert result.status is RerankStatus.DEGRADED
+    assert [candidate.chunk_id for candidate in result.candidates] == ["b", "a"]
+    await client.aclose()
+
+
+class _BoomReranker:
+    """Stub provider that raises an unrelated error, for the propagation test."""
+
+    async def rerank(self, query: str, items: list[RerankItem]) -> object:
+        raise RuntimeError("upstream exploded")
+
+
+async def test_rerank_with_fallback_propagates_unrelated_errors() -> None:
+    items = [RerankItem(candidate=candidate("b", 1), content="x")]
+
+    with pytest.raises(RuntimeError, match="upstream exploded"):
+        await rerank_with_fallback(_BoomReranker(), "query", items, timeout_seconds=1.0)
 
 
 async def test_deterministic_reranker_reorders_candidates() -> None:

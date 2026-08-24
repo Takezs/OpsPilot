@@ -35,6 +35,15 @@ class RerankedResult:
     candidates: tuple[RetrievalCandidate, ...]
 
 
+class RerankerTimeoutError(TimeoutError):
+    """Raised by a reranker provider when the upstream call times out.
+
+    The domain fallback treats this like any other timeout (including
+    ``asyncio.TimeoutError`` from the wall-clock guard) so remote and local
+    providers degrade identically.
+    """
+
+
 class RerankerProvider(Protocol):
     async def rerank(self, query: str, items: Sequence[RerankItem]) -> RerankedResult: ...
 
@@ -48,8 +57,9 @@ async def rerank_with_fallback(
     """Rerank ``items``, degrading to the input ordering when the call times out.
 
     The timeout is applied uniformly with ``asyncio.wait_for`` so every provider
-    (remote HTTP or local) degrades the same way. The fallback preserves the
-    RRF ordering and reports ``RerankStatus.DEGRADED``.
+    (remote HTTP or local) degrades the same way. Provider-level timeouts that
+    surface as ``RerankerTimeoutError`` (a ``TimeoutError`` subclass) are caught
+    too; unrelated exceptions propagate to the caller.
     """
     try:
         return await asyncio.wait_for(provider.rerank(query, items), timeout=timeout_seconds)
@@ -61,7 +71,12 @@ async def rerank_with_fallback(
 
 
 class BgeReranker:
-    """BGE reranker exposed over an OpenAI-compatible ``/rerank`` endpoint."""
+    """BGE reranker exposed over an OpenAI-compatible ``/rerank`` endpoint.
+
+    HTTP timeouts are converted into ``RerankerTimeoutError`` at the provider
+    boundary so the fallback logic treats remote and local providers uniformly.
+    Unrelated HTTP errors are not swallowed and propagate to the caller.
+    """
 
     def __init__(
         self,
@@ -69,23 +84,27 @@ class BgeReranker:
         api_key: str,
         model: str = "BAAI/bge-reranker-v2-m3",
         timeout_seconds: float = 60.0,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
-        self._client = httpx.AsyncClient(timeout=timeout_seconds)
+        self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
 
     async def rerank(self, query: str, items: Sequence[RerankItem]) -> RerankedResult:
-        response = await self._client.post(
-            f"{self.base_url}/rerank",
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            json={
-                "model": self.model,
-                "query": query,
-                "documents": [item.content for item in items],
-            },
-        )
+        try:
+            response = await self._client.post(
+                f"{self.base_url}/rerank",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": self.model,
+                    "query": query,
+                    "documents": [item.content for item in items],
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise RerankerTimeoutError("reranker request timed out") from exc
         response.raise_for_status()
         data = response.json()
         scored: list[tuple[float, RerankItem]] = []
