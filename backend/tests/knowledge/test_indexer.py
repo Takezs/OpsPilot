@@ -451,3 +451,55 @@ async def test_failed_document_rejects_untrusted_retry(tmp_path: Path) -> None:
     finally:
         await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
         await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("document_status", ["UPLOADED", "PARSING", "CHUNKING", "INDEXING"])
+async def test_forged_retry_attempt_never_mutates_ingestion_state(
+    tmp_path: Path, document_status: str
+) -> None:
+    source = tmp_path / f"forged-{document_status.lower()}.md"
+    source.write_text("must not run", encoding="utf-8")  # noqa: ASYNC240
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    knowledge_base_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    await connection.execute(
+        "INSERT INTO knowledge_bases (id, name, department, access_level) "
+        "VALUES ($1, $2, 'support', 1)",
+        knowledge_base_id,
+        f"forged-kb-{knowledge_base_id}",
+    )
+    await connection.execute(
+        "INSERT INTO documents "
+        "(id, knowledge_base_id, title, version, content_sha256, storage_path, status) "
+        "VALUES ($1, $2, 'forged', 1, $3, $4, $5)",
+        document_id,
+        knowledge_base_id,
+        uuid.uuid4().hex.ljust(64, "0"),
+        str(source),
+        document_status,
+    )
+    try:
+        await index_document(
+            {
+                "embedding_provider": DeterministicEmbeddingProvider(dimensions=1024),
+                "file_storage": VolumeFileStorage(tmp_path),
+                "job_try": 1,
+            },
+            str(document_id),
+            retry_attempt=99,
+        )
+        assert (
+            await connection.fetchval("SELECT status FROM documents WHERE id = $1", document_id)
+            == document_status
+        )
+        assert (
+            await connection.fetchval(
+                "SELECT count(*) FROM chunks WHERE document_id = $1", document_id
+            )
+            == 0
+        )
+    finally:
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()

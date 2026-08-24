@@ -20,6 +20,13 @@ class DocumentStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class DocumentIndexStatus(StrEnum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
 
@@ -85,10 +92,18 @@ class DocumentIndexOutbox(Base):
     )
     job_id: Mapped[str] = mapped_column(String(200), unique=True)
     attempt: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[DocumentIndexStatus] = mapped_column(
+        Enum(DocumentIndexStatus, name="document_index_status"),
+        default=DocumentIndexStatus.QUEUED,
+    )
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     requested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     audit_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

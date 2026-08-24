@@ -4,6 +4,7 @@ from pathlib import Path
 
 import asyncpg
 import pytest
+from arq.worker import Retry
 from httpx import ASGITransport, AsyncClient
 
 from opspilot.auth.dependencies import get_current_principal
@@ -14,7 +15,7 @@ from opspilot.knowledge.embedding import DeterministicEmbeddingProvider
 from opspilot.knowledge.outbox import publish_pending_document_jobs
 from opspilot.knowledge.schemas import AccessLevel
 from opspilot.knowledge.storage import VolumeFileStorage
-from opspilot.knowledge.tasks import index_document
+from opspilot.knowledge.tasks import DOCUMENT_INDEX_MAX_TRIES, index_document
 from opspilot.main import app
 
 
@@ -66,6 +67,32 @@ async def test_retry_requires_reviewer_or_admin(tmp_path: Path) -> None:
                 json={"reason": "manual review"},
             )
         assert response.status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_retry_requires_non_blank_audit_reason(tmp_path: Path) -> None:
+    source = tmp_path / "blank-reason.md"
+    source.write_text("retry", encoding="utf-8")  # noqa: ASYNC240
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    knowledge_base_id, document_id = await create_document(connection, source, "FAILED")
+    app.dependency_overrides[get_current_principal] = lambda: principal(Role.REVIEWER)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1/knowledge/documents/{document_id}/retry", json={"reason": "   "}
+            )
+        assert response.status_code == 422
+        assert (
+            await connection.fetchval(
+                "SELECT count(*) FROM document_index_outbox WHERE document_id = $1", document_id
+            )
+            == 0
+        )
     finally:
         app.dependency_overrides.clear()
         await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
@@ -138,6 +165,25 @@ class DirectRetryQueue:
         self.jobs.append((document_id, retry_attempt))
 
 
+class FailingEmbeddingProvider:
+    model = "failing-test-embedding"
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("provider unavailable")
+
+
+class BlockingRetryEmbeddingProvider:
+    model = "blocking-retry-embedding"
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_retry_outbox_reaches_ready_without_duplicate_chunks(tmp_path: Path) -> None:
@@ -186,6 +232,165 @@ async def test_retry_outbox_reaches_ready_without_duplicate_chunks(tmp_path: Pat
             is True
         )
     finally:
+        app.dependency_overrides.clear()
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_final_failed_attempt_allows_next_attempt_to_reach_ready(tmp_path: Path) -> None:
+    source = tmp_path / "retry-twice.md"
+    source.write_text("# Retry\nTry again safely.", encoding="utf-8")  # noqa: ASYNC240
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    await connection.execute(
+        "UPDATE document_index_outbox SET delivered_at = now() WHERE delivered_at IS NULL"
+    )
+    knowledge_base_id, document_id = await create_document(connection, source, "FAILED")
+    app.dependency_overrides[get_current_principal] = lambda: principal(Role.ADMIN)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            first = await client.post(
+                f"/api/v1/knowledge/documents/{document_id}/retry",
+                json={"reason": "first attempt"},
+            )
+            assert first.status_code == 202
+            first_queue = DirectRetryQueue()
+            assert await publish_pending_document_jobs(first_queue) == 1
+            assert first_queue.jobs == [(str(document_id), 1)]
+            with pytest.raises(RuntimeError, match="provider unavailable"):
+                await index_document(
+                    {
+                        "embedding_provider": FailingEmbeddingProvider(),
+                        "file_storage": VolumeFileStorage(tmp_path),
+                        "job_try": DOCUMENT_INDEX_MAX_TRIES,
+                    },
+                    str(document_id),
+                    1,
+                )
+            assert (
+                await connection.fetchval(
+                    "SELECT status FROM document_index_outbox "
+                    "WHERE document_id = $1 AND attempt = 1",
+                    document_id,
+                )
+                == "FAILED"
+            )
+            second = await client.post(
+                f"/api/v1/knowledge/documents/{document_id}/retry",
+                json={"reason": "second attempt"},
+            )
+            assert second.status_code == 202
+            assert second.json()["attempt"] == 2
+        second_queue = DirectRetryQueue()
+        assert await publish_pending_document_jobs(second_queue) == 1
+        assert second_queue.jobs == [(str(document_id), 2)]
+        await index_document(
+            {
+                "embedding_provider": DeterministicEmbeddingProvider(dimensions=1024),
+                "file_storage": VolumeFileStorage(tmp_path),
+                "job_try": 1,
+            },
+            *second_queue.jobs[0],
+        )
+        assert (
+            await connection.fetchval("SELECT status FROM documents WHERE id = $1", document_id)
+            == "READY"
+        )
+    finally:
+        app.dependency_overrides.clear()
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_retryable_failure_keeps_attempt_running_and_raises_retry(tmp_path: Path) -> None:
+    source = tmp_path / "retryable.md"
+    source.write_text("retry later", encoding="utf-8")  # noqa: ASYNC240
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    knowledge_base_id, document_id = await create_document(connection, source, "FAILED")
+    reviewer = principal(Role.REVIEWER)
+    app.dependency_overrides[get_current_principal] = lambda: reviewer
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (
+                await client.post(
+                    f"/api/v1/knowledge/documents/{document_id}/retry",
+                    json={"reason": "retryable"},
+                )
+            ).status_code == 202
+            with pytest.raises(Retry):
+                await index_document(
+                    {
+                        "embedding_provider": FailingEmbeddingProvider(),
+                        "file_storage": VolumeFileStorage(tmp_path),
+                        "job_try": 1,
+                    },
+                    str(document_id),
+                    1,
+                )
+            duplicate = await client.post(
+                f"/api/v1/knowledge/documents/{document_id}/retry",
+                json={"reason": "duplicate"},
+            )
+        assert duplicate.status_code == 409
+        assert (
+            await connection.fetchval(
+                "SELECT status FROM document_index_outbox WHERE document_id = $1 AND attempt = 1",
+                document_id,
+            )
+            == "RUNNING"
+        )
+    finally:
+        app.dependency_overrides.clear()
+        await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
+        await connection.close()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_retry_click_during_running_attempt_returns_conflict(tmp_path: Path) -> None:
+    source = tmp_path / "running.md"
+    source.write_text("running", encoding="utf-8")  # noqa: ASYNC240
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    knowledge_base_id, document_id = await create_document(connection, source, "FAILED")
+    app.dependency_overrides[get_current_principal] = lambda: principal(Role.ADMIN)
+    provider = BlockingRetryEmbeddingProvider()
+    task: asyncio.Task[None] | None = None
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            assert (
+                await client.post(
+                    f"/api/v1/knowledge/documents/{document_id}/retry",
+                    json={"reason": "running attempt"},
+                )
+            ).status_code == 202
+            task = asyncio.create_task(
+                index_document(
+                    {
+                        "embedding_provider": provider,
+                        "file_storage": VolumeFileStorage(tmp_path),
+                        "job_try": 1,
+                    },
+                    str(document_id),
+                    1,
+                )
+            )
+            await asyncio.wait_for(provider.started.wait(), timeout=5)
+            duplicate = await asyncio.wait_for(
+                client.post(
+                    f"/api/v1/knowledge/documents/{document_id}/retry",
+                    json={"reason": "must reject now"},
+                ),
+                timeout=1,
+            )
+        assert duplicate.status_code == 409
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
         app.dependency_overrides.clear()
         await connection.execute("DELETE FROM knowledge_bases WHERE id = $1", knowledge_base_id)
         await connection.close()

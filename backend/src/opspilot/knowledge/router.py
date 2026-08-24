@@ -2,13 +2,14 @@ import asyncio
 import hashlib
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Protocol
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 
@@ -20,11 +21,13 @@ from opspilot.db import async_session_factory
 from opspilot.knowledge.models import (
     Document,
     DocumentIndexOutbox,
+    DocumentIndexStatus,
     DocumentStatus,
     KnowledgeBase,
 )
 from opspilot.knowledge.schemas import AccessLevel
 from opspilot.knowledge.storage import FileStorage, InvalidFile, VolumeFileStorage
+from opspilot.knowledge.tasks import DOCUMENT_INDEX_LEASE, document_index_lock_key
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 upload_session_factory = async_session_factory
@@ -51,7 +54,7 @@ class UploadResponse(BaseModel):
 
 
 class RetryRequest(BaseModel):
-    reason: str
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
 class RetryResponse(BaseModel):
@@ -192,10 +195,6 @@ async def retry_document(
     if principal.role not in {Role.REVIEWER, Role.ADMIN}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "reviewer or admin role required")
     async with upload_session_factory() as session:
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
-            {"key": f"document-retry:{document_id}"},
-        )
         document = await session.get(Document, document_id)
         if document is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
@@ -208,13 +207,22 @@ async def retry_document(
             raise HTTPException(status.HTTP_403_FORBIDDEN, "knowledge scope does not allow retry")
         if document.status != DocumentStatus.FAILED:
             raise HTTPException(status.HTTP_409_CONFLICT, "only failed documents can be retried")
-        pending = await session.scalar(
-            select(DocumentIndexOutbox.id).where(
-                DocumentIndexOutbox.document_id == document_id,
-                DocumentIndexOutbox.attempt > 0,
-                DocumentIndexOutbox.completed_at.is_(None),
-            )
+        pending_query = select(DocumentIndexOutbox.id).where(
+            DocumentIndexOutbox.document_id == document_id,
+            DocumentIndexOutbox.attempt > 0,
+            DocumentIndexOutbox.status.in_(
+                [DocumentIndexStatus.QUEUED, DocumentIndexStatus.RUNNING]
+            ),
         )
+        # Fast rejection avoids waiting behind a currently executing document lock.
+        pending = await session.scalar(pending_query)
+        if pending is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "document retry is already pending")
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": document_index_lock_key(document_id)},
+        )
+        pending = await session.scalar(pending_query)
         if pending is not None:
             raise HTTPException(status.HTTP_409_CONFLICT, "document retry is already pending")
         latest_attempt = await session.scalar(
@@ -230,7 +238,9 @@ async def retry_document(
                 job_id=job_id,
                 attempt=attempt,
                 requested_by=uuid.UUID(principal.user_id),
-                audit_reason=request.reason[:500],
+                audit_reason=request.reason,
+                status=DocumentIndexStatus.QUEUED,
+                lease_expires_at=datetime.now(UTC) + DOCUMENT_INDEX_LEASE,
             )
         )
         await session.commit()

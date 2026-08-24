@@ -49,6 +49,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # The preceding schema permits only one outbox row per document, so manual retry history
+    # cannot be represented after downgrade.
+    op.execute("DELETE FROM document_index_outbox WHERE attempt > 0")
     op.drop_constraint("uq_document_index_attempt", "document_index_outbox", type_="unique")
     op.drop_column("document_index_outbox", "completed_at")
     op.drop_column("document_index_outbox", "audit_reason")
