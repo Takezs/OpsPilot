@@ -1,5 +1,7 @@
 # OpsPilot v1 实现计划
 
+> 当前开发状态与最近验证证据见[开发进度](../../development-progress.md)。
+
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
 **目标：** 以纵向切片交付可上传、可检索、可引用问答、可审批退款且能从不确定结果中安全恢复的 OpsPilot，并在 v1.0 前完成可复现 Evaluation 与发布验收。
@@ -39,6 +41,8 @@
 - `evaluation/`：版本化数据集、实验配置和不可手改的报告产物。
 
 ### 任务 1：仓库骨架与质量门禁
+
+**状态：✅ 已完成。**
 
 **文件：**
 - 创建：`backend/pyproject.toml`
@@ -103,6 +107,8 @@ git commit -m "chore: initialize opspilot quality gates"
 
 ### 任务 2：PostgreSQL、Redis 与核心迁移
 
+**状态：✅ 已完成。**
+
 **文件：**
 - 创建：`docker-compose.yml`
 - 创建：`backend/src/opspilot/db.py`
@@ -141,6 +147,8 @@ git commit -m "feat: add postgres and redis infrastructure"
 ```
 
 ### 任务 3：认证、知识权限与共享文件存储
+
+**状态：✅ 已完成，并完成并发上传、可靠 Outbox 与人工重试加固。**
 
 **文件：**
 - 创建：`backend/src/opspilot/auth/models.py`、`schemas.py`、`service.py`、`router.py`
@@ -181,6 +189,8 @@ git commit -m "feat: add secure knowledge document upload"
 ```
 
 ### 任务 4：解析、结构切分与 BGE-M3 索引
+
+**状态：✅ 已完成，M1 最终复审已批准。**
 
 **文件：**
 - 创建：`backend/src/opspilot/knowledge/parsers/base.py`、`pdf.py`、`docx.py`、`markdown.py`
@@ -224,6 +234,8 @@ git commit -m "feat: index structured documents with bge m3"
 ```
 
 ### 任务 5：权限感知 Hybrid Retrieval
+
+**状态：⏭ 下一步。**
 
 **文件：**
 - 创建：`backend/src/opspilot/retrieval/types.py`、`dense.py`、`fts.py`、`fusion.py`、`service.py`
