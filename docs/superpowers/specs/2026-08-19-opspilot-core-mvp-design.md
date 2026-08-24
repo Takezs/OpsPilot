@@ -62,7 +62,7 @@ Vue Web 通过 REST 和 SSE 访问 FastAPI 模块化单体。FastAPI 包含 Auth
 ### 4.1 身份与知识
 
 - `users`：用户名、密码哈希、角色、允许部门、最大访问级别。
-- `knowledge_bases`：名称、部门、访问级别、Embedding 模型和状态。知识权限是 **KB 级**：部门与访问级别定义在 KnowledgeBase 上，文档继承所属知识库的权限，不再在 Document 上重复存储。
+- `knowledge_bases`：名称、部门、访问级别、Embedding 模型和状态。知识权限是 **KB 级**，**KnowledgeBase 是最小权限边界**：部门与访问级别定义在 KnowledgeBase 上，一个知识库固定一个部门与一个访问级别，不允许在同一知识库混放不同部门或访问级别的文档；文档继承所属知识库的权限，不再在 Document 上重复存储。
 - `documents`：知识库、标题、版本、生效时间（`effective_at`）、SHA-256、`storage_path` 和处理状态。部门与访问级别由所属 KnowledgeBase 决定。
 - `chunks`：文档版本、章节路径、页码、内容、Token 数、Embedding、`tsvector` 和元数据。
 

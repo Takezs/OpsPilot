@@ -40,6 +40,9 @@ class DocumentIndexStatus(StrEnum):
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
 
+    # KnowledgeBase is the minimal permission boundary: department and access_level are
+    # fixed per knowledge base, and every document inherits them. Mixing different
+    # departments or access levels within one knowledge base is not allowed.
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(200), unique=True)
     department: Mapped[str] = mapped_column(String(100), index=True)

@@ -2,14 +2,14 @@
 
 > 最后更新：2026-08-24  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2 / 任务 5 已完成并批准
+> 当前阶段：M2 / 任务 5 修复完成、等待复审
 
 ## 总体进度
 
 | 里程碑 | 任务 | 状态 | 当前结果 |
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
-| M2 可解释 RAG | 5–7 | 进行中 | 任务 5 权限感知 Hybrid Retrieval 已完成并批准 |
+| M2 可解释 RAG | 5–7 | 进行中 | 任务 5 权限感知 Hybrid Retrieval 修复完成、等待复审 |
 | M3 可靠 Agent | 8–12 | 待开发 | Tool、审批、Operation、核对、SSE |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
@@ -66,7 +66,7 @@
 - 实现 Reciprocal Rank Fusion（k=60）按 chunk 去重融合到 20 条，调试响应保留 Dense、FTS、RRF 各阶段排名。
 - 真实 PostgreSQL 集成测试证明受限 scope 在 Dense/FTS/RRF 候选层排除越权 Chunk，提升 scope 可检索机密 Chunk。
 - 提交：`1bce950 feat: add permission aware hybrid retrieval (task 5)`。
-- 复审：通过（2026-08-24），约束核验无违规（FTS 术语、SQL 层权限过滤、真实 PostgreSQL、无越界实现）。
+- 状态：修复完成、等待督导复审（2026-08-24）。复审已确认 0009 迁移链、READY/权限 SQL 过滤与真实 PostgreSQL 测试无阻塞；CI 顺序与状态文案按复审意见修正中。
 
 ## 当前验证基线
 

@@ -237,7 +237,7 @@ git commit -m "feat: index structured documents with bge m3"
 
 ### 任务 5：权限感知 Hybrid Retrieval
 
-**状态：✅ 已完成，复审通过。**
+**状态：✅ 已完成，等待督导复审。**
 
 **文件：**
 - 创建：`backend/src/opspilot/retrieval/types.py`、`dense.py`、`fts.py`、`fusion.py`、`service.py`

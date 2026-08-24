@@ -7,7 +7,7 @@
 
 工作目录：E:\JavaProjects\OpsPilot
 分支：plan/opspilot-core-mvp
-当前状态：M1（任务 1–4）与 M2 / 任务 5（权限感知 Hybrid Retrieval）已完成并批准；从 M2 / 任务 6 开始。
+当前状态：M1（任务 1–4）已批准，M2 / 任务 5（权限感知 Hybrid Retrieval）修复完成、等待督导复审；下一步是 M2 / 任务 6。
 
 开始前按顺序阅读：
 1. AGENTS.md
@@ -51,7 +51,7 @@
 
 不可破坏的约束：
 - PostgreSQL 是事实源，Redis 只做队列/通知；
-- 不修改 M1 / 任务 5 已批准的上传、Outbox、retry lifecycle、检索 SQL 过滤，除非任务 6 测试证明存在直接阻塞；
+- 不修改 M1 已批准与任务 5 已完成的代码（上传、Outbox、retry lifecycle、检索 SQL 过滤），除非任务 6 测试证明存在直接阻塞；
 - 不处理 attempt=0 lifecycle 技术债，它不属于任务 6；
 - 不提交 .env、API Key、Authorization、PII、临时目录或本地文件；
 - 不清理或回退主工作区。

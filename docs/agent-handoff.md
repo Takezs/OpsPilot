@@ -5,8 +5,8 @@
 - 仓库：`E:\JavaProjects\OpsPilot`
 - 分支：`plan/opspilot-core-mvp`
 - 任务 5（权限感知 Hybrid Retrieval）最新功能提交：`1bce950`
-- 复审修复（READY 过滤、CI、`effective_at`、文档同步）：见本次 review-fix 提交。
-- M1（任务 1–4）与 M2 / 任务 5 状态：已批准
+- 复审修复（READY 过滤、CI、`effective_at`、文档同步）：见 review-fix 提交。
+- M1（任务 1–4）已批准；M2 / 任务 5 修复完成、等待督导复审
 - 下一任务：任务 6，Reranker、上下文预算与引用回答
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
@@ -81,7 +81,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 ## 禁止事项
 
 - 不直接在 main 分支开发。
-- 不将 M1 / 任务 5 已批准代码重写成另一套架构。
+- 不将 M1 已批准与任务 5 已完成代码重写成另一套架构。
 - 不在 Python 层做权限后过滤；权限、READY 状态过滤必须保留在候选 SQL。
 - 不用 SQLite/Fake 数据库宣称检索集成通过。
 - 不把 PostgreSQL FTS 写成 BM25。

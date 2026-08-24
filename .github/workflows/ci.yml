@@ -41,7 +41,9 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - run: python -m pip install -e "backend[dev]"
-      - name: Verify PostgreSQL and Redis health
+      # Pre-migration: a fresh database has no extensions yet (0001 creates them), so
+      # only verify connectivity here. Extension checks must run after alembic upgrade head.
+      - name: Verify PostgreSQL and Redis connectivity
         run: |
           python - <<'EOF'
           import asyncio
@@ -49,25 +51,35 @@ jobs:
           import asyncpg
           import redis
 
-          async def check_postgres() -> None:
+          async def main() -> None:
               connection = await asyncpg.connect(
                   "postgresql://opspilot:opspilot@localhost:5432/opspilot"
               )
               assert await connection.fetchval("SELECT 1") == 1
-              rows = await connection.fetch("SELECT extname FROM pg_extension")
-              assert {"vector", "pgcrypto"} <= {row["extname"] for row in rows}
               await connection.close()
-
-          async def main() -> None:
-              await check_postgres()
               assert redis.Redis.from_url("redis://localhost:6379/0").ping()
-              print("postgres and redis health checks passed")
 
           asyncio.run(main())
           EOF
       - name: Run database migrations
         run: python -m alembic -c backend/alembic.ini upgrade head
-      - name: Verify migration head
-        run: python -m alembic -c backend/alembic.ini current
+      - name: Verify extensions and migration head
+        run: |
+          python - <<'EOF'
+          import asyncio
+
+          import asyncpg
+
+          async def main() -> None:
+              connection = await asyncpg.connect(
+                  "postgresql://opspilot:opspilot@localhost:5432/opspilot"
+              )
+              rows = await connection.fetch("SELECT extname FROM pg_extension")
+              assert {"vector", "pgcrypto"} <= {row["extname"] for row in rows}
+              await connection.close()
+
+          asyncio.run(main())
+          EOF
+          python -m alembic -c backend/alembic.ini current | grep -q "(head)"
       - name: Run quality gates and full test suite
         run: make check
