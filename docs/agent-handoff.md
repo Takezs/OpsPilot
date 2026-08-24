@@ -6,7 +6,7 @@
 - 分支：`plan/opspilot-core-mvp`
 - 任务 5（权限感知 Hybrid Retrieval）最新功能提交：`1bce950`
 - 复审修复（READY 过滤、CI、`effective_at`、文档同步）：见 review-fix 提交。
-- M1（任务 1–4）已批准；M2 / 任务 5 修复完成、等待督导复审
+- M1（任务 1–4）与 M2 / 任务 5 已批准（任务 5 督导验收提交 `d5ba8f3`、`b490bad`）
 - 下一任务：任务 6，Reranker、上下文预算与引用回答
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。

@@ -7,7 +7,7 @@
 
 工作目录：E:\JavaProjects\OpsPilot
 分支：plan/opspilot-core-mvp
-当前状态：M1（任务 1–4）已批准，M2 / 任务 5（权限感知 Hybrid Retrieval）修复完成、等待督导复审；下一步是 M2 / 任务 6。
+当前状态：M1（任务 1–4）与 M2 / 任务 5（权限感知 Hybrid Retrieval）已通过督导复审；从 M2 / 任务 6 开始。
 
 开始前按顺序阅读：
 1. AGENTS.md
