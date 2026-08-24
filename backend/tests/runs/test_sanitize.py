@@ -75,6 +75,38 @@ def test_does_not_redact_non_secret_metadata_fields() -> None:
     assert sanitized["cache_key"] == "hash-abc"
 
 
+def test_preserves_token_usage_metadata() -> None:
+    payload = {
+        "prompt_tokens": 12,
+        "completion_tokens": 34,
+        "input_tokens": 5,
+        "output_tokens": 7,
+        "total_tokens": 58,
+        "token_usage_count": 6,
+    }
+    sanitized = sanitize_payload(payload)
+    assert sanitized["prompt_tokens"] == 12
+    assert sanitized["completion_tokens"] == 34
+    assert sanitized["input_tokens"] == 5
+    assert sanitized["output_tokens"] == 7
+    assert sanitized["total_tokens"] == 58
+    assert sanitized["token_usage_count"] == 6
+
+
+def test_redacts_token_credentials() -> None:
+    payload = {
+        "access_token": "at-1",
+        "session_token": "st-1",
+        "id_token": "id-1",
+        "refresh_token": "rt-1",
+    }
+    sanitized = sanitize_payload(payload)
+    assert sanitized["access_token"] == REDACTED
+    assert sanitized["session_token"] == REDACTED
+    assert sanitized["id_token"] == REDACTED
+    assert sanitized["refresh_token"] == REDACTED
+
+
 def test_redacts_email_and_phone_in_values() -> None:
     payload = {"note": "contact user@example.com or 13812345678"}
     sanitized = sanitize_payload(payload)
@@ -158,6 +190,11 @@ def test_rejects_excessive_nesting_depth() -> None:
 def test_rejects_lone_surrogate() -> None:
     with pytest.raises(PayloadInvalidError):
         sanitize_payload({"text": "bad \ud800 surrogate"})
+
+
+def test_rejects_lone_surrogate_in_key() -> None:
+    with pytest.raises(PayloadInvalidError):
+        sanitize_payload({"bad\ud800key": "value"})
 
 
 def test_allows_shared_non_circular_references() -> None:

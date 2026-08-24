@@ -7,8 +7,8 @@ headers, full emails, phone numbers and other complete PII must never reach
 write boundary so callers cannot forget to sanitize.
 
 Validation is explicit and happens during the same recursive walk as redaction:
-non-string keys, unsupported value types, NaN/Infinity, circular references,
-excessive nesting and strings that cannot be encoded as UTF-8 all raise
+non-string keys, keys or values containing lone surrogates, unsupported value
+types, NaN/Infinity, circular references and excessive nesting all raise
 ``PayloadInvalidError``, so a bad payload is rejected before the run's sequence
 counter is ever touched.
 """
@@ -55,6 +55,13 @@ STRONG_SENSITIVE_TOKENS = frozenset(
 TOKEN_METADATA_SUFFIXES = frozenset(
     {"count", "counts", "size", "length", "number", "total", "limit", "index", "position", "offset"}
 )
+
+# A ``token``/``tokens`` token is usage metadata (not a secret) when immediately
+# followed by the word "usage" (token_usage_count) or immediately preceded by one
+# of these usage qualifiers (prompt_tokens, completion_tokens, input_tokens,
+# output_tokens, total_tokens).
+TOKEN_USAGE_WORD = "usage"
+TOKEN_USAGE_QUALIFIERS = frozenset({"prompt", "completion", "input", "output", "total"})
 
 # A ``key``/``keys`` token is a credential only when immediately preceded by one
 # of these qualifiers; otherwise it is structural metadata (partition_key,
@@ -122,17 +129,24 @@ def _is_sensitive_key(key: str) -> bool:
 
     Keys are tokenized by snake/kebab/camelCase boundaries and matched by token
     so that ``client_secret_value``, ``api_key_value`` and
-    ``authorization_header`` are caught while ``partition_key``, ``document_key``
-    and ``token_count`` are left alone.
+    ``authorization_header`` are caught while ``partition_key``, ``document_key``,
+    ``token_count`` and token-usage metadata (``prompt_tokens``,
+    ``token_usage_count``) are left alone.
     """
     tokens = _tokenize(key)
     for index, token in enumerate(tokens):
         if token in STRONG_SENSITIVE_TOKENS:
             return True
         if token in ("token", "tokens"):
+            preceding = tokens[index - 1] if index > 0 else None
             following = tokens[index + 1] if index + 1 < len(tokens) else None
-            if following not in TOKEN_METADATA_SUFFIXES:
-                return True
+            if following in TOKEN_METADATA_SUFFIXES:
+                continue  # token_count, token_size, token_total
+            if following == TOKEN_USAGE_WORD:
+                continue  # token_usage_count, token_usage_total
+            if preceding in TOKEN_USAGE_QUALIFIERS:
+                continue  # prompt_tokens, completion_tokens, total_tokens
+            return True
         if token in ("key", "keys"):
             preceding = tokens[index - 1] if index > 0 else None
             if preceding in KEY_CREDENTIAL_QUALIFIERS:
@@ -161,9 +175,10 @@ def sanitize_value(value: Any, seen: set[int] | None = None, depth: int = 0) -> 
 
     ``seen`` and ``depth`` are internal recursion parameters: ``seen`` tracks the
     identity of containers on the current path to detect circular references,
-    and ``depth`` bounds nesting below ``MAX_DEPTH``. Non-string keys, unsupported
-    value types, NaN/Infinity, cycles and excessive nesting all raise
-    ``PayloadInvalidError`` before the value reaches ``json.dumps``.
+    and ``depth`` bounds nesting below ``MAX_DEPTH``. Non-string keys, keys or
+    values with lone surrogates, unsupported value types, NaN/Infinity, cycles
+    and excessive nesting all raise ``PayloadInvalidError`` before the value
+    reaches ``json.dumps``.
     """
     if seen is None:
         seen = set()
@@ -181,6 +196,10 @@ def sanitize_value(value: Any, seen: set[int] | None = None, depth: int = 0) -> 
                 if not isinstance(key, str):
                     raise PayloadInvalidError(
                         f"payload object key must be a string, got {type(key).__name__}"
+                    )
+                if _SURROGATE_RE.search(key):
+                    raise PayloadInvalidError(
+                        "payload object key contains a lone surrogate code point"
                     )
                 result[key] = (
                     REDACTED if _is_sensitive_key(key) else sanitize_value(item, seen, depth + 1)

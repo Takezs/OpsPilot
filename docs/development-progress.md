@@ -93,16 +93,16 @@
 ### 任务 7 复审修复（P1）
 
 - Journal 写入边界统一递归脱敏与载荷限制：`sanitize_payload` 在 `append_event` 持久化前执行。
-  - 敏感键识别基于 snake/kebab/camelCase 词元（非整串后缀匹配）：强敏感名词（`secret`/`password`/`credential`/`cookie`/`authorization` 及复数）任意位置命中即脱敏；`token` 仅在非数量语境脱敏（`token_count`/`token_size` 等保留）；`key` 仅在前置凭据限定词（`api`/`private`/`signing`/`access`/`auth`/`master` 等）时脱敏，`partition_key`/`document_key`/`sort_key`/`cache_key` 等结构元数据保留。覆盖 `*_secret_value`、`api_key_value`、`authorization_header`、`apiKey`/`APISecret` 等 camelCase 组合键。
+  - 敏感键识别基于 snake/kebab/camelCase 词元（非整串后缀匹配）：强敏感名词（`secret`/`password`/`credential`/`cookie`/`authorization` 及复数）任意位置命中即脱敏；`token` 仅在非数量语境且非用量元数据语境脱敏（`token_count`/`token_size` 保留，`prompt_tokens`/`completion_tokens`/`input_tokens`/`output_tokens`/`total_tokens`/`token_usage_count` 等用量元数据保留，`access_token`/`session_token`/`id_token`/`refresh_token` 继续脱敏）；`key` 仅在前置凭据限定词（`api`/`private`/`signing`/`access`/`auth`/`master` 等）时脱敏，`partition_key`/`document_key`/`sort_key`/`cache_key` 等结构元数据保留。覆盖 `*_secret_value`、`api_key_value`、`authorization_header`、`apiKey`/`APISecret` 等 camelCase 组合键。
   - 值内邮箱与手机号（`Bearer`/`Basic` 凭证方案一并脱敏）、超长字符串截断到 `MAX_STRING_LENGTH`、整体序列化字节数超过 `MAX_PAYLOAD_BYTES` 时 fail-closed 抛 `PayloadTooLargeError`。
-  - 递归入口显式校验：非字符串键、不支持的 value 类型、`NaN`/`Infinity`、循环引用（`id()` 路径追踪）、超过 `MAX_DEPTH` 的嵌套、以及含孤立代理项（lone surrogate）的字符串，统一转为 `PayloadInvalidError`（全部在 `next_seq` 更新之前完成，不消耗 seq、不回写任何行）。
+  - 递归入口显式校验：非字符串键、不支持的 value 类型、`NaN`/`Infinity`、循环引用（`id()` 路径追踪）、超过 `MAX_DEPTH` 的嵌套、以及含孤立代理项（lone surrogate）的字符串（键与值一致校验），统一转为 `PayloadInvalidError`（全部在 `next_seq` 更新之前完成，不消耗 seq、不回写任何行）。
 - Publisher 采用 poison row 隔离：单条失败记录 `attempts`/`last_error` 后 `continue`，并在本次调用内排除已失败 ID，使一条永久失败的 poison row 不再阻塞其他可处理事件；投递按 `(run_id, seq)` 尽力排序（`SKIP LOCKED` 在并发 Publisher 下仅提供尽力排序，不保证严格顺序，SSE 契约容忍乱序并从 PostgreSQL 补拉）。新增“首条永久失败、后续事件仍成功投递”的回归测试。
 
 ## 当前验证基线
 
 任务 7 复审修复后的真实结果：
 
-- 完整测试：`118 passed`（任务 7 基线 98 + 复审修复定向 20：脱敏单测 15 + 持久化断言 4 + poison row 隔离 1）。
+- 完整测试：`123 passed`（任务 7 基线 98 + 复审修复定向 25：脱敏单测 18 + 持久化断言 6 + poison row 隔离 1）。
 - Ruff format：83 个文件格式正确。
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：51 个源文件无问题。

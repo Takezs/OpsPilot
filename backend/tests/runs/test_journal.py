@@ -251,6 +251,61 @@ async def test_append_event_rejects_circular_payload() -> None:
         await cleanup_runs([run_id])
 
 
+async def test_append_event_rejects_surrogate_in_key() -> None:
+    run_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.QUEUED))
+        await session.commit()
+    try:
+        payload = {"bad\ud800key": "value"}
+        async with async_session_factory() as session:
+            with pytest.raises(PayloadInvalidError):
+                await append_event(session, run_id, "retrieved", payload)
+            await session.rollback()
+
+        async with async_session_factory() as session:
+            events = list(await session.scalars(select(RunEvent).where(RunEvent.run_id == run_id)))
+            outbox = list(
+                await session.scalars(select(EventOutbox).where(EventOutbox.run_id == run_id))
+            )
+            run = await session.get(Run, run_id)
+
+        assert events == []
+        assert outbox == []
+        assert run is not None
+        assert run.next_seq == 0
+    finally:
+        await cleanup_runs([run_id])
+
+
+async def test_append_event_preserves_token_usage_metadata() -> None:
+    run_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.QUEUED))
+        await session.commit()
+    try:
+        payload = {
+            "usage": {"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46},
+            "auth": {"access_token": "at-1", "refresh_token": "rt-1"},
+        }
+        async with async_session_factory() as session:
+            await append_event(session, run_id, "retrieved", payload)
+            await session.commit()
+
+        async with async_session_factory() as session:
+            event = await session.scalar(select(RunEvent).where(RunEvent.run_id == run_id))
+
+        assert event is not None
+        persisted = event.payload
+        assert persisted["usage"]["prompt_tokens"] == 12
+        assert persisted["usage"]["completion_tokens"] == 34
+        assert persisted["usage"]["total_tokens"] == 46
+        assert persisted["auth"]["access_token"] == REDACTED
+        assert persisted["auth"]["refresh_token"] == REDACTED
+    finally:
+        await cleanup_runs([run_id])
+
+
 async def test_append_event_rejects_non_serializable_payload() -> None:
     run_id = uuid.uuid4()
     async with async_session_factory() as session:
