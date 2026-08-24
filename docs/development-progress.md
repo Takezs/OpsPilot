@@ -90,14 +90,19 @@
 - 新增 `0010_runs_journal_outbox` 迁移（基于 `0009_document_effective_at`），Alembic 位于 `0010` head。
 - 状态：**已完成，等待督导复审**。任务 7 实现提交为 `feat: persist run events with transactional outbox`。
 
+### 任务 7 复审修复（P1）
+
+- Journal 写入边界统一递归脱敏与载荷限制：`sanitize_payload` 在 `append_event` 持久化前执行，脱敏敏感键（Authorization/API Key/token/secret/password/cookie 等，大小写与分隔符不敏感）、值内邮箱与手机号（`Bearer`/`Basic` 凭证方案一并脱敏）、超长字符串截断到 `MAX_STRING_LENGTH`、整体序列化字节数超过 `MAX_PAYLOAD_BYTES` 时 fail-closed 抛 `PayloadTooLargeError`（此时不消耗 seq、不回写任何行）。新增真实持久化断言与纯单元测试覆盖上述全部用例。
+- Publisher 采用 poison row 隔离：单条失败记录 `attempts`/`last_error` 后 `continue`，并在本次调用内排除已失败 ID，使一条永久失败的 poison row 不再阻塞其他可处理事件；投递顺序改为 `(run_id, seq)` 以保证同一 Run 内按 seq 顺序投递。新增“首条永久失败、后续事件仍成功投递”的回归测试。
+
 ## 当前验证基线
 
-任务 7 实现后的真实结果：
+任务 7 复审修复后的真实结果：
 
-- 完整测试：`98 passed`（任务 6 基线 91 + 任务 7 定向 7：journal 连续 seq 1 + 并发唯一 seq 1 + 不存在 run 1 + outbox 回滚 1 + publisher 投递/去重 1 + flaky 重试 1 + 真实 Redis 频道 1）。
-- Ruff format：81 个文件格式正确。
+- 完整测试：`107 passed`（任务 7 基线 98 + 复审修复定向 9：脱敏单测 6 + 持久化脱敏断言 1 + 超大载荷拒绝断言 1 + poison row 隔离 1）。
+- Ruff format：83 个文件格式正确。
 - Ruff check：全部通过。
-- Mypy `--no-incremental`：50 个源文件无问题。
+- Mypy `--no-incremental`：51 个源文件无问题。
 - Alembic：`0010_runs_journal_outbox (head)`；0001→0010 全链在全新数据库验证通过。
 - PostgreSQL：healthy，`pg_isready` 为 accepting connections。
 - Redis：healthy，`redis-cli ping` 返回 `PONG`。

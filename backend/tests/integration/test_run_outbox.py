@@ -38,6 +38,19 @@ class _FlakyNotifier(_RecordingNotifier):
             raise RuntimeError("redis unavailable")
 
 
+class _PoisonNotifier(_RecordingNotifier):
+    """Always fails for one specific seq; succeeds for every other event."""
+
+    def __init__(self, poison_seq: int) -> None:
+        super().__init__()
+        self.poison_seq = poison_seq
+
+    async def notify_run_event(self, run_id: str, seq: int) -> None:
+        self.calls.append((run_id, seq))
+        if seq == self.poison_seq:
+            raise RuntimeError("permanent poison failure")
+
+
 async def cleanup_runs(run_ids: Sequence[uuid.UUID]) -> None:
     """Delete runs with a fresh connection; FK CASCADE removes events + outbox."""
     connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
@@ -98,6 +111,32 @@ async def test_publisher_retries_after_failed_notify() -> None:
             row = await session.scalar(select(EventOutbox).where(EventOutbox.run_id == run_id))
             assert row is not None
             assert row.delivered_at is not None
+    finally:
+        await cleanup_runs([run_id])
+
+
+async def test_publisher_isolates_poison_row_and_continues() -> None:
+    run_id = await seed_run_with_events(3)
+    # seq 1 is the first event and permanently fails; seq 2 and 3 must still deliver.
+    poison = _PoisonNotifier(poison_seq=1)
+    try:
+        published = await publish_pending_events(poison)
+
+        assert published == 2
+
+        async with async_session_factory() as session:
+            rows = {
+                row.seq: row
+                for row in await session.scalars(
+                    select(EventOutbox).where(EventOutbox.run_id == run_id)
+                )
+            }
+
+        assert rows[1].delivered_at is None
+        assert rows[1].last_error is not None
+        assert rows[1].attempts == 1
+        assert rows[2].delivered_at is not None
+        assert rows[3].delivered_at is not None
     finally:
         await cleanup_runs([run_id])
 

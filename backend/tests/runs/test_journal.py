@@ -19,6 +19,12 @@ from opspilot.config import Settings
 from opspilot.db import async_session_factory, engine
 from opspilot.runs.journal import RunNotFoundError, append_event
 from opspilot.runs.models import EventOutbox, Run, RunEvent, RunStatus
+from opspilot.runs.sanitize import (
+    MAX_PAYLOAD_BYTES,
+    MAX_STRING_LENGTH,
+    REDACTED,
+    PayloadTooLargeError,
+)
 
 
 async def cleanup_runs(run_ids: Sequence[uuid.UUID]) -> None:
@@ -152,4 +158,65 @@ async def test_outbox_insert_failure_rolls_back_events_and_seq() -> None:
         assert run.next_seq == 0
     finally:
         await trigger.drop()
+        await cleanup_runs([run_id])
+
+
+async def test_append_event_sanitizes_persisted_payload() -> None:
+    run_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.QUEUED))
+        await session.commit()
+    try:
+        payload = {
+            "headers": {"Authorization": "Bearer secret-token", "X-Api-Key": "sk-123"},
+            "contact": "email user@example.com phone 13812345678",
+            "nested": {"password": "hunter2", "items": [{"token": "t-1"}]},
+            "long": "z" * (MAX_STRING_LENGTH + 100),
+        }
+        async with async_session_factory() as session:
+            await append_event(session, run_id, "retrieved", payload)
+            await session.commit()
+
+        async with async_session_factory() as session:
+            event = await session.scalar(select(RunEvent).where(RunEvent.run_id == run_id))
+
+        assert event is not None
+        persisted = event.payload
+        assert persisted["headers"]["Authorization"] == REDACTED
+        assert persisted["headers"]["X-Api-Key"] == REDACTED
+        assert "user@example.com" not in persisted["contact"]
+        assert "13812345678" not in persisted["contact"]
+        assert persisted["nested"]["password"] == REDACTED
+        assert persisted["nested"]["items"][0]["token"] == REDACTED
+        assert len(persisted["long"]) == MAX_STRING_LENGTH
+    finally:
+        await cleanup_runs([run_id])
+
+
+async def test_append_event_rejects_oversized_payload() -> None:
+    run_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.QUEUED))
+        await session.commit()
+    try:
+        # Many strings each under MAX_STRING_LENGTH so truncation cannot shrink
+        # them; the combined serialized size exceeds MAX_PAYLOAD_BYTES.
+        payload = {"items": ["a" * 500 for _ in range(MAX_PAYLOAD_BYTES // 250 + 1)]}
+        async with async_session_factory() as session:
+            with pytest.raises(PayloadTooLargeError):
+                await append_event(session, run_id, "retrieved", payload)
+            await session.rollback()
+
+        async with async_session_factory() as session:
+            events = list(await session.scalars(select(RunEvent).where(RunEvent.run_id == run_id)))
+            outbox = list(
+                await session.scalars(select(EventOutbox).where(EventOutbox.run_id == run_id))
+            )
+            run = await session.get(Run, run_id)
+
+        assert events == []
+        assert outbox == []
+        assert run is not None
+        assert run.next_seq == 0
+    finally:
         await cleanup_runs([run_id])
