@@ -3,6 +3,7 @@
 import pytest
 
 from opspilot.runs.sanitize import (
+    MAX_DEPTH,
     MAX_PAYLOAD_BYTES,
     MAX_STRING_LENGTH,
     REDACTED,
@@ -31,24 +32,47 @@ def test_redacts_authorization_and_api_key_values() -> None:
 def test_redacts_combination_key_variants() -> None:
     payload = {
         "client_secret": "cs-1",
+        "client_secret_value": "cs-2",
+        "api_key_value": "ak-1",
+        "authorization_header": "Bearer abc.def.ghi",
         "private_key": "pk-2",
         "session_token": "st-3",
         "id_token": "id-4",
         "proxy_authorization": "Basic dXNlcjpwYXNz",
+        "apiKey": "camel-api-key",
+        "APISecret": "camel-api-secret",
     }
     sanitized = sanitize_payload(payload)
     assert sanitized["client_secret"] == REDACTED
+    assert sanitized["client_secret_value"] == REDACTED
+    assert sanitized["api_key_value"] == REDACTED
+    assert sanitized["authorization_header"] == REDACTED
     assert sanitized["private_key"] == REDACTED
     assert sanitized["session_token"] == REDACTED
     assert sanitized["id_token"] == REDACTED
     assert sanitized["proxy_authorization"] == REDACTED
+    assert sanitized["apiKey"] == REDACTED
+    assert sanitized["APISecret"] == REDACTED
 
 
-def test_does_not_redact_non_secret_suffix_fields() -> None:
-    payload = {"token_count": 42, "access_level": 1}
+def test_does_not_redact_non_secret_metadata_fields() -> None:
+    payload = {
+        "token_count": 42,
+        "token_size": 7,
+        "access_level": 1,
+        "partition_key": "tenant_id",
+        "document_key": "doc-1",
+        "sort_key": "created_at",
+        "cache_key": "hash-abc",
+    }
     sanitized = sanitize_payload(payload)
     assert sanitized["token_count"] == 42
+    assert sanitized["token_size"] == 7
     assert sanitized["access_level"] == 1
+    assert sanitized["partition_key"] == "tenant_id"
+    assert sanitized["document_key"] == "doc-1"
+    assert sanitized["sort_key"] == "created_at"
+    assert sanitized["cache_key"] == "hash-abc"
 
 
 def test_redacts_email_and_phone_in_values() -> None:
@@ -102,3 +126,42 @@ def test_rejects_nan_and_infinity() -> None:
         sanitize_payload({"ratio": float("inf")})
     with pytest.raises(PayloadInvalidError):
         sanitize_payload({"nested": {"delta": float("-inf")}})
+
+
+def test_rejects_non_string_keys() -> None:
+    with pytest.raises(PayloadInvalidError):
+        sanitize_payload({1: "value"})  # type: ignore[dict-item]
+
+
+def test_rejects_unsupported_value_types() -> None:
+    with pytest.raises(PayloadInvalidError):
+        sanitize_payload({"data": {1, 2, 3}})
+    with pytest.raises(PayloadInvalidError):
+        sanitize_payload({"data": b"bytes"})
+
+
+def test_rejects_circular_reference() -> None:
+    payload: dict[str, object] = {"name": "root"}
+    payload["self"] = payload
+    with pytest.raises(PayloadInvalidError):
+        sanitize_payload(payload)
+
+
+def test_rejects_excessive_nesting_depth() -> None:
+    payload: object = "leaf"
+    for _ in range(MAX_DEPTH + 5):
+        payload = {"nested": payload}
+    with pytest.raises(PayloadInvalidError):
+        sanitize_payload(payload)
+
+
+def test_rejects_lone_surrogate() -> None:
+    with pytest.raises(PayloadInvalidError):
+        sanitize_payload({"text": "bad \ud800 surrogate"})
+
+
+def test_allows_shared_non_circular_references() -> None:
+    shared = {"note": "ok"}
+    sanitized = sanitize_payload({"a": shared, "b": shared})
+    assert sanitized["a"] == {"note": "ok"}
+    assert sanitized["b"] == {"note": "ok"}
