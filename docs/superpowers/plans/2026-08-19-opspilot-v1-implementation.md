@@ -385,23 +385,23 @@ git commit -m "feat: orchestrate bounded registered tools"
 - 创建：`backend/tests/execution/test_policy.py`
 - 创建：`backend/tests/approvals/test_approval.py`
 
-- [ ] **步骤 1：编写金额策略与审批篡改测试**
+- [x] **步骤 1：编写金额策略与审批篡改测试**
 
 断言 `<=100 allow`、`100<amount<=1000 require_approval`、`>1000 deny`；审批绑定 `operation_id+arguments_hash+operation_version`，参数或版本变化返回 409。
 
-- [ ] **步骤 2：编写并发重复审批与幂等占用测试**
+- [x] **步骤 2：编写并发重复审批与幂等占用测试**
 
 两个 Reviewer 同时批准，只允许一个事务完成状态转换；第二个获得“已处理”事实状态，不重复投递。普通并发重复创建返回同一当前 Operation。
 
-- [ ] **步骤 3：实现服务端规范化、幂等键占用与 Operation 持久化**
+- [x] **步骤 3：实现服务端规范化、幂等键占用与 Operation 持久化**
 
 退款参数按既有 Pydantic Schema 规范化，服务端派生稳定键 `refund:{order_id}`；`operation_idempotency_occupancy` 保证当前占用唯一；Operation 与占用在审批前同事务持久化，重复/并发创建返回已有 Operation；占用切换、Operation、run_event 与 outbox 同一事务。
 
-- [ ] **步骤 4：实现审批过期与人工复核审计**
+- [x] **步骤 4：实现审批过期与人工复核审计**
 
 MANUAL_REVIEW 保持终态；管理员只能创建 `manual_review_resolutions`；仅 outcome=`RETRY_NEW_OPERATION` 的 resolution 允许在同一事务中释放旧占用并创建重试新 Operation（`retry_of_operation_id` 审计链，重新经过 Policy 与 Approval）；数据库触发器证明门控。
 
-- [ ] **步骤 5：验证并提交**
+- [x] **步骤 5：验证并提交**
 
 运行：`cd backend && pytest tests/execution/test_policy.py tests/approvals -q`。预期 PASS。
 
@@ -409,6 +409,8 @@ MANUAL_REVIEW 保持终态；管理员只能创建 `manual_review_resolutions`�
 git add backend/src/opspilot/execution backend/src/opspilot/approvals backend/alembic/versions backend/tests/execution backend/tests/approvals
 git commit -m "feat: bind durable approvals to immutable operations"
 ```
+
+**状态：✅ 已实现，待督导复审（2026-08-25）。** 实现提交 `e82a57c`（feat: bind durable approvals to immutable operations）。定向 34 passed（execution/test_policy.py 8 + approvals 26）、完整 192 passed；Ruff format 112 文件、Ruff check 通过、Mypy 72 源文件无问题；`0011_operations_approvals (head)`；PostgreSQL/Redis healthy。测试覆盖并发重复创建返回同一 Operation、无 resolution 时 MANUAL_REVIEW 不可创建新 Operation、带 resolution 重试创建新 Operation（新旧 ID 不同、同业务键、`retry_of_operation_id` 审计链、重新经过 Policy 与 Approval）、并发 ADMIN 重试最多一个新 Operation、原 Operation 不可变、原子性回滚，以及触发器级证明（原始 SQL 释放/改指向被拒绝）。
 
 ### 任务 10：Claim/Lease、fencing 与状态事务
 

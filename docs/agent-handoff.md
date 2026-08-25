@@ -8,7 +8,8 @@
 - M1（任务 1–4）与 M2 / 任务 5、任务 6 已批准（任务 6 督导验收提交 `955fe22`、`1f0e71c`、`05754bd`）
 - 任务 7（Run Journal 与 Transactional Outbox）已通过督导复审
 - 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已通过督导复审，实现提交 `db2cae5`、复审修复提交 `8e8adfb`
-- 下一任务：任务 9，Policy、审批绑定与 Operation 持久化
+- 任务 9（Policy、审批绑定与 Operation 持久化）已实现，实现提交 `e82a57c`，待督导复审
+- 下一任务：任务 10，Claim/Lease、fencing、Worker 执行、Reconciliation 与 SSE
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
 
@@ -27,6 +28,7 @@
 - Reranker、上下文预算与引用回答（任务 6）：`rerank_with_fallback` 超时降级到 RRF（`reranker_status=degraded`，含真实 HTTP 超时与墙钟取消）；Context Builder 稳定引用 ID `[DOC:<document_id>#<chunk_id>]` 与令牌预算；DeepSeek 结构化回答；fail-closed Citation Validator（任一无效引用整体 `insufficient_evidence`）与引用快照；Query Rewrite 在 Generation。
 - Run Journal 与 Transactional Outbox（任务 7）：`agent_runs.next_seq` 单调计数器 + `append_event(session, run_id, event_type, payload)` 在调用者事务中 `UPDATE ... RETURNING` 原子递增并锁定 Run 行，写 `run_events` 与 `event_outbox` 且不自行 commit；`publish_pending_events` 用 `FOR UPDATE SKIP LOCKED` 按 `(run_id, seq)` 取未投递 row，只向 Redis 发布 `{run_id, seq}`（频道 `run_events:{run_id}`），成功标记 delivered，失败记录 `last_error` 待重试且不阻塞其他事件（poison row 隔离），重复投递安全；`sanitize_payload` 在写入边界按词元递归脱敏（强敏感名词 + `token`/`key` 语境规则——保留 `token_count`/`token_size` 与 `prompt_tokens`/`total_tokens`/`token_usage_count` 等用量元数据，继续脱敏 `access_token`/`refresh_token`/`session_token`/`id_token` 等 + 邮箱/手机号/Bearer 凭证）与限长（字符串截断 + 整体字节上限 fail-closed），并显式校验非字符串键、含孤立代理项（lone surrogate）的键与值、不支持的 value 类型、NaN/Infinity、循环引用与嵌套深度；迁移 `0010_runs_journal_outbox`。
 - Tool Registry、受限 Agent Loop 与演示服务（任务 8）：`ToolDefinition`（`effect: read_only|side_effect`、`idempotency_capable`、`supports_reconciliation`、`input_schema`、`invoke`）与 `ToolResult(ok/data/error)`，`ToolNotFoundError`/`ToolArgumentError`；`build_tool_registry(deps)` 只暴露 6 个工具，所有参数经 Pydantic schema 校验（Design B：适配器接收已校验参数模型）；`AgentRunner` 有界循环——每轮仅通过注册表执行工具，最多 8 轮/6 次工具调用即 `bounded` 终止，纯问答与澄清可直返；`DecisionProvider` Protocol 抽象 LLM、`DeepSeekAgentDecider` 以 JSON 模式解析 `answer`/`clarify`/`tool_call` 契约；HTTP 适配器把超时映射为可重试 `ToolResult`、非成功状态码映射为失败；`demo-services/` 提供 order/payment/email 三个 FastAPI 服务，payment 以订单号为服务端业务幂等键并支持 `timeout_before_effect`/`timeout_after_effect`/`unknown_5xx_after_effect` 故障模式（不引入 uvicorn，测试用 in-process `ASGITransport`）。
+- Policy、审批绑定与 Operation 持久化（任务 9）：确定性退款策略 `decide_refund_policy(amount)`（`<=100` ALLOW、`100<amount<=1000` REQUIRE_APPROVAL、`>1000` DENY，非有限/非正金额 fail-closed 抛 `PolicyError`）；服务端派生稳定业务幂等键 `refund:{order_id}` 与稳定参数哈希；`tool_operations` 持久化 Operation（normalized_arguments、arguments_hash、idempotency_key、status、version、policy_decision、`retry_of_operation_id` 自引用审计链）；幂等占用独立表 `operation_idempotency_occupancy`（`UNIQUE(tool_name, idempotency_key)`），并发重复创建经事务级 advisory lock 串行化并返回同一当前 Operation；审批绑定不可变 `operation_id + arguments_hash + operation_version`，`decide_approval` 用 `SELECT ... FOR UPDATE` 串行化并发 Reviewer（仅第一个转换状态、后续返回 already_processed，篡改 409、过期 409）；MANUAL_REVIEW 终态不可变、仅 ADMIN 写 `manual_review_resolutions`，仅 outcome=`RETRY_NEW_OPERATION` 的 resolution 可同一事务释放旧占用并创建重试新 Operation（重新经过 Policy 与 Approval），门控由数据库触发器 `guard_occupancy_repoint`/`guard_occupancy_release` 证明；占用切换、Operation、run_event 与 outbox 同一事务（注入失败全回滚）；迁移 `0011_operations_approvals`。
 
 不要用历史数字当作新代码的验证结果，每次交接都必须重新运行并报告最新数字。
 
@@ -46,7 +48,7 @@ cd backend
 ..\.venv\Scripts\alembic.exe -c alembic.ini current
 ```
 
-预期 PostgreSQL、Redis 为 healthy，`pg_isready` 接受连接，Redis 返回 `PONG`，Alembic 为 `0010_runs_journal_outbox (head)`。
+预期 PostgreSQL、Redis 为 healthy，`pg_isready` 接受连接，Redis 返回 `PONG`，Alembic 为 `0011_operations_approvals (head)`。
 
 ## 任务 7（已通过督导复审）范围与验收
 
@@ -61,11 +63,15 @@ cd backend
 
 目标：Tool Registry、Agent Loop 与演示服务。实现提交 `db2cae5`（feat: orchestrate bounded registered tools），复审修复提交 `8e8adfb`（fix: harden agent provider decision contract：Provider 边界不发送缺少 `tool_call_id` 的 `role=tool` 消息、外部 JSON 决策严格 fail-closed 校验、AgentRunner 显式抛 `DecisionError`）。定向 35 passed（注册表 8 + 受限循环 19 + 演示服务 8）、完整 158 passed。任务 8 不实现审批、Operation fencing、SSE 或前端（属任务 9–12/13–15）。
 
-## 任务 9（下一任务）范围
+## 任务 9（已实现，待督导复审）范围
 
-目标：Policy、审批绑定与 Operation 持久化。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 9”章节。新增迁移必须基于当前 head `0010_runs_journal_outbox` 生成新 revision，不得复用固定迁移文件名（0004/0005/0006 已被占用）。
+目标：Policy、审批绑定与 Operation 持久化。实现提交 `e82a57c`（feat: bind durable approvals to immutable operations）。定向 34 passed（execution/test_policy.py 8 + approvals 26）、完整 192 passed。新增迁移 `0011_operations_approvals`（基于 `0010_runs_journal_outbox` 的新 revision，未复用固定迁移文件名）。
 
-已批准设计修订（2026-08-25）：幂等键唯一性移到独立占用表 `operation_idempotency_occupancy`（`UNIQUE(tool_name, idempotency_key)`）；业务幂等键稳定为 `refund:{order_id}`（无后缀）；`tool_operations.retry_of_operation_id` 审计链；MANUAL_REVIEW 占用不自动释放，仅存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时方可同一事务释放旧占用并创建重试新 Operation（数据库触发器证明门控）。规格已同步修订。
+已批准设计修订（2026-08-25）已落地：幂等键唯一性在独立占用表 `operation_idempotency_occupancy`（`UNIQUE(tool_name, idempotency_key)`）；业务幂等键稳定为 `refund:{order_id}`；`tool_operations.retry_of_operation_id` 审计链；MANUAL_REVIEW 占用不自动释放，仅存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时方可同一事务释放旧占用并创建重试新 Operation（数据库触发器证明门控）。审批、Operation fencing、SSE 与前端仍属任务 10–12/13–15，未在任务 9 实现。
+
+## 任务 10（下一任务）范围
+
+目标：Claim/Lease、fencing 与状态事务。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 10”章节。
 
 ## 完整验证命令
 
