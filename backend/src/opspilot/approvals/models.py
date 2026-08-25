@@ -81,9 +81,13 @@ class ManualReviewResolution(Base):
     # the single replacement Operation it authorizes. NULL means "not yet consumed";
     # the claim is a conditional UPDATE so the resolution can never create two
     # replacements, even under concurrency (no process locks, no check-then-insert).
+    # Once bound the value is immutable and the bound replacement undeletable: the
+    # database trigger ``guard_resolution_binding`` refuses any clear/repoint and
+    # the ``ON DELETE RESTRICT`` foreign key (migration 0013) keeps the Operation
+    # audit row intact so a consumed authorization can never be revived.
     replacement_operation_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("tool_operations.id", ondelete="SET NULL"),
+        ForeignKey("tool_operations.id", ondelete="RESTRICT"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(

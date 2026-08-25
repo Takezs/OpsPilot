@@ -81,6 +81,17 @@ async def _cleanup_runs(run_ids: Sequence[uuid.UUID]) -> None:
     connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
     try:
         if run_ids:
+            # delete resolutions first: the immutable replacement binding uses an
+            # ON DELETE RESTRICT foreign key, so a bound replacement Operation is
+            # undeletable while its resolution row still references it
+            await connection.execute(
+                "DELETE FROM manual_review_resolutions "
+                "WHERE operation_id IN "
+                "(SELECT id FROM tool_operations WHERE run_id = ANY($1::uuid[])) "
+                "OR replacement_operation_id IN "
+                "(SELECT id FROM tool_operations WHERE run_id = ANY($1::uuid[]))",
+                list(run_ids),
+            )
             await connection.execute(
                 "DELETE FROM agent_runs WHERE id = ANY($1::uuid[])", list(run_ids)
             )
@@ -1438,6 +1449,189 @@ async def test_refund_handler_routes_to_durable_operation_flow() -> None:
                 "SELECT count(*) FROM approval_requests a "
                 "JOIN tool_operations t ON t.id = a.operation_id WHERE t.run_id = $1",
                 run_id,
+            )
+            == 1
+        )
+    finally:
+        await _cleanup_runs([run_id])
+
+
+# --- Task 9 review (P2): replacement binding is immutable at the DB level -----
+
+
+async def _bound_replacement(run_id: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
+    """Return (original_id, resolution_id, replacement_id) with a consumed binding."""
+    original_id = await _manual_review_original(run_id)
+    resolution = await _resolution_for(original_id)
+    async with async_session_factory() as session:
+        replacement = await create_refund_operation(
+            session,
+            run_id,
+            "A100",
+            250.0,
+            retry_of_operation_id=original_id,
+            role=Role.ADMIN,
+        )
+        await session.commit()
+    assert replacement.id != original_id
+    return original_id, resolution.id, replacement.id
+
+
+async def _expect_binding_update_denied(resolution_id: uuid.UUID, value: uuid.UUID | None) -> None:
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    try:
+        with pytest.raises(Exception) as excinfo:
+            await connection.execute(
+                "UPDATE manual_review_resolutions SET replacement_operation_id = $1 WHERE id = $2",
+                value,
+                resolution_id,
+            )
+        assert "immutable" in str(excinfo.value)
+    finally:
+        await connection.close()
+
+
+async def test_binding_cannot_be_cleared_to_null() -> None:
+    run_id = await _create_run()
+    try:
+        _, resolution_id, replacement_id = await _bound_replacement(run_id)
+        await _expect_binding_update_denied(resolution_id, None)
+        # the one-shot authorization is still durably bound
+        assert (
+            await _count(
+                "SELECT count(*) FROM manual_review_resolutions "
+                "WHERE id = $1 AND replacement_operation_id = $2",
+                resolution_id,
+                replacement_id,
+            )
+            == 1
+        )
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_binding_cannot_be_repointed_to_another_operation() -> None:
+    run_id = await _create_run()
+    try:
+        _, resolution_id, replacement_id = await _bound_replacement(run_id)
+        other_id = await _insert_operation_raw(run_id, order_number="B200")
+        await _expect_binding_update_denied(resolution_id, other_id)
+        assert (
+            await _count(
+                "SELECT count(*) FROM manual_review_resolutions "
+                "WHERE id = $1 AND replacement_operation_id = $2",
+                resolution_id,
+                replacement_id,
+            )
+            == 1
+        )
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_denied_bound_replacement_cannot_be_deleted() -> None:
+    """A DENIED replacement holds no occupancy, but its binding must survive.
+
+    This is the reported attack: deleting it used to reset the resolution's
+    binding to NULL (ON DELETE SET NULL), so the same authorization could be
+    consumed again.
+    """
+    run_id = await _create_run()
+    try:
+        original_id = await _manual_review_original(run_id)
+        resolution = await _resolution_for(original_id)
+        async with async_session_factory() as session:
+            denied = await create_refund_operation(
+                session,
+                run_id,
+                "A100",
+                1200.0,
+                retry_of_operation_id=original_id,
+                role=Role.ADMIN,
+            )
+            await session.commit()
+        assert denied.status == OperationStatus.DENIED
+        assert (
+            await _count(
+                "SELECT count(*) FROM operation_idempotency_occupancy WHERE operation_id = $1",
+                denied.id,
+            )
+            == 0
+        )
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            with pytest.raises(Exception) as excinfo:
+                await connection.execute("DELETE FROM tool_operations WHERE id = $1", denied.id)
+            assert "foreign key" in str(excinfo.value)
+        finally:
+            await connection.close()
+        # the DENIED audit row and its binding both survive
+        assert await _count("SELECT count(*) FROM tool_operations WHERE id = $1", denied.id) == 1
+        assert (
+            await _count(
+                "SELECT count(*) FROM manual_review_resolutions "
+                "WHERE id = $1 AND replacement_operation_id = $2",
+                resolution.id,
+                denied.id,
+            )
+            == 1
+        )
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_first_binding_from_null_still_succeeds() -> None:
+    """A fresh resolution is still bound to its replacement (positive control)."""
+    run_id = await _create_run()
+    try:
+        original_id = await _manual_review_original(run_id)
+        resolution = await _resolution_for(original_id)
+        async with async_session_factory() as session:
+            replacement = await create_refund_operation(
+                session,
+                run_id,
+                "A100",
+                250.0,
+                retry_of_operation_id=original_id,
+                role=Role.ADMIN,
+            )
+            await session.commit()
+        assert (
+            await _count(
+                "SELECT count(*) FROM manual_review_resolutions "
+                "WHERE id = $1 AND replacement_operation_id = $2",
+                resolution.id,
+                replacement.id,
+            )
+            == 1
+        )
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_transaction_failure_keeps_original_binding() -> None:
+    """A refused statement aborts its transaction without altering the binding."""
+    run_id = await _create_run()
+    try:
+        _, resolution_id, replacement_id = await _bound_replacement(run_id)
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            async with connection.transaction():
+                with pytest.raises(Exception) as excinfo:
+                    await connection.execute(
+                        "UPDATE manual_review_resolutions SET replacement_operation_id = NULL "
+                        "WHERE id = $1",
+                        resolution_id,
+                    )
+                assert "immutable" in str(excinfo.value)
+        finally:
+            await connection.close()
+        assert (
+            await _count(
+                "SELECT count(*) FROM manual_review_resolutions "
+                "WHERE id = $1 AND replacement_operation_id = $2",
+                resolution_id,
+                replacement_id,
             )
             == 1
         )

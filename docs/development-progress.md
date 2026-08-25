@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-25  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已实现并完成督导复审修复，等待再次复审；下一项任务 10（Claim/Lease、fencing、Worker 执行与核对）
+> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已实现并完成督导复审修复（含 P2 绑定不可变），等待再次复审；下一项任务 10（Claim/Lease、fencing、Worker 执行与核对）
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8 已通过督导复审；任务 9 已实现并完成复审修复、等待再次复审；fencing、核对、SSE 待开发 |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8 已通过督导复审；任务 9 已实现并完成复审修复（含 P2 绑定不可变）、等待再次复审；fencing、核对、SSE 待开发 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -116,7 +116,7 @@
 - 审批绑定不可变 `operation_id + arguments_hash + operation_version`：`decide_approval` 用 `SELECT ... FOR UPDATE` 串行化并发 Reviewer，仅第一个转换状态、后续返回 already_processed 事实；参数/版本被篡改抛 `ApprovalVersionConflictError`（409）、过期抛 `ApprovalExpiredError`（409）；REJECT 在状态变终态后释放占用。
 - MANUAL_REVIEW 终态不可变：仅 ADMIN 可写 `manual_review_resolutions` 审计；仅存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时，重试在同一 PostgreSQL 事务中释放旧占用并创建新 Operation（`retry_of_operation_id` 审计链，重新经过 Policy 与 Approval）。门控由数据库触发器 `guard_occupancy_repoint`/`guard_occupancy_release` 证明（测试用原始 SQL UPDATE/DELETE 直接验证被拒绝），非应用层先查后插。
 - 原子性：占用切换、Operation、run_event 与 outbox 同一事务；注入失败后断言占用/Operation/事件/seq 全部回滚。HTTP 路由 `/api/v1`：审批决策、人工复核 resolution（ADMIN）、重试（ADMIN）。
-- 状态：**已实现并完成督导复审修复，等待再次复审（2026-08-25）**。实现提交 `e82a57c`（feat: bind durable approvals to immutable operations）；复审修复提交为下方标注（feat: bind retry authorizations one-shot to immutable replacements）。
+- 状态：**已实现并完成督导复审修复（含 P2 绑定不可变），等待再次复审（2026-08-25）**。实现提交 `e82a57c`（feat: bind durable approvals to immutable operations）；复审修复提交为下方标注（feat: bind retry authorizations one-shot to immutable replacements；P2 fix: make replacement binding immutable and undeletable）。
 
 ### 任务 9 复审修复（P1，2026-08-25）
 
@@ -128,16 +128,26 @@
 4. **原子性**：resolution 消费、replacement 创建、占用切换、状态事件与 outbox 同一事务提交；注入 append_event 失败后 resolution 的 claim、replacement、事件与 outbox 全部回滚，resolution 仍可被干净地再次消费。
 5. **质量门禁**：定向 65 passed、完整 205 passed、Ruff/Mypy/Alembic `0012 (head)`/PG/Redis 健康全部通过，见下方验证基线。
 
+### 任务 9 复审修复（P2，2026-08-25）
+
+督导再次复审驳回一项 P2 数据库完整性问题：`manual_review_resolutions.replacement_operation_id` 原用 `ON DELETE SET NULL` 且无数据库层不可变保护——原始 SQL 可清空或改指已消费的重试授权；删除不持有 occupancy 的 DENIED replacement 也会把绑定重置为 NULL，使同一授权再次被消费。按 Red → Green → Refactor 完成最小修复：
+
+1. **绑定不可变**：新增数据库触发器 `guard_resolution_binding`（`BEFORE UPDATE OF replacement_operation_id`）——`OLD IS NOT NULL AND NEW IS DISTINCT FROM OLD` 时 `RAISE EXCEPTION`，即从 NULL 首次绑定为合法 replacement 后永久不可清空、不可改指；NULL→value 的首次消费仍唯一允许。
+2. **删除保护**：外键删除行为由 `ON DELETE SET NULL` 改为 `ON DELETE RESTRICT`（迁移 `0013_resolution_binding`，基于 `0012` 顺序新增、未改写已提交迁移），已绑定为 replacement 的 Operation 不得删除，Operation 审计记录不丢失。
+3. **原始 SQL 负向测试**（tests/approvals/test_approval.py，真实 PostgreSQL）：UPDATE 已绑定值为 NULL 被拒、改指另一 Operation 被拒、DELETE 已绑定 DENIED replacement（不持有 occupancy）被外键拒绝、正常首次绑定仍成功、事务失败后原绑定保持不变。
+4. **迁移链证据**：0001→0013 全链在全新数据库验证通过；0013 upgrade/downgrade/upgrade 往返验证通过（含迁移往返测试 `test_0013_resolution_binding_roundtrip`）；ORM 外键同步为 `ondelete="RESTRICT"`，与数据库行为一致。
+5. **质量门禁**：定向 70 passed、完整 211 passed、Ruff format 144 文件、Ruff check 通过、Mypy 72 源文件无问题、Alembic `0013_resolution_binding (head)`、PG/Redis 健康全部通过，见下方验证基线。
+
 ## 当前验证基线
 
-任务 9 复审修复后的真实结果（2026-08-25）：
+任务 9 复审修复（含 P2）后的真实结果（2026-08-25）：
 
-- 定向测试：`65 passed`（execution/test_policy.py 8 + approvals/test_approval.py 38 + agent/test_runner.py 19）。
-- 完整测试：`205 passed`（任务 8 基线 158 + 任务 9 新增 47：策略/幂等占用/审批绑定/人工复核/并发/原子性/触发器证明/HTTP + 复审新增一次性消费/加固 repoint/runner 副作用路由）。
-- Ruff format：142 个文件格式正确。
+- 定向测试：`70 passed`（execution/test_policy.py 8 + approvals/test_approval.py 43 + agent/test_runner.py 19）。
+- 完整测试：`211 passed`（上一轮 205 + P2 新增 6：5 个绑定不可变/删除保护原始 SQL 负向测试 + 1 个迁移往返测试）。
+- Ruff format：144 个文件格式正确。
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：72 个源文件无问题。
-- Alembic：`0012_resolution_consumption (head)`；0001→0012 全链（含 0011↔0012 往返）在全新数据库验证通过。
+- Alembic：`0013_resolution_binding (head)`；0001→0013 全链（含 0012↔0013 往返）在全新数据库验证通过。
 - PostgreSQL：healthy，`pg_isready` 为 accepting connections。
 - Redis：healthy，`redis-cli ping` 返回 `PONG`。
 
@@ -159,14 +169,14 @@
 
 ## 下一步：任务 10（Claim/Lease、fencing、Worker 执行与核对）
 
-任务 9 已实现并完成督导复审修复，当前状态为"修复完成，等待再次复审"。复审通过后下一项为任务 10（Claim/Lease、fencing、Worker 执行、Reconciliation 与 SSE）——按流程先等待再次复审，不自行开始任务 10。
+任务 9 已实现并完成督导复审修复（含 P2 绑定不可变），当前状态为"修复完成，等待再次复审"。复审通过后下一项为任务 10（Claim/Lease、fencing、Worker 执行、Reconciliation 与 SSE）——按流程先等待再次复审，不自行开始任务 10。
 
 ## 后续开发计划
 
 - 任务 6：BGE Reranker、上下文预算、DeepSeek 引用回答与 Citation Validator（✅ 已完成，督导复审通过）。
 - 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已通过督导复审）。
 - 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已通过督导复审）。
-- 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已实现并完成督导复审修复，等待再次复审）。
+- 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已实现并完成督导复审修复（含 P2 绑定不可变），等待再次复审）。
 - 任务 10–12：Operation fencing、OUTCOME_UNKNOWN 核对和可靠 SSE。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。

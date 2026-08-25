@@ -14,10 +14,14 @@ authorization is consumed one shot: the retry transaction atomically binds the
 resolution's ``replacement_operation_id`` to the single replacement Operation it
 creates, so subsequent and concurrent retries return that same replacement (even
 when the re-run Policy denies it — the MANUAL_REVIEW key stays held and no extra
-rows are created). The occupancy re-point, the new Operation (which re-runs
-Policy and Approval), the status events and the outbox rows all commit in the
-caller's single transaction; the database triggers prove the gate, and the
-pre-checks here only exist to surface clean domain errors.
+rows are created). The binding is immutable at the database level (migration
+0013): ``guard_resolution_binding`` refuses any clear or repoint once the value
+is set, and the ``ON DELETE RESTRICT`` foreign key keeps a bound replacement
+Operation undeletable, so a consumed authorization can never be revived. The
+occupancy re-point, the new Operation (which re-runs Policy and Approval), the
+status events and the outbox rows all commit in the caller's single transaction;
+the database triggers prove the gate, and the pre-checks here only exist to
+surface clean domain errors.
 """
 
 import uuid
