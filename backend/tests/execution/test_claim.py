@@ -25,6 +25,7 @@ import pytest
 
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
+from opspilot.execution import claim as claim_module
 from opspilot.execution.claim import (
     LeaseConflictError,
     OperationNotClaimableError,
@@ -41,6 +42,16 @@ from opspilot.runs.models import Run, RunStatus
 from opspilot.tools.types import ToolEffect, ToolResult
 
 _T0 = datetime(2026, 1, 1, tzinfo=UTC)
+
+# A skewed application wall-clock (far behind the DB clock) used to prove the
+# lease machinery reads PostgreSQL time by default, not the app's local time.
+_FAKE_APP_NOW = datetime(1999, 1, 1, tzinfo=UTC)
+
+
+class _FakeAppClockDatetime(datetime):
+    @classmethod
+    def now(cls, tz=None) -> datetime:  # noqa: D102
+        return _FAKE_APP_NOW
 
 
 async def _create_run() -> uuid.UUID:
@@ -253,6 +264,9 @@ async def test_concurrent_claim_allows_exactly_one_winner() -> None:
         losers = [r for r in results if isinstance(r, Exception)]
         assert winners == [OperationStatus.EXECUTING]
         assert all(isinstance(loser, OperationNotClaimableError) for loser in losers)
+        # the loser must not have consumed any journal seq or emitted an event
+        assert await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id) == 1
+        assert await _count("SELECT next_seq FROM agent_runs WHERE id = $1", run_id) == 1
     finally:
         await _cleanup_runs([run_id])
 
@@ -653,9 +667,9 @@ async def test_executor_does_not_commit_result_after_losing_lease() -> None:
 
     try:
         # claim at T0 (lease expires T0+60); the invocation runs so long that by
-        # renewal time the lease is already dead (clock reads: claim, renew
-        # check, renew attempt)
-        clock = _AdvancingClock([_T0, _T0 + timedelta(seconds=120), _T0 + timedelta(seconds=120)])
+        # renewal time the lease is already dead (the executor resolves the clock
+        # once per session: claim at T0, then the second session at T0+120)
+        clock = _AdvancingClock([_T0, _T0 + timedelta(seconds=120)])
         with pytest.raises(LeaseConflictError):
             await execute_operation(
                 async_session_factory,
@@ -730,5 +744,267 @@ async def test_mark_failed_from_terminal_status_is_refused() -> None:
                     now=_T0,
                 )
             await session.rollback()
+    finally:
+        await _cleanup_runs([run_id])
+
+
+# --- adversarial self-review additions (Task 10 self-review) ---
+
+
+async def _force_lease_into_past(operation_id: uuid.UUID) -> None:
+    """Push ``lease_expires_at`` one hour into the past relative to the DB clock."""
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    try:
+        await connection.execute(
+            "UPDATE tool_operations SET lease_expires_at = "
+            "clock_timestamp() - interval '1 hour' WHERE id = $1",
+            operation_id,
+        )
+    finally:
+        await connection.close()
+
+
+async def test_claim_defaults_to_database_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The claim's lease must be anchored to PostgreSQL time, not the app clock."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    # skew the app wall clock far behind the DB clock
+    monkeypatch.setattr(claim_module, "datetime", _FakeAppClockDatetime)
+    try:
+        async with async_session_factory() as session:
+            operation = await claim_operation(session, op_id, owner="worker-1", lease_seconds=60)
+            # the DB clock (today) governs the lease, not the skewed 1999 app clock
+            assert operation.lease_expires_at is not None
+            assert operation.lease_expires_at > _FAKE_APP_NOW + timedelta(days=3650)
+            await session.commit()
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_recover_expired_defaults_to_database_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recovery must judge expiry against PostgreSQL time, not the app clock."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    monkeypatch.setattr(claim_module, "datetime", _FakeAppClockDatetime)
+    try:
+        async with async_session_factory() as session:
+            await claim_operation(session, op_id, owner="worker-1", lease_seconds=60, now=_T0)
+            await session.commit()
+        # the lease is expired relative to the real DB clock; the skewed app
+        # clock (1999) would incorrectly think it is still live
+        await _force_lease_into_past(op_id)
+        async with async_session_factory() as session:
+            recovered = await recover_expired(session, op_id, effect=ToolEffect.READ_ONLY)
+            assert recovered.status is OperationStatus.RETRYING
+            await session.commit()
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_fenced_write_defaults_to_database_clock() -> None:
+    """A terminal write with no injected clock fences against the live DB lease."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    try:
+        async with async_session_factory() as session:
+            operation = await claim_operation(session, op_id, owner="worker-1", lease_seconds=60)
+            token = operation.claim_token
+            await session.commit()
+        async with async_session_factory() as session:
+            await mark_succeeded(
+                session,
+                op_id,
+                owner="worker-1",
+                token=token,
+                expected_version=2,
+                result={"refund_id": "r1"},
+            )
+            await session.commit()
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "SUCCEEDED"
+        assert row["version"] == 3
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_database_clock_refuses_write_after_lease_forced_past() -> None:
+    """A lease expired on the DB clock refuses a fenced write even without `now`."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    try:
+        async with async_session_factory() as session:
+            operation = await claim_operation(session, op_id, owner="worker-1", lease_seconds=60)
+            token = operation.claim_token
+            await session.commit()
+        await _force_lease_into_past(op_id)
+        async with async_session_factory() as session:
+            with pytest.raises(LeaseConflictError):
+                await mark_succeeded(
+                    session,
+                    op_id,
+                    owner="worker-1",
+                    token=token,
+                    expected_version=2,
+                    result={"refund_id": "r1"},
+                )
+            await session.rollback()
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["result_payload"] is None
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_clock_skew_is_fenced_safe_not_time_dependent() -> None:
+    """Under clock skew the version+token fencing — not the time check — decides."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    try:
+        async with async_session_factory() as session:
+            old = await claim_operation(session, op_id, owner="worker-A", lease_seconds=60, now=_T0)
+            token = old.claim_token
+            await session.commit()
+        # the DB clock sees the lease as long expired (claim clock was skewed
+        # into the past) and recovers the side-effect operation
+        async with async_session_factory() as session:
+            recovered = await recover_expired(session, op_id, effect=ToolEffect.SIDE_EFFECT)
+            assert recovered.status is OperationStatus.OUTCOME_UNKNOWN
+            await session.commit()
+        # worker A still holds its (skewed) view that the lease is live, so the
+        # pure time-fencing would pass — but recovery bumped the version and
+        # cleared the token, so the fenced write is refused
+        async with async_session_factory() as session:
+            with pytest.raises(LeaseConflictError):
+                await mark_succeeded(
+                    session,
+                    op_id,
+                    owner="worker-A",
+                    token=token,
+                    expected_version=2,
+                    result={"refund_id": "r1"},
+                    now=_T0 + timedelta(seconds=30),
+                )
+            await session.rollback()
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "OUTCOME_UNKNOWN"
+        assert row["claim_token"] is None
+        assert row["result_payload"] is None
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_concurrent_recovery_allows_exactly_one_winner() -> None:
+    """Two recoverers racing on the same expired lease: exactly one wins."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    try:
+        async with async_session_factory() as session:
+            await claim_operation(session, op_id, owner="worker-1", lease_seconds=60, now=_T0)
+            await session.commit()
+        await _force_lease_into_past(op_id)
+
+        async def _recover() -> OperationStatus:
+            async with async_session_factory() as session:
+                try:
+                    recovered = await recover_expired(session, op_id, effect=ToolEffect.SIDE_EFFECT)
+                    await session.commit()
+                    return recovered.status
+                except Exception:
+                    await session.rollback()
+                    raise
+
+        results = await asyncio.gather(*[_recover() for _ in range(2)], return_exceptions=True)
+        winners = [r for r in results if not isinstance(r, Exception)]
+        losers = [r for r in results if isinstance(r, Exception)]
+        assert winners == [OperationStatus.OUTCOME_UNKNOWN]
+        assert all(isinstance(loser, LeaseConflictError) for loser in losers)
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "OUTCOME_UNKNOWN"
+        assert row["version"] == 3
+        assert row["claim_token"] is None
+        assert await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id) == 2
+        assert await _count("SELECT next_seq FROM agent_runs WHERE id = $1", run_id) == 2
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_executor_invoke_raises_leaves_operation_executing() -> None:
+    """A provider exception after a committed claim must leave the op EXECUTING."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+
+    async def _invoke(operation: object) -> ToolResult:
+        raise RuntimeError("provider blew up")
+
+    try:
+        with pytest.raises(RuntimeError, match="provider blew up"):
+            await execute_operation(
+                async_session_factory,
+                op_id,
+                owner="worker-1",
+                lease_seconds=60,
+                effect=ToolEffect.SIDE_EFFECT,
+                invoke=_invoke,
+                now=lambda: _T0,
+            )
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["version"] == 2
+        assert row["claim_token"] is not None
+        assert row["lease_owner"] == "worker-1"
+        # the claim event exists, but no terminal event was ever written
+        assert await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id) == 1
+        assert (
+            await _count(
+                "SELECT count(*) FROM run_events WHERE run_id = $1 "
+                "AND event_type IN ('operation_succeeded', 'operation_failed')",
+                run_id,
+            )
+            == 0
+        )
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_executor_invoke_cancellation_leaves_operation_executing() -> None:
+    """Cancelling the worker mid-invoke must not roll the committed claim back."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _invoke(operation: object) -> ToolResult:
+        started.set()
+        await release.wait()
+        return ToolResult(ok=True, data={"refund_id": "r1"})
+
+    try:
+        task = asyncio.create_task(
+            execute_operation(
+                async_session_factory,
+                op_id,
+                owner="worker-1",
+                lease_seconds=60,
+                effect=ToolEffect.SIDE_EFFECT,
+                invoke=_invoke,
+                now=lambda: _T0,
+            )
+        )
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["version"] == 2
+        assert row["claim_token"] is not None
+        assert row["lease_owner"] == "worker-1"
+        assert await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id) == 1
     finally:
         await _cleanup_runs([run_id])

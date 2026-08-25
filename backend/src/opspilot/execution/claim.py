@@ -26,7 +26,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from opspilot.execution.models import Operation, OperationStatus
@@ -42,6 +42,32 @@ class OperationNotClaimableError(OperationError):
 
 class LeaseConflictError(OperationError):
     """Raised when a fenced write loses the lease (stale token/version/owner)."""
+
+
+def _ensure_aware_utc(value: datetime) -> datetime:
+    """Normalize a timestamp to an explicit UTC-aware value.
+
+    Lease decisions must agree on one timezone; a naive injected clock is
+    interpreted as UTC so it can never be mis-bound against a timestamptz column.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+async def _resolve_now(session: AsyncSession, now: datetime | None) -> datetime:
+    """Resolve the authoritative "now" for a lease decision.
+
+    The default is PostgreSQL ``clock_timestamp()`` so every worker — whatever
+    its host clock — judges expiry against the same database clock. ``now`` is a
+    deterministic test seam: when injected it stands in for the DB clock.
+    """
+    if now is not None:
+        return _ensure_aware_utc(now)
+    resolved: datetime | None = await session.scalar(select(func.clock_timestamp()))
+    if resolved is None:  # pragma: no cover - clock_timestamp() never yields NULL
+        return datetime.now(UTC)
+    return resolved
 
 
 async def _load_or_raise(session: AsyncSession, operation_id: uuid.UUID) -> Operation:
@@ -65,7 +91,7 @@ async def claim_operation(
     that loses the race sees EXECUTING and matches zero rows. The caller owns
     the transaction and commits together with the journal and outbox rows.
     """
-    timestamp = now or datetime.now(UTC)
+    timestamp = await _resolve_now(session, now)
     operation = await _load_or_raise(session, operation_id)
     if operation.status not in CLAIMABLE_STATUSES:
         raise OperationNotClaimableError(
@@ -126,7 +152,7 @@ async def renew_lease(
     stale worker (or one whose lease already expired) matches zero rows and
     raises ``LeaseConflictError`` — the loss of the DB write right.
     """
-    timestamp = now or datetime.now(UTC)
+    timestamp = await _resolve_now(session, now)
     operation = await _load_or_raise(session, operation_id)
     expires_at = timestamp + timedelta(seconds=lease_seconds)
     updated = await session.execute(
@@ -173,7 +199,7 @@ async def mark_succeeded(
     now: datetime | None = None,
 ) -> Operation:
     """Commit a successful result while the lease is still held and fenced."""
-    timestamp = now or datetime.now(UTC)
+    timestamp = await _resolve_now(session, now)
     operation = await _load_or_raise(session, operation_id)
     updated = await session.execute(
         update(Operation)
@@ -226,7 +252,7 @@ async def mark_failed(
     now: datetime | None = None,
 ) -> Operation:
     """Commit a definitive failure while the lease is still held and fenced."""
-    timestamp = now or datetime.now(UTC)
+    timestamp = await _resolve_now(session, now)
     operation = await _load_or_raise(session, operation_id)
     updated = await session.execute(
         update(Operation)
@@ -281,7 +307,7 @@ async def recover_expired(
     claim_token is dropped and the version is bumped so any stale write by the
     previous holder matches zero rows.
     """
-    timestamp = now or datetime.now(UTC)
+    timestamp = await _resolve_now(session, now)
     operation = await _load_or_raise(session, operation_id)
     target = (
         OperationStatus.RETRYING

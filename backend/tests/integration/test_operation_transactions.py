@@ -21,11 +21,14 @@ from opspilot.execution import claim as claim_module
 from opspilot.execution.claim import (
     claim_operation,
     mark_succeeded,
+    recover_expired,
     renew_lease,
 )
+from opspilot.execution.executor import execute_operation
 from opspilot.execution.models import OperationStatus
 from opspilot.execution.service import OperationNotFoundError
 from opspilot.runs.models import Run, RunStatus
+from opspilot.tools.types import ToolEffect, ToolResult
 
 _T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -109,6 +112,18 @@ async def _fetch_next_seq(run_id: uuid.UUID) -> int:
 
 def _fail_journal(session: object, run_id: uuid.UUID, event_type: str, payload: object) -> None:
     raise RuntimeError("injected journal/outbox failure")
+
+
+_real_append_event = claim_module.append_event
+
+
+async def _fail_terminal_journal(
+    session: object, run_id: uuid.UUID, event_type: str, payload: object
+) -> None:
+    """Fail the result write's journal/outbox but keep the claim event real."""
+    if event_type in ("operation_succeeded", "operation_failed"):
+        raise RuntimeError("injected journal/outbox failure")
+    await _real_append_event(session, run_id, event_type, payload)
 
 
 async def test_claim_commits_state_event_and_outbox_atomically() -> None:
@@ -234,3 +249,76 @@ async def test_claim_on_missing_operation_is_refused() -> None:
             await claim_operation(
                 session, uuid.uuid4(), owner="worker-1", lease_seconds=60, now=_T0
             )
+
+
+async def test_event_failure_rolls_back_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    try:
+        async with async_session_factory() as session:
+            operation = await claim_operation(
+                session, op_id, owner="worker-1", lease_seconds=60, now=_T0
+            )
+            token = operation.claim_token
+            await session.commit()
+
+        monkeypatch.setattr(claim_module, "append_event", _fail_journal)
+        async with async_session_factory() as session:
+            with pytest.raises(RuntimeError, match="injected"):
+                async with session.begin():
+                    await recover_expired(
+                        session,
+                        op_id,
+                        effect=ToolEffect.SIDE_EFFECT,
+                        now=_T0 + timedelta(seconds=120),
+                    )
+
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["version"] == 2
+        assert row["claim_token"] == token
+        assert row["lease_expires_at"] == _T0 + timedelta(seconds=60)
+        # only the claim event survived; seq was not consumed by the recovery
+        assert await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id) == 1
+        assert await _count("SELECT count(*) FROM event_outbox WHERE run_id = $1", run_id) == 1
+        assert await _fetch_next_seq(run_id) == 1
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_executor_result_write_failure_keeps_committed_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing result transaction must not undo the already-committed claim."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+
+    async def _invoke(operation: object) -> ToolResult:
+        return ToolResult(ok=True, data={"refund_id": "r1"})
+
+    # let the claim event commit; only the terminal result write fails
+    monkeypatch.setattr(claim_module, "append_event", _fail_terminal_journal)
+    try:
+        with pytest.raises(RuntimeError, match="injected"):
+            await execute_operation(
+                async_session_factory,
+                op_id,
+                owner="worker-1",
+                lease_seconds=60,
+                effect=ToolEffect.SIDE_EFFECT,
+                invoke=_invoke,
+                now=lambda: _T0,
+            )
+        # the claim transaction committed before the result write: the operation
+        # stays EXECUTING with the token, never back to the claimable READY
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["version"] == 2
+        assert row["claim_token"] is not None
+        assert row["lease_owner"] == "worker-1"
+        assert row["result_payload"] is None
+        assert await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id) == 1
+    finally:
+        await _cleanup_runs([run_id])
