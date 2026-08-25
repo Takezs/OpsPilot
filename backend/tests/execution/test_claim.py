@@ -622,7 +622,7 @@ async def test_executor_commits_success_while_holding_lease() -> None:
         await _cleanup_runs([run_id])
 
 
-async def test_executor_commits_failure_while_holding_lease() -> None:
+async def test_executor_maps_ambiguous_side_effect_failure_to_outcome_unknown() -> None:
     run_id = await _create_run()
     op_id = await _insert_operation_raw(run_id, status="READY")
 
@@ -639,11 +639,78 @@ async def test_executor_commits_failure_while_holding_lease() -> None:
             invoke=_invoke,
             now=lambda: _T0,
         )
+        # the failure cannot prove the provider never executed, so it must never
+        # be recorded as a definitive FAILED
+        assert operation.status is OperationStatus.OUTCOME_UNKNOWN
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "OUTCOME_UNKNOWN"
+        assert row["version"] == 3
+        assert row["claim_token"] is None
+        assert row["lease_owner"] is None
+        assert (
+            await _count(
+                "SELECT count(*) FROM run_events WHERE run_id = $1 "
+                "AND event_type = 'operation_outcome_unknown'",
+                run_id,
+            )
+            == 1
+        )
+        _assert_no_leftover_tasks()
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_executor_commits_failure_when_side_effect_provably_not_executed() -> None:
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+
+    async def _invoke(operation: object) -> ToolResult:
+        return ToolResult(
+            ok=False,
+            error="rejected before dispatch",
+            provider_not_called=True,
+        )
+
+    try:
+        operation = await execute_operation(
+            async_session_factory,
+            op_id,
+            owner="worker-1",
+            lease_seconds=60,
+            effect=ToolEffect.SIDE_EFFECT,
+            invoke=_invoke,
+            now=lambda: _T0,
+        )
         assert operation.status is OperationStatus.FAILED
         row = await _fetch_operation(op_id)
         assert row["status"] == "FAILED"
         assert row["version"] == 3
         assert row["claim_token"] is None
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_executor_commits_failure_for_read_only_ambiguous_failure() -> None:
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY", tool_name="get_order")
+
+    async def _invoke(operation: object) -> ToolResult:
+        return ToolResult(ok=False, error="upstream timeout")
+
+    try:
+        operation = await execute_operation(
+            async_session_factory,
+            op_id,
+            owner="worker-1",
+            lease_seconds=60,
+            effect=ToolEffect.READ_ONLY,
+            invoke=_invoke,
+            now=lambda: _T0,
+        )
+        # read-only work has no external effect, so a definitive FAILED is safe
+        assert operation.status is OperationStatus.FAILED
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "FAILED"
     finally:
         await _cleanup_runs([run_id])
 
@@ -666,9 +733,10 @@ async def test_executor_does_not_commit_result_after_losing_lease() -> None:
         return ToolResult(ok=True, data={"refund_id": "r1"})
 
     try:
-        # claim at T0 (lease expires T0+60); the invocation runs so long that by
-        # renewal time the lease is already dead (the executor resolves the clock
-        # once per session: claim at T0, then the second session at T0+120)
+        # claim at T0 (lease expires T0+60); the invocation returns instantly so
+        # the heartbeat is stopped before its first tick, then the result write's
+        # second session resolves T0+120 and the fenced update finds the lease
+        # dead -> LeaseConflictError. The DB fence, not a clock check, decides.
         clock = _AdvancingClock([_T0, _T0 + timedelta(seconds=120)])
         with pytest.raises(LeaseConflictError):
             await execute_operation(
@@ -696,6 +764,7 @@ async def test_executor_does_not_commit_result_after_losing_lease() -> None:
             )
             == 0
         )
+        _assert_no_leftover_tasks()
     finally:
         await _cleanup_runs([run_id])
 
@@ -966,6 +1035,7 @@ async def test_executor_invoke_raises_leaves_operation_executing() -> None:
             )
             == 0
         )
+        _assert_no_leftover_tasks()
     finally:
         await _cleanup_runs([run_id])
 
@@ -1006,5 +1076,301 @@ async def test_executor_invoke_cancellation_leaves_operation_executing() -> None
         assert row["claim_token"] is not None
         assert row["lease_owner"] == "worker-1"
         assert await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id) == 1
+        _assert_no_leftover_tasks()
     finally:
+        await _cleanup_runs([run_id])
+
+
+def _assert_no_leftover_tasks() -> None:
+    """The executor must never leak an asyncio Task once it returns."""
+    current = asyncio.current_task()
+    leftovers = [t for t in asyncio.all_tasks() if t is not current]
+    assert not leftovers, f"leftover asyncio tasks after execute_operation: {leftovers!r}"
+
+
+async def _run_and_release(task: asyncio.Task, release: asyncio.Event) -> None:
+    """Let a blocked invoke finish, then collect the executor task quietly."""
+    release.set()
+    await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=15)
+
+
+async def test_executor_heartbeat_renews_lease_while_invoke_blocked() -> None:
+    """While the provider call is blocked, the lease must be extended in the DB."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _invoke(operation: object) -> ToolResult:
+        started.set()
+        await release.wait()
+        return ToolResult(ok=True, data={"refund_id": "r1"})
+
+    task = asyncio.create_task(
+        execute_operation(
+            async_session_factory,
+            op_id,
+            owner="worker-1",
+            lease_seconds=3,  # heartbeat interval = max(1, 3//3) = 1s
+            effect=ToolEffect.SIDE_EFFECT,
+            invoke=_invoke,
+            # now=None -> the lease machinery reads PostgreSQL clock_timestamp()
+        )
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        original = (await _fetch_operation(op_id))["lease_expires_at"]
+        assert original is not None
+        # give at least one heartbeat interval while invoke is still blocked
+        await asyncio.sleep(2.2)
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["lease_expires_at"] > original, (
+            "lease was not extended while the provider call was in flight"
+        )
+        renewals = await _count(
+            "SELECT count(*) FROM run_events WHERE run_id = $1 "
+            "AND event_type = 'operation_lease_renewed'",
+            run_id,
+        )
+        assert renewals >= 1
+    finally:
+        await _run_and_release(task, release)
+        await _cleanup_runs([run_id])
+    _assert_no_leftover_tasks()
+
+
+async def test_executor_heartbeat_renews_multiple_times_across_intervals() -> None:
+    """Across several heartbeat intervals the lease must be renewed repeatedly."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _invoke(operation: object) -> ToolResult:
+        started.set()
+        await release.wait()
+        return ToolResult(ok=True, data={"refund_id": "r1"})
+
+    task = asyncio.create_task(
+        execute_operation(
+            async_session_factory,
+            op_id,
+            owner="worker-1",
+            lease_seconds=3,
+            effect=ToolEffect.SIDE_EFFECT,
+            invoke=_invoke,
+        )
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        # ~3 heartbeat intervals -> at least 2 renewals
+        await asyncio.sleep(3.5)
+        renewals = await _count(
+            "SELECT count(*) FROM run_events WHERE run_id = $1 "
+            "AND event_type = 'operation_lease_renewed'",
+            run_id,
+        )
+        assert renewals >= 2, f"expected >= 2 renewals, observed {renewals}"
+    finally:
+        await _run_and_release(task, release)
+        await _cleanup_runs([run_id])
+    _assert_no_leftover_tasks()
+
+
+async def test_executor_heartbeat_renews_from_database_clock_not_app_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The heartbeat must read PostgreSQL time, not the application wall clock."""
+    monkeypatch.setattr(claim_module, "datetime", _FakeAppClockDatetime)
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _invoke(operation: object) -> ToolResult:
+        started.set()
+        await release.wait()
+        return ToolResult(ok=True, data={"refund_id": "r1"})
+
+    task = asyncio.create_task(
+        execute_operation(
+            async_session_factory,
+            op_id,
+            owner="worker-1",
+            lease_seconds=3,
+            effect=ToolEffect.SIDE_EFFECT,
+            invoke=_invoke,
+        )
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        original = (await _fetch_operation(op_id))["lease_expires_at"]
+        await asyncio.sleep(2.2)
+        row = await _fetch_operation(op_id)
+        assert row["lease_expires_at"] > original, (
+            "heartbeat did not renew from the database clock despite the app "
+            "clock being skewed far into the past"
+        )
+    finally:
+        await _run_and_release(task, release)
+        await _cleanup_runs([run_id])
+
+
+async def test_executor_heartbeat_keeps_lease_live_so_recovery_cannot_take_over() -> None:
+    """A running heartbeat must stop a concurrent recover_expired from grabbing."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _invoke(operation: object) -> ToolResult:
+        started.set()
+        await release.wait()
+        return ToolResult(ok=True, data={"refund_id": "r1"})
+
+    task = asyncio.create_task(
+        execute_operation(
+            async_session_factory,
+            op_id,
+            owner="worker-1",
+            lease_seconds=4,  # heartbeat interval = 1s; natural lease would lapse at 4s
+            effect=ToolEffect.SIDE_EFFECT,
+            invoke=_invoke,
+        )
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        # wait well past the natural lease duration; the heartbeat renews it
+        await asyncio.sleep(5.0)
+        async with async_session_factory() as session:
+            with pytest.raises(LeaseConflictError):
+                await recover_expired(session, op_id, effect=ToolEffect.SIDE_EFFECT)
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["claim_token"] is not None
+    finally:
+        await _run_and_release(task, release)
+        await _cleanup_runs([run_id])
+    _assert_no_leftover_tasks()
+
+
+async def test_executor_heartbeat_failure_revokes_worker_and_never_writes_result() -> None:
+    """When a renewal loses the lease, the worker is revoked and no result is written."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+
+    async def _invoke(operation: object) -> ToolResult:
+        await asyncio.sleep(30)  # provider outlives the lease
+        return ToolResult(ok=True, data={"refund_id": "r1"})
+
+    # claim at T0 (lease T0+3); the heartbeat's first tick resolves T0+120 and
+    # finds the lease already dead -> LeaseConflictError, promptly.
+    clock = _AdvancingClock([_T0, _T0 + timedelta(seconds=120)])
+    try:
+        with pytest.raises(LeaseConflictError):
+            await execute_operation(
+                async_session_factory,
+                op_id,
+                owner="worker-1",
+                lease_seconds=3,
+                effect=ToolEffect.SIDE_EFFECT,
+                invoke=_invoke,
+                now=clock,
+            )
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["version"] == 2
+        assert row["result_payload"] is None
+        assert (
+            await _count(
+                "SELECT count(*) FROM run_events WHERE run_id = $1 "
+                "AND event_type IN ('operation_succeeded', 'operation_failed')",
+                run_id,
+            )
+            == 0
+        )
+        _assert_no_leftover_tasks()
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_executor_heartbeat_failure_race_with_invoke_return_decided_by_fence() -> None:
+    """A provider that returns while the lease is lost must still be fenced out."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+
+    async def _invoke(operation: object) -> ToolResult:
+        # returns just after the heartbeat's first (doomed) renewal
+        await asyncio.sleep(1.4)
+        return ToolResult(ok=True, data={"refund_id": "r1"})
+
+    clock = _AdvancingClock([_T0, _T0 + timedelta(seconds=120)])
+    try:
+        with pytest.raises(LeaseConflictError):
+            await execute_operation(
+                async_session_factory,
+                op_id,
+                owner="worker-1",
+                lease_seconds=3,
+                effect=ToolEffect.SIDE_EFFECT,
+                invoke=_invoke,
+                now=clock,
+            )
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["result_payload"] is None
+        assert (
+            await _count(
+                "SELECT count(*) FROM run_events WHERE run_id = $1 "
+                "AND event_type = 'operation_succeeded'",
+                run_id,
+            )
+            == 0
+        )
+        _assert_no_leftover_tasks()
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_executor_non_cancellable_invoke_does_not_block_lease_revocation() -> None:
+    """A provider that ignores cancellation must not block the LeaseConflictError."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    started = asyncio.Event()
+    teardown = asyncio.Event()
+
+    async def _invoke(operation: object) -> ToolResult:
+        started.set()
+        try:
+            await asyncio.Event().wait()  # never resolves
+        except asyncio.CancelledError:
+            # deliberately swallow the cancellation and keep running
+            await teardown.wait()
+        return ToolResult(ok=True, data={"refund_id": "r1"})
+
+    clock = _AdvancingClock([_T0, _T0 + timedelta(seconds=120)])
+    task = asyncio.create_task(
+        execute_operation(
+            async_session_factory,
+            op_id,
+            owner="worker-1",
+            lease_seconds=3,
+            effect=ToolEffect.SIDE_EFFECT,
+            invoke=_invoke,
+            now=clock,
+        )
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        # heartbeat's first renewal fails (lease already dead at T0+120) and must
+        # surface even though the provider refuses to terminate.
+        with pytest.raises(LeaseConflictError):
+            await asyncio.wait_for(task, timeout=6)
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["result_payload"] is None
+    finally:
+        teardown.set()  # let the abandoned provider finish; no task leaks
+        await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=15)
         await _cleanup_runs([run_id])

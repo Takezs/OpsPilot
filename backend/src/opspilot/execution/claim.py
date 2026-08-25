@@ -44,6 +44,10 @@ class LeaseConflictError(OperationError):
     """Raised when a fenced write loses the lease (stale token/version/owner)."""
 
 
+class LeaseStateError(OperationError):
+    """Raised when an Operation is not in a state that holds a live lease."""
+
+
 def _ensure_aware_utc(value: datetime) -> datetime:
     """Normalize a timestamp to an explicit UTC-aware value.
 
@@ -289,6 +293,63 @@ async def mark_failed(
     failed = await _load_or_raise(session, operation_id)
     await session.refresh(failed)
     return failed
+
+
+async def mark_unknown(
+    session: AsyncSession,
+    operation_id: uuid.UUID,
+    *,
+    owner: str,
+    token: str,
+    expected_version: int,
+    error: str | None = None,
+    now: datetime | None = None,
+) -> Operation:
+    """Record an uncertain side-effect outcome (Task 10).
+
+    Used when a SIDE_EFFECT failure cannot prove the provider was never reached:
+    the external effect may or may not have happened. The Operation moves to
+    OUTCOME_UNKNOWN, which is not claimable, so nothing here re-invokes the
+    provider; task 11's reconciliation decides the verdict. Fenced exactly like
+    ``mark_failed``, including the live-lease condition.
+    """
+    timestamp = await _resolve_now(session, now)
+    operation = await _load_or_raise(session, operation_id)
+    updated = await session.execute(
+        update(Operation)
+        .where(
+            Operation.id == operation_id,
+            Operation.status == OperationStatus.EXECUTING,
+            Operation.version == expected_version,
+            Operation.claim_token == token,
+            Operation.lease_owner == owner,
+            Operation.lease_expires_at > timestamp,
+        )
+        .values(
+            status=OperationStatus.OUTCOME_UNKNOWN,
+            version=Operation.version + 1,
+            claim_token=None,
+            lease_owner=None,
+            lease_expires_at=None,
+        )
+    )
+    if (updated.rowcount or 0) == 0:  # type: ignore[attr-defined]
+        raise LeaseConflictError(
+            f"unknown-outcome write denied for operation {operation_id}: fencing mismatch"
+        )
+    await append_event(
+        session,
+        operation.run_id,
+        "operation_outcome_unknown",
+        {
+            "operation_id": str(operation_id),
+            "version": expected_version + 1,
+            "error": error,
+        },
+    )
+    unknown = await _load_or_raise(session, operation_id)
+    await session.refresh(unknown)
+    return unknown
 
 
 async def recover_expired(

@@ -16,11 +16,19 @@ class ToolEffect(StrEnum):
 
 @dataclass(frozen=True)
 class ToolResult:
-    """Outcome of one tool invocation, safe for journaling."""
+    """Outcome of one tool invocation, safe for journaling.
+
+    ``provider_not_called`` is the minimal side-effect proof: ``True`` means the
+    tool can prove the provider was never reached (e.g. rejected before
+    dispatch), ``False``/``None`` (the conservative default) means unknown. A
+    SIDE_EFFECT failure with an unproven outcome must never be recorded as a
+    definitive FAILED; the executor maps it to OUTCOME_UNKNOWN instead.
+    """
 
     ok: bool
     data: dict[str, Any] | None = None
     error: str | None = None
+    provider_not_called: bool | None = None
 
     def render(self) -> str:
         if self.ok:
