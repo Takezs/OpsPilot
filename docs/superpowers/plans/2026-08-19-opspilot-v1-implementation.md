@@ -372,7 +372,7 @@ git add backend/src/opspilot/tools backend/src/opspilot/agent demo-services back
 git commit -m "feat: orchestrate bounded registered tools"
 ```
 
-**状态：✅ 已通过督导复审（2026-08-24）。** 实现提交 `db2cae5`，复审修复提交 `8e8adfb`（Provider 边界不发送缺少 `tool_call_id` 的 `role=tool` 消息、外部 JSON 决策严格 fail-closed 校验、AgentRunner 显式抛 `DecisionError`）。定向 35 passed（注册表 8 + 受限循环 19 + 演示服务 8）、完整 158 passed；Ruff format 97 文件、Ruff check 通过、Mypy 62 源文件无问题；`0010_runs_journal_outbox (head)`；PostgreSQL/Redis healthy。
+**状态：✅ 已通过督导复审（2026-08-25）。** 实现提交 `db2cae5`，复审修复提交 `8e8adfb`（Provider 边界不发送缺少 `tool_call_id` 的 `role=tool` 消息、外部 JSON 决策严格 fail-closed 校验、AgentRunner 显式抛 `DecisionError`）。定向 35 passed（注册表 8 + 受限循环 19 + 演示服务 8）、完整 158 passed；Ruff format 97 文件、Ruff check 通过、Mypy 62 源文件无问题；`0010_runs_journal_outbox (head)`；PostgreSQL/Redis healthy。
 
 ### 任务 9：Policy、审批绑定与 Operation 持久化
 

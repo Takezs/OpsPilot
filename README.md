@@ -5,9 +5,11 @@ OpsPilot 是一个面向企业运营场景的可审计 AI Agent 项目。它将�
 ## 当前状态
 
 - M1（任务 1–4）已完成并通过复审。
-- M2 / 任务 5（权限感知 Hybrid Retrieval）与任务 6（Reranker、上下文预算与引用回答）已通过督导复审。
+- M2 / 任务 5（权限感知 Hybrid Retrieval）、任务 6（Reranker、上下文预算与引用回答）与任务 7（Run Journal 与 Transactional Outbox）已通过督导复审。
+- M3 / 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已通过督导复审。
+- 当前阶段：M3。
 - 当前分支：`plan/opspilot-core-mvp`。
-- 下一步：M2 / 任务 7，Run Journal 与 Transactional Outbox。
+- 下一步：任务 9，Policy、审批绑定与 Operation 持久化。
 - 最新开发状态见[开发进度](docs/development-progress.md)。
 
 ## 技术栈

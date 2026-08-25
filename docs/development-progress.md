@@ -1,6 +1,6 @@
 # OpsPilot 开发进度
 
-> 最后更新：2026-08-24  
+> 最后更新：2026-08-25  
 > 当前分支：`plan/opspilot-core-mvp`  
 > 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；下一项任务 9（审批与 Operation 持久化）
 
@@ -106,7 +106,7 @@
 - 有界 Agent Loop `AgentRunner`：每轮从决策提供方取一个动作，仅通过注册表执行工具调用，最多 8 轮或 6 次工具调用即 `bounded` 终止；纯问答、澄清可直返；`DecisionProvider` Protocol 抽象 LLM，`DeepSeekAgentDecider` 以 JSON 模式对话并解析决策契约（`answer`/`clarify`/`tool_call`）。
 - HTTP 适配器（`get_order_adapter`/`check_refund_eligibility_adapter`/`refund_order_adapter`/`get_refund_status_adapter`/`send_email_adapter`）：超时映射为可重试 `ToolResult`、非成功状态码映射为失败结果；`mcp.py` 提供远期 MCP 适配器契约（当前 6 工具均不走 MCP）。
 - `demo-services/` 演示服务：order/payment/email 三个 FastAPI 服务；payment 以订单号为服务端业务幂等键（重复退款共享同一 `refund_id`/`provider_reference`，201-if-new-else-200），支持 `success`/`timeout_before_effect`/`timeout_after_effect`/`unknown_5xx_after_effect` 故障模式，供任务 9/10 验证重试与核对语义。项目不引入 uvicorn/Dockerfile，测试以 in-process `ASGITransport` 验证。
-- 状态：**已通过督导复审（2026-08-24）**。实现提交 `db2cae5`（feat: orchestrate bounded registered tools）；复审修复提交 `8e8adfb`（fix: harden agent provider decision contract：Provider 边界不再发送缺少 `tool_call_id` 的 `role=tool` 消息而改为标注为不可信工具输出的上下文消息、外部 JSON 决策采用严格 fail-closed 校验、AgentRunner 显式抛 `DecisionError` 替代 assert）；定向 35 passed、完整 158 passed。
+- 状态：**已通过督导复审（2026-08-25）**。实现提交 `db2cae5`（feat: orchestrate bounded registered tools）；复审修复提交 `8e8adfb`（fix: harden agent provider decision contract：Provider 边界不再发送缺少 `tool_call_id` 的 `role=tool` 消息而改为标注为不可信工具输出的上下文消息、外部 JSON 决策采用严格 fail-closed 校验、AgentRunner 显式抛 `DecisionError` 替代 assert）；定向 35 passed、完整 158 passed。
 
 ## 当前验证基线
 
@@ -132,7 +132,7 @@
 
 ## 下一步：任务 9（审批与 Operation 持久化）
 
-任务 8 已通过督导复审（2026-08-24），下一项为任务 9（尚未开始）：
+任务 8 已通过督导复审（2026-08-25），下一项为任务 9（尚未开始）：
 
 1. 严格 TDD：先写失败测试并记录正确红灯。
 2. 实现 Policy、审批绑定与 Operation 持久化（任务 9 范围）。
