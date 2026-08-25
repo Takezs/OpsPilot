@@ -52,8 +52,8 @@
 - M2 / 任务 6：Reranker、上下文预算与引用回答已通过督导复审。
 - M2 / 任务 7：Run Journal 与 Transactional Outbox 已通过督导复审。
 - M3 / 任务 8：Tool Registry、受限 Agent Loop 与演示服务已通过督导复审（实现 `db2cae5`、复审修复 `8e8adfb`）。
-- M3 / 任务 9：Policy、审批绑定与 Operation 持久化已实现（实现 `e82a57c`），待督导复审。
-- 下一项是 M3 / 任务 10：Claim/Lease、fencing、Worker 执行、Reconciliation 与 SSE（未经新的检查点批准不要自行开始）。
+- M3 / 任务 9：Policy、审批绑定与 Operation 持久化已通过督导复审（2026-08-25）：实现 `e82a57c`、复审修复 `276a5cc`（一次性重试授权、副作用路由与 occupancy 加固）、P2 修复 `26ede61`（replacement 绑定不可变与不可删除）。
+- 下一项是 M3 / 任务 10：Claim/Lease、fencing 与状态事务（已获检查点批准）。Task 10 只负责过期副作用 Operation 原子进入 OUTCOME_UNKNOWN/RECONCILING；实际 Reconciliation 与安全重试属于任务 11，可靠 SSE 属于任务 12。
 - `attempt=0` outbox lifecycle 是已记录的非阻塞技术债，不要顺带重构。
 
 ## 常用验证命令

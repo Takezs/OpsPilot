@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-25  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已实现并完成督导复审修复（含 P2 绑定不可变），等待再次复审；下一项任务 10（Claim/Lease、fencing、Worker 执行与核对）
+> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已通过督导复审（2026-08-25）；下一项任务 10（Claim/Lease、fencing 与状态事务）
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8 已通过督导复审；任务 9 已实现并完成复审修复（含 P2 绑定不可变）、等待再次复审；fencing、核对、SSE 待开发 |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8、任务 9 已通过督导复审；任务 10（Claim/Lease、fencing 与状态事务）进行中；核对与 SSE 属任务 11/12 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -116,7 +116,7 @@
 - 审批绑定不可变 `operation_id + arguments_hash + operation_version`：`decide_approval` 用 `SELECT ... FOR UPDATE` 串行化并发 Reviewer，仅第一个转换状态、后续返回 already_processed 事实；参数/版本被篡改抛 `ApprovalVersionConflictError`（409）、过期抛 `ApprovalExpiredError`（409）；REJECT 在状态变终态后释放占用。
 - MANUAL_REVIEW 终态不可变：仅 ADMIN 可写 `manual_review_resolutions` 审计；仅存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时，重试在同一 PostgreSQL 事务中释放旧占用并创建新 Operation（`retry_of_operation_id` 审计链，重新经过 Policy 与 Approval）。门控由数据库触发器 `guard_occupancy_repoint`/`guard_occupancy_release` 证明（测试用原始 SQL UPDATE/DELETE 直接验证被拒绝），非应用层先查后插。
 - 原子性：占用切换、Operation、run_event 与 outbox 同一事务；注入失败后断言占用/Operation/事件/seq 全部回滚。HTTP 路由 `/api/v1`：审批决策、人工复核 resolution（ADMIN）、重试（ADMIN）。
-- 状态：**已实现并完成督导复审修复（含 P2 绑定不可变），等待再次复审（2026-08-25）**。实现提交 `e82a57c`（feat: bind durable approvals to immutable operations）；复审修复提交为下方标注（feat: bind retry authorizations one-shot to immutable replacements；P2 fix: make replacement binding immutable and undeletable）。
+- 状态：**已通过督导复审（2026-08-25）**。批准提交：`e82a57c`（feat: bind durable approvals to immutable operations，主实现）、`276a5cc`（feat: bind retry authorizations one-shot to immutable replacements，一次性重试授权/副作用路由/occupancy 加固）、`26ede61`（fix: make replacement binding immutable and undeletable，P2 绑定不可变与删除保护）。
 
 ### 任务 9 复审修复（P1，2026-08-25）
 
@@ -167,17 +167,20 @@
 - MANUAL_REVIEW 终态不自动释放占用；仅当存在 outcome=`RETRY_NEW_OPERATION` 的 `manual_review_resolutions` 时，才允许在同一 PostgreSQL 事务中释放旧占用并创建重试新 Operation（重新经过 Policy 与 Approval），该门控由数据库触发器证明，禁止应用层先查后插。
 - 已同步修订核心设计规格 §4.3/§6.2/§7/§11、实现计划任务 9 章节。
 
-## 下一步：任务 10（Claim/Lease、fencing、Worker 执行与核对）
+## 下一步：任务 10（Claim/Lease、fencing 与状态事务）
 
-任务 9 已实现并完成督导复审修复（含 P2 绑定不可变），当前状态为"修复完成，等待再次复审"。复审通过后下一项为任务 10（Claim/Lease、fencing、Worker 执行、Reconciliation 与 SSE）——按流程先等待再次复审，不自行开始任务 10。
+任务 9 已通过督导复审（2026-08-25）。下一项任务 10（Claim/Lease、fencing 与状态事务）：READY/RETRYING 条件更新 Claim（version 递增、claim_token、lease_owner、lease_expires_at → EXECUTING），fencing 回写匹配 id+version+token，SIDE_EFFECT Operation 在 EXECUTING 租约过期后原子转 OUTCOME_UNKNOWN/RECONCILING（不调用 Provider），续租与失权，状态+run_event+outbox 同事务。**任务 10 不实现实际核对流程（属任务 11）与可靠 SSE（属任务 12）**。
 
 ## 后续开发计划
 
 - 任务 6：BGE Reranker、上下文预算、DeepSeek 引用回答与 Citation Validator（✅ 已完成，督导复审通过）。
 - 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已通过督导复审）。
 - 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已通过督导复审）。
-- 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已实现并完成督导复审修复（含 P2 绑定不可变），等待再次复审）。
-- 任务 10–12：Operation fencing、OUTCOME_UNKNOWN 核对和可靠 SSE。
+- 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已通过督导复审（2026-08-25），提交 `e82a57c`/`276a5cc`/`26ede61`）。
+- 任务 10：Claim/Lease、fencing 与状态事务（进行中；过期副作用 Operation 原子转 OUTCOME_UNKNOWN/RECONCILING，不实现实际核对）。
+- 任务 11：副作用分类、安全重试与 Reconciliation（待开发）。
+- 任务 12：可靠 SSE（待开发）。
+- 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。
 - 任务 18：可观测性、脱敏、容器部署、文档与 v1.0 发布。

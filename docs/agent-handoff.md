@@ -8,8 +8,8 @@
 - M1（任务 1–4）与 M2 / 任务 5、任务 6 已批准（任务 6 督导验收提交 `955fe22`、`1f0e71c`、`05754bd`）
 - 任务 7（Run Journal 与 Transactional Outbox）已通过督导复审
 - 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已通过督导复审，实现提交 `db2cae5`、复审修复提交 `8e8adfb`
-- 任务 9（Policy、审批绑定与 Operation 持久化）已实现并完成督导复审修复（含 P2 绑定不可变：实现提交 `e82a57c`、修复提交见下方任务 9 范围），等待再次复审
-- 下一任务：任务 10，Claim/Lease、fencing、Worker 执行、Reconciliation 与 SSE
+- 任务 9（Policy、审批绑定与 Operation 持久化）已通过督导复审（2026-08-25），批准提交 `e82a57c`、`276a5cc`、`26ede61`
+- 下一任务：任务 10，Claim/Lease、fencing 与状态事务（过期副作用 Operation 原子转 OUTCOME_UNKNOWN/RECONCILING；不实现实际核对流程，核对属任务 11、可靠 SSE 属任务 12）
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
 
@@ -63,9 +63,14 @@ cd backend
 
 目标：Tool Registry、Agent Loop 与演示服务。实现提交 `db2cae5`（feat: orchestrate bounded registered tools），复审修复提交 `8e8adfb`（fix: harden agent provider decision contract：Provider 边界不发送缺少 `tool_call_id` 的 `role=tool` 消息、外部 JSON 决策严格 fail-closed 校验、AgentRunner 显式抛 `DecisionError`）。定向 35 passed（注册表 8 + 受限循环 19 + 演示服务 8）、完整 158 passed。任务 8 不实现审批、Operation fencing、SSE 或前端（属任务 9–12/13–15）。
 
-## 任务 9（已实现并完成复审修复，等待再次复审）范围
+## 任务 9（已通过督导复审，2026-08-25）范围
 
-目标：Policy、审批绑定与 Operation 持久化。实现提交 `e82a57c`（feat: bind durable approvals to immutable operations）；督导复审修复提交（feat: bind retry authorizations one-shot to immutable replacements）新增 `manual_review_resolutions.replacement_operation_id` 一次性消费绑定与加固的 `guard_occupancy_repoint` 触发器（迁移 `0012_resolution_consumption`）；P2 修复提交（fix: make replacement binding immutable and undeletable）把绑定改为数据库层不可变（触发器 `guard_resolution_binding`）并把外键改为 `ON DELETE RESTRICT`（迁移 `0013_resolution_binding`）。定向 70 passed（execution/test_policy.py 8 + approvals 43 + agent/test_runner.py 19）、完整 211 passed。新增迁移 `0011_operations_approvals`、`0012_resolution_consumption`、`0013_resolution_binding`（均基于当前 head 的新 revision，未复用固定迁移文件名）。
+目标：Policy、审批绑定与 Operation 持久化。批准提交：
+- `e82a57c`（feat: bind durable approvals to immutable operations）——主实现：确定性策略、Operation/幂等占用持久化、不可变审批绑定、MANUAL_REVIEW resolution 门控。
+- `276a5cc`（feat: bind retry authorizations one-shot to immutable replacements）——一次性重试授权（`replacement_operation_id` 一次性消费绑定，迁移 `0012_resolution_consumption`）、加固的 `guard_occupancy_repoint` 触发器、AgentRunner 副作用路由。
+- `26ede61`（fix: make replacement binding immutable and undeletable）——P2：`guard_resolution_binding` 触发器使绑定数据库层不可变、外键改 `ON DELETE RESTRICT`（迁移 `0013_resolution_binding`）。
+
+定向 70 passed（execution/test_policy.py 8 + approvals 43 + agent/test_runner.py 19）、完整 211 passed。新增迁移 `0011_operations_approvals`、`0012_resolution_consumption`、`0013_resolution_binding`（均基于当前 head 的新 revision，未复用固定迁移文件名）。
 
 督导复审五项修复已落地：
 1. AgentRunner 不直接执行 SIDE_EFFECT 工具；refund_order 决策经注入的 `side_effect_handler` 进入 durable Operation 流程（生产接线 `build_refund_operation_handler`），无 handler 时 fail-closed，任务 9 不调用 Payment Provider。
@@ -77,9 +82,9 @@ P2 修复（数据库完整性）已落地：`replacement_operation_id` 绑定�
 
 已批准设计修订（2026-08-25）已落地：幂等键唯一性在独立占用表 `operation_idempotency_occupancy`（`UNIQUE(tool_name, idempotency_key)`）；业务幂等键稳定为 `refund:{order_id}`；`tool_operations.retry_of_operation_id` 审计链；MANUAL_REVIEW 占用不自动释放，仅存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时方可同一事务释放旧占用并创建重试新 Operation（数据库触发器证明门控）。审批、Operation fencing、SSE 与前端仍属任务 10–12/13–15，未在任务 9 实现。
 
-## 任务 10（下一任务）范围
+## 任务 10（当前任务）范围
 
-目标：Claim/Lease、fencing 与状态事务。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 10”章节。
+目标：Claim/Lease、fencing 与状态事务。READY/RETRYING 条件更新 Claim（version 单调递增、不可复用 claim_token、lease_owner、lease_expires_at → EXECUTING，并发 Worker 最多一胜）；fencing 回写匹配 `id + expected version + claim_token`（旧 token/version/错误 owner/过期 lease 均 0 行）；过期 EXECUTING SIDE_EFFECT Operation 只能原子转 OUTCOME_UNKNOWN/RECONCILING 且不调用 Provider；长任务按租期约 1/3 续租、续租失败即失权；每次状态更新 + run_event + outbox 同一 PostgreSQL 事务。**任务 10 只负责过期副作用 Operation 原子进入 OUTCOME_UNKNOWN/RECONCILING，不实现实际退款状态查询/核对决策（属任务 11），也不实现可靠 SSE（属任务 12）**。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 10”章节。
 
 ## 完整验证命令
 
