@@ -376,10 +376,12 @@ git commit -m "feat: orchestrate bounded registered tools"
 
 ### 任务 9：Policy、审批绑定与 Operation 持久化
 
+> **已批准设计修订（2026-08-25，督导裁决）**：唯一性约束从 `tool_operations(tool_name, idempotency_key)` 移到独立占用表 `operation_idempotency_occupancy`（`UNIQUE(tool_name, idempotency_key)`）；业务幂等键保持稳定 `refund:{order_id}`（无后缀）；`tool_operations` 增加 `retry_of_operation_id` 审计链；MANUAL_REVIEW 占用不自动释放，仅当存在 outcome=`RETRY_NEW_OPERATION` 的 `manual_review_resolutions` 时，才能在同一事务中释放旧占用并创建重试新 Operation（由数据库触发器证明门控）。
+
 **文件：**
-- 创建：`backend/src/opspilot/execution/models.py`、`policy.py`、`idempotency.py`
+- 创建：`backend/src/opspilot/execution/models.py`、`policy.py`、`idempotency.py`、`service.py`
 - 创建：`backend/src/opspilot/approvals/models.py`、`schemas.py`、`service.py`、`router.py`
-- 创建：`backend/alembic/versions/` 下基于当前 head 生成的新 revision（禁止使用固定名称 `0005_operations_approvals.py`）
+- 创建：`backend/alembic/versions/` 下基于当前 head `0010_runs_journal_outbox` 生成的新 revision（禁止使用固定名称 `0005_operations_approvals.py`）
 - 创建：`backend/tests/execution/test_policy.py`
 - 创建：`backend/tests/approvals/test_approval.py`
 
@@ -387,17 +389,17 @@ git commit -m "feat: orchestrate bounded registered tools"
 
 断言 `<=100 allow`、`100<amount<=1000 require_approval`、`>1000 deny`；审批绑定 `operation_id+arguments_hash+operation_version`，参数或版本变化返回 409。
 
-- [ ] **步骤 2：编写并发重复审批测试**
+- [ ] **步骤 2：编写并发重复审批与幂等占用测试**
 
-两个 Reviewer 同时批准，只允许一个事务成功；第二个获得“已处理”事实状态，不重复投递。
+两个 Reviewer 同时批准，只允许一个事务完成状态转换；第二个获得“已处理”事实状态，不重复投递。普通并发重复创建返回同一当前 Operation。
 
-- [ ] **步骤 3：实现服务端规范化与幂等键**
+- [ ] **步骤 3：实现服务端规范化、幂等键占用与 Operation 持久化**
 
-退款参数按 Schema 规范化，服务端派生 `refund:{order_id}`；Operation 和键在审批前持久化，唯一冲突返回已有 Operation。
+退款参数按既有 Pydantic Schema 规范化，服务端派生稳定键 `refund:{order_id}`；`operation_idempotency_occupancy` 保证当前占用唯一；Operation 与占用在审批前同事务持久化，重复/并发创建返回已有 Operation；占用切换、Operation、run_event 与 outbox 同一事务。
 
 - [ ] **步骤 4：实现审批过期与人工复核审计**
 
-MANUAL_REVIEW 保持终态；管理员只能创建 `manual_review_resolutions`。人工重试必须创建新 Operation 并重新审批。
+MANUAL_REVIEW 保持终态；管理员只能创建 `manual_review_resolutions`；仅 outcome=`RETRY_NEW_OPERATION` 的 resolution 允许在同一事务中释放旧占用并创建重试新 Operation（`retry_of_operation_id` 审计链，重新经过 Policy 与 Approval）；数据库触发器证明门控。
 
 - [ ] **步骤 5：验证并提交**
 

@@ -77,13 +77,14 @@ Vue Web 通过 REST 和 SSE 访问 FastAPI 模块化单体。FastAPI 包含 Auth
 ### 4.3 可靠执行
 
 - `tool_definitions`：名称、输入 Schema、风险级别、审批规则、`effect`（`read_only` 或 `side_effect`）、幂等能力和是否支持核对。
-- `tool_operations`：Run、工具名、规范化参数、`arguments_hash`、服务端幂等键、状态、`version`、`claim_token`、`lease_owner`、`lease_expires_at`、Provider reference ID 和结果。
+- `tool_operations`：Run、工具名、规范化参数、`arguments_hash`、服务端幂等键、状态、`version`、`retry_of_operation_id`（MANUAL_REVIEW 重试审计链，自引用原 Operation）、`claim_token`、`lease_owner`、`lease_expires_at`、Provider reference ID 和结果。
 - `operation_attempts`：Attempt 编号、脱敏且限长的请求、响应与错误。
 - `approval_requests`：Operation、参数哈希、Operation 版本、状态、审核人、意见和过期时间。
 - `event_outbox`：`run_id`、`seq`、投递状态、尝试次数和投递时间；只通知事件身份，不复制 Event payload。
-- `manual_review_resolutions`：原 Operation、管理员、处置结果、备注和关闭时间；用于审计关闭 MANUAL_REVIEW，不改变原 Operation 的终态事实。
+- `manual_review_resolutions`：原 Operation、管理员、处置结果（`RESOLVED` / `CANCELLED` / `RETRY_NEW_OPERATION`）、备注和关闭时间；用于审计关闭 MANUAL_REVIEW，不改变原 Operation 的终态事实。仅当存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时，才允许在同一 PostgreSQL 事务中释放原 Operation 的幂等键占用并创建重试新 Operation；该门控必须由数据库约束（如触发器）证明，禁止退化为应用层先查后插。
+- `operation_idempotency_occupancy`：当前幂等键占用记录，列含 `tool_name`、`idempotency_key`、`operation_id`（当前占用 Operation），约束 `UNIQUE(tool_name, idempotency_key)`。业务幂等键同一时刻最多一个占用者/可执行 Operation；MANUAL_REVIEW 终态不自动释放占用。
 
-约束 `UNIQUE(tool_operations.tool_name, tool_operations.idempotency_key)`。幂等键必须由服务端根据规范化业务参数派生，例如退款使用 `refund:{order_id}`；不得信任 Agent 提供的幂等键。
+幂等键必须由服务端根据规范化业务参数派生，例如退款使用 `refund:{order_id}`；不得信任 Agent 提供的幂等键，不添加轮次、时间戳或 Operation ID 后缀。当前占用唯一性由 `operation_idempotency_occupancy` 的 `UNIQUE(tool_name, idempotency_key)` 保证（同一业务幂等键同一时刻最多一个占用者/可执行 Operation）；`tool_operations` 自身对 `(tool_name, idempotency_key)` 不设唯一约束，历史终态 Operation 保留相同业务幂等键作为审计记录。
 
 ### 4.4 评测预留
 
@@ -126,7 +127,7 @@ Operation 与幂等键必须在审批前持久化。审批固定绑定 `operatio
 
 失败处理先读取 ToolDefinition 的 `effect`、幂等能力和 `supports_reconciliation`。只读工具可以对连接错误、429 和可重试 5xx 进行退避重试。副作用工具只有在 Provider 明确返回“未执行”或传输层能确定请求未送达时才能直接进入 RETRYING；读取响应超时、发送后连接中断和语义不明确的 5xx 都表示请求可能到达 Provider，必须进入 OUTCOME_UNKNOWN，随后 RECONCILING。支付状态显示已退款则 SUCCEEDED，核对确认未退款才允许 RETRYING，无法确认则 MANUAL_REVIEW。进入结果不确定状态后禁止盲目再次退款。
 
-MANUAL_REVIEW 是原 Operation 的终态。管理员可通过专用审计接口写入 `manual_review_resolutions`，将人工调查标记为已解决并记录处置说明，但原 Operation 仍保持 MANUAL_REVIEW。若管理员决定再次尝试，必须创建新的 Operation，重新派生幂等与参数哈希，并重新经过 Policy 和 Approval；禁止复用原 Operation 自动执行。
+MANUAL_REVIEW 是原 Operation 的终态，且其业务幂等键的占用不会因终态自动释放（避免人工调查未完成时被误释放）。管理员可通过专用审计接口写入 `manual_review_resolutions`，将人工调查标记为已解决并记录处置说明（outcome 为 `RESOLVED`/`CANCELLED` 等），但原 Operation 仍保持 MANUAL_REVIEW。若管理员明确决定再次尝试，必须写入 outcome=`RETRY_NEW_OPERATION` 的 resolution；此后才允许在同一 PostgreSQL 事务中释放旧占用、创建新的 Operation、重新派生幂等键与参数哈希并重新经过 Policy 和 Approval。新 Operation 通过 `retry_of_operation_id` 指向原 Operation 形成审计链，新旧 Operation ID 不同但业务幂等键相同。禁止复用原 Operation 自动执行；未写入允许重试的 resolution 前，任何同键创建请求都只能返回既有 MANUAL_REVIEW Operation。释放旧占用、创建新 Operation、run_event 与 outbox 任一步失败时全部回滚，不允许单边提交。
 
 ### 6.3 Claim/Lease 与 fencing
 
@@ -152,6 +153,7 @@ Attempt、Journal、日志和 Trace 写入前必须脱敏并限制长度。API K
 - `IDEMPOTENCY_CONFLICT`：409；同语义请求返回已有 Operation，异常冲突记录告警。
 - `APPROVAL_EXPIRED`：409，不执行并要求重新发起审批。
 - `APPROVAL_VERSION_CONFLICT`：409，参数或 Operation 版本已变化。
+- `RETRY_NOT_AUTHORIZED`：409，MANUAL_REVIEW Operation 未写入 outcome=`RETRY_NEW_OPERATION` 的 resolution，不允许创建重试新 Operation。
 - `LEASE_CONFLICT`：Worker 放弃本次写入并重读，不暴露成用户 500。
 - `LEASE_EXPIRED_DURING_SIDE_EFFECT`：EXECUTING 租约过期且请求可能已送达，原子转入 OUTCOME_UNKNOWN/RECONCILING，禁止直接再次调用。
 - `OUTCOME_UNKNOWN`：状态查询明确显示核对待处理或进行中。
@@ -210,7 +212,7 @@ SSE 断线只显示正在重连，不把 Run 标记为失败。
 ### 11.1 测试层级
 
 - 单元测试：结构切分、RRF、引用校验、策略、幂等键派生、状态转换、脱敏、SSE buffer reducer。
-- PostgreSQL/Redis 集成：pgvector、PostgreSQL FTS、权限过滤、唯一约束、Operation/Event/Outbox 原子提交、Outbox 重复发布、Redis 通知永久丢失后的 PG 水位补发、Claim/Lease/fencing。
+- PostgreSQL/Redis 集成：pgvector、PostgreSQL FTS、权限过滤、幂等键占用唯一、Operation/Event/Outbox 原子提交、resolution 门控的 MANUAL_REVIEW 重试（并发重试最多一个新 Operation）、Outbox 重复发布、Redis 通知永久丢失后的 PG 水位补发、Claim/Lease/fencing。
 - 服务集成与故障注入：审批参数篡改、审批过期、只读工具退避重试、副作用请求明确未送达、未知 5xx、timeout-before-effect、timeout-after-effect、Worker 重启、并发 Worker 与租约过期。
 - Playwright E2E：上传、引用问答、审批退款、核对、时间线、SSE 断线/重复/乱序。
 
@@ -220,7 +222,9 @@ SSE 断线只显示正在重连，不把 Run 标记为失败。
 - 普通用户无法在 Dense 或 FTS 查询结果中获得越权 Chunk。
 - 回答引用可定位生成时的原文版本和 Chunk。
 - 超过阈值的退款在审批前不能执行，审批参数变化后原批准不能复用。
-- 10 个并发同语义退款只产生一个外部退款副作用，调用方获得同一 Operation。
+- 同一业务幂等键同一时刻最多一个占用者/可执行 Operation；10 个并发同语义退款只产生一个外部退款副作用，调用方获得同一 Operation。
+- 未写入 outcome=`RETRY_NEW_OPERATION` 的 resolution 前，MANUAL_REVIEW 不能创建新 Operation；写入后重试可创建新 Operation，新旧 ID 不同、业务幂等键相同，并形成 `retry_of_operation_id` 审计链；原 MANUAL_REVIEW Operation 始终不变。
+- 两个并发的管理员重试请求最多创建一个新 Operation；释放旧占用、创建新 Operation、run_event 与 outbox 任一步失败时全部回滚，不存在单边提交。
 - timeout-after-effect 必须通过 Provider reference ID 或业务幂等键核对成功，不得再次退款。
 - Worker 或 API 重启后可从 PostgreSQL 恢复；旧 Worker 的迟到数据库结果被 fencing 拒绝。
 - 旧 Worker 的退款调用已生效但 EXECUTING 租约过期时，新 Worker 接管必须先进入 RECONCILING 并确认已退款，外部退款记录仍只有一条。

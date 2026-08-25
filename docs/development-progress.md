@@ -130,12 +130,19 @@
 - Document 增加 `effective_at`（默认上传时间），新增 `0009_document_effective_at` 迁移。
 - 实现计划中任务 7/9/16 的固定迁移文件名（0004/0005/0006）已移除，改为基于当前 head 生成新 revision。
 
+## 设计修订（2026-08-25，督导裁决）
+
+- 任务 9 的幂等键唯一性约束从 `tool_operations(tool_name, idempotency_key)` 移到独立占用表 `operation_idempotency_occupancy`（`UNIQUE(tool_name, idempotency_key)`）：同一业务幂等键同一时刻最多一个占用者/可执行 Operation，历史终态 Operation 保留相同业务幂等键作为审计记录。
+- 业务幂等键保持稳定 `refund:{order_id}`（无轮次/时间戳/ID 后缀）；`tool_operations` 增加 `retry_of_operation_id` 自引用审计链。
+- MANUAL_REVIEW 终态不自动释放占用；仅当存在 outcome=`RETRY_NEW_OPERATION` 的 `manual_review_resolutions` 时，才允许在同一 PostgreSQL 事务中释放旧占用并创建重试新 Operation（重新经过 Policy 与 Approval），该门控由数据库触发器证明，禁止应用层先查后插。
+- 已同步修订核心设计规格 §4.3/§6.2/§7/§11、实现计划任务 9 章节。
+
 ## 下一步：任务 9（审批与 Operation 持久化）
 
-任务 8 已通过督导复审（2026-08-25），下一项为任务 9（尚未开始）：
+任务 8 已通过督导复审（2026-08-25），设计修订已批准，下一项为任务 9（尚未开始）：
 
 1. 严格 TDD：先写失败测试并记录正确红灯。
-2. 实现 Policy、审批绑定与 Operation 持久化（任务 9 范围）。
+2. 实现 Policy、审批绑定与 Operation 持久化（任务 9 范围，含幂等键占用与 resolution 门控重试）。
 3. 通过定向测试、完整 pytest、Ruff、Mypy 后单独提交，等待复审。
 
 ## 后续开发计划

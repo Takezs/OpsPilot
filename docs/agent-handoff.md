@@ -65,6 +65,8 @@ cd backend
 
 目标：Policy、审批绑定与 Operation 持久化。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 9”章节。新增迁移必须基于当前 head `0010_runs_journal_outbox` 生成新 revision，不得复用固定迁移文件名（0004/0005/0006 已被占用）。
 
+已批准设计修订（2026-08-25）：幂等键唯一性移到独立占用表 `operation_idempotency_occupancy`（`UNIQUE(tool_name, idempotency_key)`）；业务幂等键稳定为 `refund:{order_id}`（无后缀）；`tool_operations.retry_of_operation_id` 审计链；MANUAL_REVIEW 占用不自动释放，仅存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时方可同一事务释放旧占用并创建重试新 Operation（数据库触发器证明门控）。规格已同步修订。
+
 ## 完整验证命令
 
 ```powershell
