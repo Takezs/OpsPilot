@@ -2,7 +2,7 @@
 
 ## 工作位置
 
-- 仓库：`E:\JavaProjects\OpsPilot`
+- 仓库：`E:\pyproject\OpsPilot\.worktrees\opspilot-planning`
 - 分支：`plan/opspilot-core-mvp`
 - 任务 5（权限感知 Hybrid Retrieval）最新功能提交：`1bce950`
 - M1（任务 1–4）与 M2 / 任务 5、任务 6 已批准（任务 6 督导验收提交 `955fe22`、`1f0e71c`、`05754bd`）
@@ -33,7 +33,7 @@
 ## 环境检查
 
 ```powershell
-cd E:\JavaProjects\OpsPilot
+cd E:\pyproject\OpsPilot\.worktrees\opspilot-planning
 docker version
 docker compose version
 docker compose up -d postgres redis
@@ -68,12 +68,12 @@ cd backend
 ## 完整验证命令
 
 ```powershell
-cd E:\JavaProjects\OpsPilot\backend
+cd E:\pyproject\OpsPilot\.worktrees\opspilot-planning\backend
 ..\.venv\Scripts\ruff.exe format --check .
 ..\.venv\Scripts\ruff.exe check .
 ..\.venv\Scripts\mypy.exe --no-incremental src
 ..\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider `
-  --basetemp=E:\JavaProjects\OpsPilot\.pytest-temp-agent
+  --basetemp=E:\pyproject\OpsPilot\.worktrees\opspilot-planning\.pytest-temp-agent
 ..\.venv\Scripts\alembic.exe -c alembic.ini current
 ```
 

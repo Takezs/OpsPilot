@@ -13,7 +13,7 @@ from typing import Any, Literal, Protocol, cast
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
-from opspilot.agent.prompts import render_system_prompt
+from opspilot.agent.prompts import render_system_prompt, render_untrusted_tool_output
 from opspilot.agent.state import AgentMessage, AgentState
 from opspilot.tools.registry import ToolRegistry, validate_arguments
 from opspilot.tools.types import ToolDefinition
@@ -82,8 +82,14 @@ class AgentRunner:
                 )
             if state.tool_calls >= self._max_tool_calls:
                 return AgentOutcome(rounds=state.rounds, tool_calls=state.tool_calls, bounded=True)
-            assert decision.tool is not None
-            definition = self._registry.get(decision.tool)
+            if decision.kind != "tool_call":
+                raise DecisionError(
+                    f"decision provider returned unsupported decision kind: {decision.kind!r}"
+                )
+            tool_name = decision.tool
+            if tool_name is None or not tool_name:
+                raise DecisionError("decision provider returned a tool_call without a tool name")
+            definition = self._registry.get(tool_name)
             arguments = validate_arguments(definition, decision.arguments or {})
             state.tool_calls += 1
             result = await definition.invoke(arguments)
@@ -115,22 +121,9 @@ class DeepSeekAgentDecider:
         self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout_seconds)
 
     async def decide(self, state: AgentState, tools: tuple[ToolDefinition, ...]) -> AgentDecision:
-        messages: list[ChatCompletionMessageParam] = [
-            cast(
-                ChatCompletionMessageParam,
-                {"role": "system", "content": render_system_prompt(tools)},
-            ),
-            *[
-                cast(
-                    ChatCompletionMessageParam,
-                    {"role": message.role, "content": message.content},
-                )
-                for message in state.messages
-            ],
-        ]
         response = await self._client.chat.completions.create(
             model=self.model,
-            messages=messages,
+            messages=_render_api_messages(state, tools),
             response_format={"type": "json_object"},
         )
         content = response.choices[0].message.content
@@ -139,21 +132,67 @@ class DeepSeekAgentDecider:
         return _parse_decision(content)
 
 
+def _render_api_messages(
+    state: AgentState, tools: tuple[ToolDefinition, ...]
+) -> list[ChatCompletionMessageParam]:
+    """Map the run history onto chat messages without a raw ``tool`` role.
+
+    A native ``role: tool`` message requires a preceding assistant ``tool_call``
+    with a ``tool_call_id``; the JSON decision protocol records no such call, so
+    tool results are re-emitted as labeled user context that the model treats as
+    untrusted tool output.
+    """
+    messages: list[ChatCompletionMessageParam] = [
+        cast(
+            ChatCompletionMessageParam,
+            {"role": "system", "content": render_system_prompt(tools)},
+        )
+    ]
+    for message in state.messages:
+        if message.role == "tool":
+            messages.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {
+                        "role": "user",
+                        "content": render_untrusted_tool_output(message.tool_name, message.content),
+                    },
+                )
+            )
+        else:
+            messages.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {"role": message.role, "content": message.content},
+                )
+            )
+    return messages
+
+
 def _parse_decision(content: str) -> AgentDecision:
     try:
         payload = json.loads(content)
     except json.JSONDecodeError as error:
         raise DecisionError(f"decider returned invalid JSON: {error}") from error
+    if not isinstance(payload, dict):
+        raise DecisionError("decider decision must be a JSON object")
     kind = payload.get("type")
     if kind == "answer":
-        return AgentDecision(kind="answer", answer=str(payload.get("answer", "")))
+        answer = payload.get("answer")
+        if not isinstance(answer, str) or not answer.strip():
+            raise DecisionError("decider answer decision needs a non-empty 'answer' string")
+        return AgentDecision(kind="answer", answer=answer)
     if kind == "clarify":
-        return AgentDecision(kind="clarify", question=str(payload.get("question", "")))
+        question = payload.get("question")
+        if not isinstance(question, str) or not question.strip():
+            raise DecisionError("decider clarify decision needs a non-empty 'question' string")
+        return AgentDecision(kind="clarify", question=question)
     if kind == "tool_call":
+        tool = payload.get("tool")
+        if not isinstance(tool, str) or not tool.strip():
+            raise DecisionError("decider tool_call decision needs a non-empty 'tool' name")
         arguments = payload.get("arguments")
-        return AgentDecision(
-            kind="tool_call",
-            tool=str(payload.get("tool", "")),
-            arguments=dict(arguments) if isinstance(arguments, dict) else {},
-        )
+        if not isinstance(arguments, dict):
+            raise DecisionError("decider tool_call decision 'arguments' must be a JSON object")
+        return AgentDecision(kind="tool_call", tool=tool, arguments=arguments)
     raise DecisionError(f"decider returned unknown decision type: {kind!r}")

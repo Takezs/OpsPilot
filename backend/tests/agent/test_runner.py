@@ -8,12 +8,19 @@ Task 8 guarantees:
 - the loop stops after at most 8 rounds or 6 tool invocations.
 """
 
+import json
 from typing import Any
 
 import pytest
 
-from opspilot.agent.runner import AgentDecision, AgentRunner
-from opspilot.agent.state import AgentState
+from opspilot.agent.runner import (
+    AgentDecision,
+    AgentRunner,
+    DecisionError,
+    _parse_decision,
+    _render_api_messages,
+)
+from opspilot.agent.state import AgentMessage, AgentState
 from opspilot.tools.registry import (
     ToolArgumentError,
     ToolDependencies,
@@ -181,3 +188,124 @@ async def test_stops_after_max_tool_calls_with_defaults() -> None:
     assert outcome.bounded is True
     assert outcome.tool_calls == 6
     assert outcome.rounds == 7
+
+
+def test_parse_decision_rejects_non_object_json() -> None:
+    for content in ("[1, 2]", '"hello"', "42", "null", "true"):
+        with pytest.raises(DecisionError):
+            _parse_decision(content)
+
+
+def test_parse_decision_rejects_missing_or_empty_answer() -> None:
+    for payload in ({"type": "answer"}, {"type": "answer", "answer": ""}):
+        with pytest.raises(DecisionError):
+            _parse_decision(json.dumps(payload))
+
+
+def test_parse_decision_rejects_non_string_answer() -> None:
+    with pytest.raises(DecisionError):
+        _parse_decision(json.dumps({"type": "answer", "answer": 42}))
+
+
+def test_parse_decision_rejects_missing_or_empty_question() -> None:
+    for payload in ({"type": "clarify"}, {"type": "clarify", "question": "   "}):
+        with pytest.raises(DecisionError):
+            _parse_decision(json.dumps(payload))
+
+
+def test_parse_decision_rejects_missing_or_empty_tool() -> None:
+    for payload in ({"type": "tool_call"}, {"type": "tool_call", "tool": ""}):
+        with pytest.raises(DecisionError):
+            _parse_decision(json.dumps(payload))
+
+
+def test_parse_decision_rejects_missing_or_non_object_arguments() -> None:
+    for payload in (
+        {"type": "tool_call", "tool": "get_order"},
+        {"type": "tool_call", "tool": "get_order", "arguments": ["A100"]},
+        {"type": "tool_call", "tool": "get_order", "arguments": "A100"},
+    ):
+        with pytest.raises(DecisionError):
+            _parse_decision(json.dumps(payload))
+
+
+def test_parse_decision_rejects_unknown_type() -> None:
+    with pytest.raises(DecisionError):
+        _parse_decision(json.dumps({"type": "hack", "answer": "x"}))
+
+
+def test_parse_decision_accepts_valid_decisions() -> None:
+    answer = _parse_decision(json.dumps({"type": "answer", "answer": "The window is 30 days."}))
+    assert answer.kind == "answer"
+    assert answer.answer == "The window is 30 days."
+
+    clarify = _parse_decision(json.dumps({"type": "clarify", "question": "Which order?"}))
+    assert clarify.kind == "clarify"
+    assert clarify.question == "Which order?"
+
+    tool_call = _parse_decision(
+        json.dumps(
+            {"type": "tool_call", "tool": "get_order", "arguments": {"order_number": "A100"}}
+        )
+    )
+    assert tool_call.kind == "tool_call"
+    assert tool_call.tool == "get_order"
+    assert tool_call.arguments == {"order_number": "A100"}
+
+
+def test_render_api_messages_never_emits_tool_role() -> None:
+    state = AgentState(
+        messages=[
+            AgentMessage(role="user", content="status of A100"),
+            AgentMessage(role="tool", content='{"status": "REFUNDED"}', tool_name="get_order"),
+        ]
+    )
+
+    messages = _render_api_messages(state, ())
+
+    assert "tool" not in [message["role"] for message in messages]
+
+
+def test_render_api_messages_labels_tool_output_as_untrusted() -> None:
+    state = AgentState(
+        messages=[
+            AgentMessage(role="user", content="status of A100"),
+            AgentMessage(role="tool", content='{"status": "REFUNDED"}', tool_name="get_order"),
+        ]
+    )
+
+    messages = _render_api_messages(state, ())
+    untrusted = [
+        message["content"]
+        for message in messages
+        if message["role"] == "user" and "[UNTRUSTED TOOL OUTPUT" in message["content"]
+    ]
+
+    assert len(untrusted) == 1
+    assert "get_order" in untrusted[0]
+    assert '{"status": "REFUNDED"}' in untrusted[0]
+
+
+def test_render_api_messages_preserves_regular_roles() -> None:
+    state = AgentState(
+        messages=[
+            AgentMessage(role="user", content="hello"),
+            AgentMessage(role="assistant", content="I will check."),
+        ]
+    )
+
+    messages = _render_api_messages(state, ())
+
+    assert [message["role"] for message in messages] == ["system", "user", "assistant"]
+
+
+async def test_runner_raises_decision_error_for_tool_call_without_tool_name() -> None:
+    fake = FakeTools()
+    runner = AgentRunner(
+        _registry(fake),
+        ScriptedDecisionProvider([AgentDecision(kind="tool_call")]),
+    )
+
+    with pytest.raises(DecisionError):
+        await runner.run("status of ?")
+    assert fake.calls == []
