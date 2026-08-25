@@ -4,9 +4,15 @@ The loop asks a decision provider (the "brain") for one action per round,
 executes tool calls only through the ``ToolRegistry`` after Pydantic validation,
 and stops after at most ``max_rounds`` rounds or ``max_tool_calls`` tool
 invocations. It never persists or displays hidden thinking.
+
+SIDE_EFFECT tools are never executed through their adapter: the runner hands the
+decision to the injected ``side_effect_handler`` (the durable Operation flow) or
+fails closed when none is wired. READ_ONLY tools keep the direct-invocation
+contract.
 """
 
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
 
@@ -16,7 +22,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from opspilot.agent.prompts import render_system_prompt, render_untrusted_tool_output
 from opspilot.agent.state import AgentMessage, AgentState
 from opspilot.tools.registry import ToolRegistry, validate_arguments
-from opspilot.tools.types import ToolDefinition
+from opspilot.tools.types import ToolDefinition, ToolEffect, ToolResult
 
 DecisionKind = Literal["answer", "clarify", "tool_call"]
 
@@ -47,6 +53,9 @@ class DecisionProvider(Protocol):
     ) -> AgentDecision: ...
 
 
+SideEffectHandler = Callable[[ToolDefinition, Any], Awaitable[ToolResult]]
+
+
 class AgentRunner:
     def __init__(
         self,
@@ -55,11 +64,13 @@ class AgentRunner:
         *,
         max_rounds: int = 8,
         max_tool_calls: int = 6,
+        side_effect_handler: SideEffectHandler | None = None,
     ) -> None:
         self._registry = registry
         self._decision_provider = decision_provider
         self._max_rounds = max_rounds
         self._max_tool_calls = max_tool_calls
+        self._side_effect_handler = side_effect_handler
 
     async def run(self, user_message: str) -> AgentOutcome:
         state = AgentState(messages=[AgentMessage(role="user", content=user_message)])
@@ -92,7 +103,23 @@ class AgentRunner:
             definition = self._registry.get(tool_name)
             arguments = validate_arguments(definition, decision.arguments or {})
             state.tool_calls += 1
-            result = await definition.invoke(arguments)
+            if definition.effect is ToolEffect.SIDE_EFFECT:
+                # The runner never executes a SIDE_EFFECT adapter directly: the
+                # decision is handed to the durable-operation handler, or fails
+                # closed when none is wired. Only READ_ONLY tools keep the Task 8
+                # direct-invocation contract.
+                if self._side_effect_handler is None:
+                    result = ToolResult(
+                        ok=False,
+                        error=(
+                            f"tool {definition.name!r} requires the durable "
+                            "operation flow; refusing to call its adapter directly"
+                        ),
+                    )
+                else:
+                    result = await self._side_effect_handler(definition, arguments)
+            else:
+                result = await definition.invoke(arguments)
             state.messages.append(
                 AgentMessage(
                     role="tool",

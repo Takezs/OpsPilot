@@ -6,9 +6,15 @@ Task 8 guarantees:
 - tool calls are executed only through the registry with Pydantic-validated
   arguments and the result is handed back to the decider;
 - the loop stops after at most 8 rounds or 6 tool invocations.
+
+Task 9 fix (side-effect bypass closed): the runner never executes a SIDE_EFFECT
+tool's adapter directly. ``refund_order`` decisions are routed to the durable
+Operation creation flow (the injected side-effect handler); with no handler the
+runner returns a fail-closed result. READ_ONLY tools keep the Task 8 contract.
 """
 
 import json
+import uuid
 from typing import Any
 
 import pytest
@@ -309,3 +315,55 @@ async def test_runner_raises_decision_error_for_tool_call_without_tool_name() ->
     with pytest.raises(DecisionError):
         await runner.run("status of ?")
     assert fake.calls == []
+
+
+# --- Task 9 fix: SIDE_EFFECT tools are never executed through their adapter ---
+
+
+async def test_refund_order_decisions_never_invoke_payment_adapter() -> None:
+    """Any refund_order decision routes to the operation handler, never the adapter."""
+    fake = FakeTools()
+    received: list[tuple[str, dict[str, Any]]] = []
+
+    async def handler(definition: Any, arguments: Any) -> ToolResult:
+        received.append((definition.name, arguments.model_dump(mode="json")))
+        return ToolResult(
+            ok=True, data={"operation_id": str(uuid.uuid4()), "status": "WAITING_APPROVAL"}
+        )
+
+    amounts = [50.0, 250.0, 5000.0]
+    decisions = [_tool("refund_order", order_number="A100", amount=a) for a in amounts]
+    decisions.append(_answer("created operations"))
+    runner = AgentRunner(
+        _registry(fake),
+        ScriptedDecisionProvider(decisions),
+        side_effect_handler=handler,
+    )
+
+    outcome = await runner.run("refund A100")
+
+    # the payment adapter was never invoked, for any amount
+    assert all(name != "refund_order" for name, _ in fake.calls)
+    # every refund_order decision was routed to the durable operation handler
+    assert [name for name, _ in received] == ["refund_order"] * len(amounts)
+    assert outcome.final_answer == "created operations"
+    assert outcome.tool_calls == len(amounts)
+
+
+async def test_side_effect_without_handler_is_fail_closed() -> None:
+    """With no handler wired, a SIDE_EFFECT decision must not call its adapter."""
+    fake = FakeTools()
+    runner = AgentRunner(
+        _registry(fake),
+        ScriptedDecisionProvider(
+            [
+                _tool("refund_order", order_number="A100", amount=250.0),
+                _answer("blocked"),
+            ]
+        ),
+    )
+
+    outcome = await runner.run("refund A100")
+
+    assert all(name != "refund_order" for name, _ in fake.calls)
+    assert outcome.final_answer == "blocked"

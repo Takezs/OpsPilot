@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-25  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已实现待督导复审；下一项任务 10（Claim/Lease、fencing、Worker 执行与核对）
+> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已实现并完成督导复审修复，等待再次复审；下一项任务 10（Claim/Lease、fencing、Worker 执行与核对）
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8 已通过督导复审；任务 9 已实现待复审；fencing、核对、SSE 待开发 |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8 已通过督导复审；任务 9 已实现并完成复审修复、等待再次复审；fencing、核对、SSE 待开发 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -116,18 +116,28 @@
 - 审批绑定不可变 `operation_id + arguments_hash + operation_version`：`decide_approval` 用 `SELECT ... FOR UPDATE` 串行化并发 Reviewer，仅第一个转换状态、后续返回 already_processed 事实；参数/版本被篡改抛 `ApprovalVersionConflictError`（409）、过期抛 `ApprovalExpiredError`（409）；REJECT 在状态变终态后释放占用。
 - MANUAL_REVIEW 终态不可变：仅 ADMIN 可写 `manual_review_resolutions` 审计；仅存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时，重试在同一 PostgreSQL 事务中释放旧占用并创建新 Operation（`retry_of_operation_id` 审计链，重新经过 Policy 与 Approval）。门控由数据库触发器 `guard_occupancy_repoint`/`guard_occupancy_release` 证明（测试用原始 SQL UPDATE/DELETE 直接验证被拒绝），非应用层先查后插。
 - 原子性：占用切换、Operation、run_event 与 outbox 同一事务；注入失败后断言占用/Operation/事件/seq 全部回滚。HTTP 路由 `/api/v1`：审批决策、人工复核 resolution（ADMIN）、重试（ADMIN）。
-- 状态：**已实现，待督导复审（2026-08-25）**。实现提交 `e82a57c`（feat: bind durable approvals to immutable operations）；定向 34 passed、完整 192 passed。
+- 状态：**已实现并完成督导复审修复，等待再次复审（2026-08-25）**。实现提交 `e82a57c`（feat: bind durable approvals to immutable operations）；复审修复提交为下方标注（feat: bind retry authorizations one-shot to immutable replacements）。
+
+### 任务 9 复审修复（P1，2026-08-25）
+
+督导复审五项修复已按 Red → Green → Refactor 完成：
+
+1. **封闭副作用绕过路径**：`AgentRunner` 不再直接执行任何 SIDE_EFFECT 工具的适配器；`refund_order` 决策被路由到注入的 `side_effect_handler`（无 handler 时 fail-closed 返回错误结果），READ_ONLY 工具仍按任务 8 契约直接调用。新增 `build_refund_operation_handler` 生产接线：refund_order 决策 → 确定性 Policy → durable Operation 创建流程（同一事务写占用/审批/事件/outbox），任务 9 全程不调用 Payment Provider。回归测试证明任意金额（50/250/5000）的 `refund_order` 决策都不会触发 payment adapter。
+2. **一次性消费重试授权**：`manual_review_resolutions.replacement_operation_id`（迁移 `0012`，`ON DELETE SET NULL`）持久绑定 resolution 与其唯一 replacement Operation。重试事务内用条件 `UPDATE ... WHERE replacement_operation_id IS NULL` 原子消费授权（无进程锁、无先查后插），替换 Operation 即使被 Policy 判为 DENIED 也是该 resolution 的确定结果；后续及并发请求都返回同一个 replacement，不再创建额外 DENIED 行。测试覆盖顺序、并发（ALLOW/REQUIRE_APPROVAL/DENY 各最多一个 replacement）与 DENY 确定结果。
+3. **加固 occupancy repoint**：`guard_occupancy_repoint` 触发器重写为数据库级验证新占用者——必须存在、`tool_name`/`idempotency_key` 与占用一致、`retry_of_operation_id` 指向旧 MANUAL_REVIEW Operation、且是某有效 RETRY_NEW_OPERATION resolution 的 `replacement_operation_id`。新增 4 个原始 SQL 负向测试：错误工具、错误业务键、错误谱系、任意 Operation（正确 tool/key/lineage 但未绑定 resolution）均无法 repoint。
+4. **原子性**：resolution 消费、replacement 创建、占用切换、状态事件与 outbox 同一事务提交；注入 append_event 失败后 resolution 的 claim、replacement、事件与 outbox 全部回滚，resolution 仍可被干净地再次消费。
+5. **质量门禁**：定向 65 passed、完整 205 passed、Ruff/Mypy/Alembic `0012 (head)`/PG/Redis 健康全部通过，见下方验证基线。
 
 ## 当前验证基线
 
-任务 9 实现（待督导复审）后的真实结果：
+任务 9 复审修复后的真实结果（2026-08-25）：
 
-- 定向测试：`34 passed`（execution/test_policy.py 8 + approvals/test_approval.py 26）。
-- 完整测试：`192 passed`（任务 8 基线 158 + 任务 9 新增 34：策略/幂等占用/审批绑定/人工复核/并发/原子性/触发器证明/HTTP）。
-- Ruff format：112 个文件格式正确。
+- 定向测试：`65 passed`（execution/test_policy.py 8 + approvals/test_approval.py 38 + agent/test_runner.py 19）。
+- 完整测试：`205 passed`（任务 8 基线 158 + 任务 9 新增 47：策略/幂等占用/审批绑定/人工复核/并发/原子性/触发器证明/HTTP + 复审新增一次性消费/加固 repoint/runner 副作用路由）。
+- Ruff format：142 个文件格式正确。
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：72 个源文件无问题。
-- Alembic：`0011_operations_approvals (head)`；0001→0011 全链在全新数据库验证通过。
+- Alembic：`0012_resolution_consumption (head)`；0001→0012 全链（含 0011↔0012 往返）在全新数据库验证通过。
 - PostgreSQL：healthy，`pg_isready` 为 accepting connections。
 - Redis：healthy，`redis-cli ping` 返回 `PONG`。
 
@@ -149,14 +159,14 @@
 
 ## 下一步：任务 10（Claim/Lease、fencing、Worker 执行与核对）
 
-任务 9 已实现并单独提交（`e82a57c`），待督导复审。复审通过后下一项为任务 10（Claim/Lease、fencing、Worker 执行、Reconciliation 与 SSE）——按流程先等待复审，不自行开始任务 10。
+任务 9 已实现并完成督导复审修复，当前状态为"修复完成，等待再次复审"。复审通过后下一项为任务 10（Claim/Lease、fencing、Worker 执行、Reconciliation 与 SSE）——按流程先等待再次复审，不自行开始任务 10。
 
 ## 后续开发计划
 
 - 任务 6：BGE Reranker、上下文预算、DeepSeek 引用回答与 Citation Validator（✅ 已完成，督导复审通过）。
 - 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已通过督导复审）。
 - 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已通过督导复审）。
-- 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已实现，待督导复审）。
+- 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已实现并完成督导复审修复，等待再次复审）。
 - 任务 10–12：Operation fencing、OUTCOME_UNKNOWN 核对和可靠 SSE。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。

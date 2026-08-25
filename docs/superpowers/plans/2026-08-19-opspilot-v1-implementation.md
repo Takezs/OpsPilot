@@ -410,7 +410,7 @@ git add backend/src/opspilot/execution backend/src/opspilot/approvals backend/al
 git commit -m "feat: bind durable approvals to immutable operations"
 ```
 
-**状态：✅ 已实现，待督导复审（2026-08-25）。** 实现提交 `e82a57c`（feat: bind durable approvals to immutable operations）。定向 34 passed（execution/test_policy.py 8 + approvals 26）、完整 192 passed；Ruff format 112 文件、Ruff check 通过、Mypy 72 源文件无问题；`0011_operations_approvals (head)`；PostgreSQL/Redis healthy。测试覆盖并发重复创建返回同一 Operation、无 resolution 时 MANUAL_REVIEW 不可创建新 Operation、带 resolution 重试创建新 Operation（新旧 ID 不同、同业务键、`retry_of_operation_id` 审计链、重新经过 Policy 与 Approval）、并发 ADMIN 重试最多一个新 Operation、原 Operation 不可变、原子性回滚，以及触发器级证明（原始 SQL 释放/改指向被拒绝）。
+**状态：✅ 已实现并完成督导复审修复，等待再次复审（2026-08-25）。** 实现提交 `e82a57c`（feat: bind durable approvals to immutable operations）；督导复审修复提交（feat: bind retry authorizations one-shot to immutable replacements）新增 `manual_review_resolutions.replacement_operation_id` 一次性消费绑定（迁移 `0012_resolution_consumption`）、加固的 `guard_occupancy_repoint` 触发器（数据库级验证新占用者存在/tool_name/idempotency_key/谱系/resolution 绑定）、AgentRunner 副作用路由（不直接执行 SIDE_EFFECT 工具，`build_refund_operation_handler` 接线到 durable Operation 流程）。定向 65 passed（execution/test_policy.py 8 + approvals 38 + agent/test_runner.py 19）、完整 205 passed；Ruff format 142 文件、Ruff check 通过、Mypy 72 源文件无问题；`0012_resolution_consumption (head)`；PostgreSQL/Redis healthy。测试覆盖并发重复创建返回同一 Operation、无 resolution 时 MANUAL_REVIEW 不可创建新 Operation、带 resolution 重试创建新 Operation（新旧 ID 不同、同业务键、`retry_of_operation_id` 审计链、重新经过 Policy 与 Approval）、并发 ADMIN 重试最多一个新 Operation、原 Operation 不可变、原子性回滚、resolution 一次性消费（顺序/并发/DENY 确定结果）、触发器级证明（原始 SQL 释放/改指向被拒绝；错误工具/业务键/谱系/任意 Operation 无法 repoint），以及 runner 副作用路由（任意金额 refund_order 决策不触发 payment adapter）。
 
 ### 任务 10：Claim/Lease、fencing 与状态事务
 

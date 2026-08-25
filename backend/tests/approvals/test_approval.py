@@ -17,9 +17,17 @@ Plus approval binding: arguments-hash or version tampering -> 409, expiry cannot
 approve, only REVIEWER/ADMIN may decide, concurrent reviewers yield a single
 transition with no duplicate events. The resolution gate is additionally proven
 at the database level by the occupancy triggers.
+
+Task 9 review-fix guarantees: one-shot resolution consumption durably bound to
+``replacement_operation_id`` (subsequent and concurrent retries return the same
+replacement — including a DENIED one — and never create extra rows); a hardened
+repoint trigger that validates the new occupant's tool, business key, lineage and
+resolution binding at the database level; and atomic rollback of the claim /
+replacement / occupancy switch / events / outbox when any step fails.
 """
 
 import asyncio
+import json
 import uuid
 from collections.abc import Sequence
 
@@ -31,6 +39,7 @@ from sqlalchemy import select
 from opspilot.approvals.models import (
     ApprovalRequest,
     ApprovalStatus,
+    ManualReviewResolution,
     ResolutionOutcome,
 )
 from opspilot.approvals.service import (
@@ -50,11 +59,14 @@ from opspilot.db import async_session_factory
 from opspilot.execution.models import Operation, OperationStatus
 from opspilot.execution.service import (
     RetryNotAuthorizedError,
+    build_refund_operation_handler,
     create_refund_operation,
 )
 from opspilot.knowledge.schemas import AccessLevel
 from opspilot.main import app
 from opspilot.runs.models import Run, RunStatus
+from opspilot.tools.schemas import RefundOrderArgs
+from opspilot.tools.types import ToolDefinition, ToolEffect, ToolResult
 
 
 async def _create_run() -> uuid.UUID:
@@ -109,6 +121,72 @@ async def _create_waiting_approval(run_id: uuid.UUID) -> uuid.UUID:
         operation = await create_refund_operation(session, run_id, "A100", 250.0)
         await session.commit()
         return operation.id
+
+
+async def _insert_operation_raw(
+    run_id: uuid.UUID,
+    *,
+    tool_name: str = "refund_order",
+    order_number: str = "A100",
+    amount: float = 250.0,
+    status: str = "READY",
+    retry_of: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """Insert a tool_operations row with arbitrary attributes (trigger probing)."""
+    key = f"refund:{order_number}" if tool_name == "refund_order" else f"{tool_name}:{order_number}"
+    operation_id = uuid.uuid4()
+    arguments = json.dumps({"order_number": order_number, "amount": amount})
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    try:
+        await connection.execute(
+            "INSERT INTO tool_operations "
+            "(id, run_id, tool_name, normalized_arguments, arguments_hash, idempotency_key, "
+            " status, version, policy_decision, retry_of_operation_id, created_at, updated_at) "
+            "VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::operation_status, 1, 'ALLOW', $8, "
+            "now(), now())",
+            operation_id,
+            run_id,
+            tool_name,
+            arguments,
+            "0" * 64,
+            key,
+            status,
+            retry_of,
+        )
+        return operation_id
+    finally:
+        await connection.close()
+
+
+async def _resolution_for(operation_id: uuid.UUID) -> ManualReviewResolution:
+    async with async_session_factory() as session:
+        resolution = await session.scalar(
+            select(ManualReviewResolution).where(
+                ManualReviewResolution.operation_id == operation_id,
+                ManualReviewResolution.outcome == ResolutionOutcome.RETRY_NEW_OPERATION,
+            )
+        )
+        assert resolution is not None
+        return resolution
+
+
+async def _manual_review_original(run_id: uuid.UUID, order_number: str = "A100") -> uuid.UUID:
+    async with async_session_factory() as session:
+        original = await create_refund_operation(session, run_id, order_number, 250.0)
+        await session.commit()
+        original_id = original.id
+    await _set_status(original_id, "MANUAL_REVIEW")
+    async with async_session_factory() as session:
+        await record_manual_review_resolution(
+            session,
+            original_id,
+            ResolutionOutcome.RETRY_NEW_OPERATION,
+            resolved_by="admin-1",
+            role=Role.ADMIN,
+            note="retry",
+        )
+        await session.commit()
+    return original_id
 
 
 # --- Operation persistence --------------------------------------------------
@@ -801,6 +879,10 @@ async def test_create_rolls_back_operation_occupancy_and_events_on_failure(
 
 
 async def test_occupancy_repoint_blocked_without_resolution_by_trigger() -> None:
+    # With the hardened trigger an unrelated operation (different business key)
+    # is rejected at the occupancy checks before the resolution binding check; the
+    # missing-resolution-binding case is covered by
+    # test_repoint_denies_arbitrary_operation_not_bound_to_resolution.
     run_id = await _create_run()
     try:
         async with async_session_factory() as session:
@@ -820,7 +902,7 @@ async def test_occupancy_repoint_blocked_without_resolution_by_trigger() -> None
                     other_id,
                     original_id,
                 )
-            assert "RETRY_NEW_OPERATION" in str(excinfo.value)
+            assert "repoint denied" in str(excinfo.value)
         finally:
             await connection.close()
 
@@ -1019,5 +1101,345 @@ async def test_retry_endpoint_requires_admin_and_resolution() -> None:
             assert response.status_code == 409
         finally:
             app.dependency_overrides.pop(get_current_principal, None)
+    finally:
+        await _cleanup_runs([run_id])
+
+
+# --- Task 9 fix: one-shot resolution consumption ----------------------------
+
+
+async def test_retry_resolution_is_consumed_after_single_replacement() -> None:
+    """A RETRY_NEW_OPERATION resolution yields at most one replacement."""
+    run_id = await _create_run()
+    try:
+        original_id = await _manual_review_original(run_id)
+        resolution = await _resolution_for(original_id)
+
+        async def _retry() -> uuid.UUID:
+            async with async_session_factory() as session:
+                operation = await create_refund_operation(
+                    session,
+                    run_id,
+                    "A100",
+                    250.0,
+                    retry_of_operation_id=original_id,
+                    role=Role.ADMIN,
+                )
+                await session.commit()
+                return operation.id
+
+        first = await _retry()
+        second = await _retry()
+
+        assert first != original_id
+        assert second == first
+        # exactly one replacement row exists for the business key
+        assert (
+            await _count(
+                "SELECT count(*) FROM tool_operations WHERE idempotency_key = 'refund:A100'"
+            )
+            == 2
+        )
+        # the resolution is durably bound to the single replacement
+        async with async_session_factory() as session:
+            latest = await session.get(ManualReviewResolution, resolution.id)
+            assert latest is not None
+            assert latest.replacement_operation_id == first
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_retry_denied_replacement_is_definitive_result() -> None:
+    """A DENIED replacement is still the resolution's single definitive result."""
+    run_id = await _create_run()
+    try:
+        original_id = await _manual_review_original(run_id)
+
+        async def _retry(amount: float) -> uuid.UUID:
+            async with async_session_factory() as session:
+                operation = await create_refund_operation(
+                    session,
+                    run_id,
+                    "A100",
+                    amount,
+                    retry_of_operation_id=original_id,
+                    role=Role.ADMIN,
+                )
+                await session.commit()
+                return operation.id
+
+        denied = await _retry(1200.0)
+        async with async_session_factory() as session:
+            operation = await session.get(Operation, denied)
+            assert operation is not None and operation.status == OperationStatus.DENIED
+
+        again = await _retry(1200.0)
+        assert again == denied
+        # no extra DENIED rows are created on subsequent requests
+        assert (
+            await _count(
+                "SELECT count(*) FROM tool_operations WHERE idempotency_key = 'refund:A100'"
+            )
+            == 2
+        )
+        # the MANUAL_REVIEW key was not re-pointed by a DENIED replacement
+        assert (
+            await _count(
+                "SELECT count(*) FROM operation_idempotency_occupancy WHERE operation_id = $1",
+                original_id,
+            )
+            == 1
+        )
+    finally:
+        await _cleanup_runs([run_id])
+
+
+@pytest.mark.parametrize(
+    ("amount", "expected_status"),
+    [
+        (50.0, "READY"),
+        (250.0, "WAITING_APPROVAL"),
+        (1200.0, "DENIED"),
+    ],
+)
+async def test_concurrent_admin_retries_single_replacement_per_policy(
+    amount: float, expected_status: str
+) -> None:
+    """Concurrent ADMIN retries produce one replacement for every policy outcome."""
+    run_id = await _create_run()
+    try:
+        original_id = await _manual_review_original(run_id)
+
+        async def _retry() -> uuid.UUID:
+            async with async_session_factory() as session:
+                operation = await create_refund_operation(
+                    session,
+                    run_id,
+                    "A100",
+                    amount,
+                    retry_of_operation_id=original_id,
+                    role=Role.ADMIN,
+                )
+                await session.commit()
+                return operation.id
+
+        ids = await asyncio.gather(_retry(), _retry(), _retry())
+
+        assert len(set(ids)) == 1
+        assert ids[0] != original_id
+        # original + exactly one replacement for the business key
+        assert (
+            await _count(
+                "SELECT count(*) FROM tool_operations WHERE idempotency_key = 'refund:A100'"
+            )
+            == 2
+        )
+        async with async_session_factory() as session:
+            operation = await session.get(Operation, ids[0])
+            assert operation is not None and operation.status == expected_status
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_retry_rolls_back_resolution_claim_and_replacement_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure anywhere in the retry transaction rolls back the whole unit."""
+    run_id = await _create_run()
+    try:
+        original_id = await _manual_review_original(run_id)
+        resolution = await _resolution_for(original_id)
+        events_before = await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id)
+
+        async def _boom(
+            session: object, run_id: uuid.UUID, event_type: str, payload: dict[str, object]
+        ) -> None:
+            raise RuntimeError("outbox write failed")
+
+        monkeypatch.setattr("opspilot.execution.service.append_event", _boom)
+        async with async_session_factory() as session:
+            with pytest.raises(RuntimeError, match="outbox write failed"):
+                await create_refund_operation(
+                    session,
+                    run_id,
+                    "A100",
+                    250.0,
+                    retry_of_operation_id=original_id,
+                    role=Role.ADMIN,
+                )
+            await session.rollback()
+
+        # nothing persisted: the claim, the replacement, events and outbox all rolled back
+        assert (
+            await _count(
+                "SELECT count(*) FROM tool_operations WHERE idempotency_key = 'refund:A100'"
+            )
+            == 1
+        )
+        assert (
+            await _count(
+                "SELECT count(*) FROM operation_idempotency_occupancy WHERE operation_id = $1",
+                original_id,
+            )
+            == 1
+        )
+        assert (
+            await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id)
+            == events_before
+        )
+        assert (
+            await _count("SELECT count(*) FROM event_outbox WHERE run_id = $1", run_id)
+            == events_before
+        )
+        async with async_session_factory() as session:
+            latest = await session.get(ManualReviewResolution, resolution.id)
+            assert latest is not None and latest.replacement_operation_id is None
+
+        # the resolution is still claimable: a clean retry succeeds
+        monkeypatch.undo()
+        async with async_session_factory() as session:
+            operation = await create_refund_operation(
+                session,
+                run_id,
+                "A100",
+                250.0,
+                retry_of_operation_id=original_id,
+                role=Role.ADMIN,
+            )
+            await session.commit()
+            retried_id = operation.id
+        assert retried_id != original_id
+    finally:
+        await _cleanup_runs([run_id])
+
+
+# --- Task 9 fix: hardened occupancy repoint validates the new occupant ------
+
+
+async def _bind_replacement(operation_id: uuid.UUID, occupant_id: uuid.UUID) -> None:
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    try:
+        await connection.execute(
+            "UPDATE manual_review_resolutions SET replacement_operation_id = $1 "
+            "WHERE operation_id = $2 AND outcome = 'RETRY_NEW_OPERATION'",
+            occupant_id,
+            operation_id,
+        )
+    finally:
+        await connection.close()
+
+
+async def _expect_repoint_denied(
+    original_id: uuid.UUID, occupant_id: uuid.UUID, keyword: str
+) -> None:
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    try:
+        with pytest.raises(Exception) as excinfo:
+            await connection.execute(
+                "UPDATE operation_idempotency_occupancy SET operation_id = $1 "
+                "WHERE operation_id = $2 AND tool_name = 'refund_order' "
+                "AND idempotency_key = 'refund:A100'",
+                occupant_id,
+                original_id,
+            )
+        assert keyword in str(excinfo.value)
+    finally:
+        await connection.close()
+
+
+async def test_repoint_denies_new_occupant_with_wrong_tool() -> None:
+    run_id = await _create_run()
+    try:
+        original_id = await _manual_review_original(run_id)
+        occupant_id = await _insert_operation_raw(
+            run_id, tool_name="pay_refund", order_number="A100", retry_of=original_id
+        )
+        await _bind_replacement(original_id, occupant_id)
+        await _expect_repoint_denied(original_id, occupant_id, "tool does not match")
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_repoint_denies_new_occupant_with_wrong_business_key() -> None:
+    run_id = await _create_run()
+    try:
+        original_id = await _manual_review_original(run_id)
+        occupant_id = await _insert_operation_raw(run_id, order_number="B200", retry_of=original_id)
+        await _bind_replacement(original_id, occupant_id)
+        await _expect_repoint_denied(original_id, occupant_id, "idempotency key does not match")
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_repoint_denies_new_occupant_with_wrong_lineage() -> None:
+    run_id = await _create_run()
+    try:
+        original_id = await _manual_review_original(run_id)
+        other_id = await _manual_review_original(run_id, order_number="B200")
+        occupant_id = await _insert_operation_raw(run_id, order_number="A100", retry_of=other_id)
+        await _bind_replacement(original_id, occupant_id)
+        await _expect_repoint_denied(original_id, occupant_id, "must be a retry")
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_repoint_denies_arbitrary_operation_not_bound_to_resolution() -> None:
+    run_id = await _create_run()
+    try:
+        original_id = await _manual_review_original(run_id)
+        # the operation is a legitimate retry of the original (tool/key/lineage all
+        # match) but no resolution is bound to it -> the binding check is decisive
+        occupant_id = await _insert_operation_raw(run_id, order_number="A100", retry_of=original_id)
+        await _expect_repoint_denied(original_id, occupant_id, "resolution")
+    finally:
+        await _cleanup_runs([run_id])
+
+
+# --- Task 9 fix: Agent refund decisions enter the durable Operation flow ------
+
+
+async def test_refund_handler_routes_to_durable_operation_flow() -> None:
+    """The production handler creates a durable Operation, never the adapter."""
+    run_id = await _create_run()
+    try:
+        handler = await build_refund_operation_handler(async_session_factory, run_id)
+
+        async def _never_invoked(*args: object, **kwargs: object) -> ToolResult:
+            raise AssertionError("payment adapter must never be invoked")
+
+        definition = ToolDefinition(
+            name="refund_order",
+            description="refund an order",
+            input_schema=RefundOrderArgs,
+            effect=ToolEffect.SIDE_EFFECT,
+            idempotency_capable=True,
+            supports_reconciliation=False,
+            invoke=_never_invoked,
+        )
+
+        result = await handler(definition, RefundOrderArgs(order_number="A100", amount=250.0))
+
+        assert result.ok is True
+        assert result.data is not None
+        assert result.data["status"] == "WAITING_APPROVAL"
+        assert result.data["idempotency_key"] == "refund:A100"
+        # the durable Operation + its occupancy + approval landed in PostgreSQL
+        assert await _count("SELECT count(*) FROM tool_operations WHERE run_id = $1", run_id) == 1
+        assert (
+            await _count(
+                "SELECT count(*) FROM operation_idempotency_occupancy o "
+                "JOIN tool_operations t ON t.id = o.operation_id WHERE t.run_id = $1",
+                run_id,
+            )
+            == 1
+        )
+        assert (
+            await _count(
+                "SELECT count(*) FROM approval_requests a "
+                "JOIN tool_operations t ON t.id = a.operation_id WHERE t.run_id = $1",
+                run_id,
+            )
+            == 1
+        )
     finally:
         await _cleanup_runs([run_id])

@@ -77,6 +77,15 @@ class ManualReviewResolution(Base):
     )
     resolved_by: Mapped[str] = mapped_column(String(64))
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # One-shot consumption: a RETRY_NEW_OPERATION resolution is atomically bound to
+    # the single replacement Operation it authorizes. NULL means "not yet consumed";
+    # the claim is a conditional UPDATE so the resolution can never create two
+    # replacements, even under concurrency (no process locks, no check-then-insert).
+    replacement_operation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tool_operations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )
