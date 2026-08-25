@@ -24,7 +24,7 @@ docker compose up -d postgres redis
 cd backend
 ..\.venv\Scripts\alembic.exe -c alembic.ini upgrade head
 ..\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider `
-  --basetemp=E:\pyproject\OpsPilot\.worktrees\opspilot-planning\.pytest-temp-local
+  --basetemp=E:\JavaProjects\OpsPilot\.pytest-temp-local
 ```
 
 环境变量从 `.env` 读取；复制 `.env.example` 后填写本地值。禁止提交 `.env`、API Key 或其他密钥。

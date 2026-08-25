@@ -2,12 +2,12 @@
 
 ## 工作位置
 
-- 仓库：`E:\pyproject\OpsPilot\.worktrees\opspilot-planning`
+- 仓库：`E:\JavaProjects\OpsPilot`
 - 分支：`plan/opspilot-core-mvp`
 - 任务 5（权限感知 Hybrid Retrieval）最新功能提交：`1bce950`
 - M1（任务 1–4）与 M2 / 任务 5、任务 6 已批准（任务 6 督导验收提交 `955fe22`、`1f0e71c`、`05754bd`）
 - 任务 7（Run Journal 与 Transactional Outbox）已通过督导复审
-- 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已完成，实现提交 `db2cae5`，等待督导复审
+- 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已通过督导复审，实现提交 `db2cae5`、复审修复提交 `8e8adfb`
 - 下一任务：任务 9，Policy、审批绑定与 Operation 持久化
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
@@ -33,7 +33,7 @@
 ## 环境检查
 
 ```powershell
-cd E:\pyproject\OpsPilot\.worktrees\opspilot-planning
+cd E:\JavaProjects\OpsPilot
 docker version
 docker compose version
 docker compose up -d postgres redis
@@ -57,9 +57,9 @@ cd backend
 - Outbox Publisher：`FOR UPDATE SKIP LOCKED` 获取未投递 row，只向 Redis 发布 `{run_id, seq}`，成功后标记 delivered；重复发布安全。
 - 真实 PostgreSQL/Redis 集成测试与 `0010_runs_journal_outbox` 迁移均已通过；任务 7 已通过督导复审（2026-08-24）。
 
-## 任务 8（已完成待复审）范围
+## 任务 8（已通过督导复审）范围
 
-目标：Tool Registry、Agent Loop 与演示服务。实现提交 `db2cae5`，定向 23 passed（注册表 8 + 受限循环 7 + 演示服务 8）、完整 146 passed。任务 8 不实现审批、Operation fencing、SSE 或前端（属任务 9–12/13–15）。
+目标：Tool Registry、Agent Loop 与演示服务。实现提交 `db2cae5`（feat: orchestrate bounded registered tools），复审修复提交 `8e8adfb`（fix: harden agent provider decision contract：Provider 边界不发送缺少 `tool_call_id` 的 `role=tool` 消息、外部 JSON 决策严格 fail-closed 校验、AgentRunner 显式抛 `DecisionError`）。定向 35 passed（注册表 8 + 受限循环 19 + 演示服务 8）、完整 158 passed。任务 8 不实现审批、Operation fencing、SSE 或前端（属任务 9–12/13–15）。
 
 ## 任务 9（下一任务）范围
 
@@ -68,12 +68,12 @@ cd backend
 ## 完整验证命令
 
 ```powershell
-cd E:\pyproject\OpsPilot\.worktrees\opspilot-planning\backend
+cd E:\JavaProjects\OpsPilot\backend
 ..\.venv\Scripts\ruff.exe format --check .
 ..\.venv\Scripts\ruff.exe check .
 ..\.venv\Scripts\mypy.exe --no-incremental src
 ..\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider `
-  --basetemp=E:\pyproject\OpsPilot\.worktrees\opspilot-planning\.pytest-temp-agent
+  --basetemp=E:\JavaProjects\OpsPilot\.pytest-temp-agent
 ..\.venv\Scripts\alembic.exe -c alembic.ini current
 ```
 

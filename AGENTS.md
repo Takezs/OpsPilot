@@ -15,7 +15,7 @@
 
 ## Git 与工作区
 
-- 在 `E:\pyproject\OpsPilot\.worktrees\opspilot-planning` 工作。
+- 在 `E:\JavaProjects\OpsPilot` 工作。
 - 使用分支 `plan/opspilot-core-mvp`。
 - 不修改、清理或回退主工作区中的用户文件。
 - 不使用 `git reset --hard`、`git checkout --` 或递归删除仓库内容。
@@ -51,14 +51,14 @@
 - M2 / 任务 5：权限感知 Hybrid Retrieval 已通过督导复审。
 - M2 / 任务 6：Reranker、上下文预算与引用回答已通过督导复审。
 - M2 / 任务 7：Run Journal 与 Transactional Outbox 已通过督导复审。
-- M3 / 任务 8：Tool Registry、受限 Agent Loop 与演示服务已完成，提交 `db2cae5`，等待督导复审。
-- 下一项是 M3 / 任务 9：Policy、审批绑定与 Operation 持久化。
+- M3 / 任务 8：Tool Registry、受限 Agent Loop 与演示服务已通过督导复审（实现 `db2cae5`、复审修复 `8e8adfb`）。
+- 下一项是 M3 / 任务 9：Policy、审批绑定与 Operation 持久化（尚未开始）。
 - 未经新的检查点批准，不要直接跳到任务 9 或更后任务。
 - `attempt=0` outbox lifecycle 是已记录的非阻塞技术债，不要顺带重构。
 
 ## 常用验证命令
 
-从 worktree 根目录执行：
+从仓库根目录执行：
 
 ```powershell
 docker compose ps
@@ -73,11 +73,11 @@ docker compose exec -T redis redis-cli ping
 ..\.venv\Scripts\ruff.exe check .
 ..\.venv\Scripts\mypy.exe --no-incremental src
 ..\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider `
-  --basetemp=E:\pyproject\OpsPilot\.worktrees\opspilot-planning\.pytest-temp-agent
+  --basetemp=E:\JavaProjects\OpsPilot\.pytest-temp-agent
 ..\.venv\Scripts\alembic.exe -c alembic.ini current
 ```
 
-Windows 默认临时目录可能出现 ACL 错误；使用 worktree 内唯一 `--basetemp`。不要把 ACL 错误误报为代码或数据库失败。
+Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--basetemp`。不要把 ACL 错误误报为代码或数据库失败。
 
 ## 完成任务后的交接格式
 

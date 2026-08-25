@@ -5,7 +5,7 @@
 ```text
 你正在继续开发 OpsPilot。请直接执行，不要重新设计整个项目，也不要跳过测试。
 
-工作目录：E:\pyproject\OpsPilot\.worktrees\opspilot-planning
+工作目录：E:\JavaProjects\OpsPilot
 分支：plan/opspilot-core-mvp
 当前状态：M1（任务 1–4）与 M2 / 任务 5、任务 6 已通过督导复审；任务 7（Run Journal 与 Transactional Outbox）已完成，等待督导复审；从 M2 / 任务 8 开始。
 

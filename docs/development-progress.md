@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-24  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2 / 任务 5–7 已通过督导复审；任务 8 已完成待督导复审；下一项任务 9（审批与 Operation 持久化）
+> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；下一项任务 9（审批与 Operation 持久化）
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8 已完成待督导复审；审批、Operation、核对、SSE 待开发 |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8 已通过督导复审；审批、Operation、核对、SSE 待开发 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -106,13 +106,14 @@
 - 有界 Agent Loop `AgentRunner`：每轮从决策提供方取一个动作，仅通过注册表执行工具调用，最多 8 轮或 6 次工具调用即 `bounded` 终止；纯问答、澄清可直返；`DecisionProvider` Protocol 抽象 LLM，`DeepSeekAgentDecider` 以 JSON 模式对话并解析决策契约（`answer`/`clarify`/`tool_call`）。
 - HTTP 适配器（`get_order_adapter`/`check_refund_eligibility_adapter`/`refund_order_adapter`/`get_refund_status_adapter`/`send_email_adapter`）：超时映射为可重试 `ToolResult`、非成功状态码映射为失败结果；`mcp.py` 提供远期 MCP 适配器契约（当前 6 工具均不走 MCP）。
 - `demo-services/` 演示服务：order/payment/email 三个 FastAPI 服务；payment 以订单号为服务端业务幂等键（重复退款共享同一 `refund_id`/`provider_reference`，201-if-new-else-200），支持 `success`/`timeout_before_effect`/`timeout_after_effect`/`unknown_5xx_after_effect` 故障模式，供任务 9/10 验证重试与核对语义。项目不引入 uvicorn/Dockerfile，测试以 in-process `ASGITransport` 验证。
-- 状态：**已完成（待督导复审）**。实现提交 `db2cae5`（feat: orchestrate bounded registered tools）；定向 23 passed（注册表 8 + 受限循环 7 + 演示服务 8）、完整 146 passed。
+- 状态：**已通过督导复审（2026-08-24）**。实现提交 `db2cae5`（feat: orchestrate bounded registered tools）；复审修复提交 `8e8adfb`（fix: harden agent provider decision contract：Provider 边界不再发送缺少 `tool_call_id` 的 `role=tool` 消息而改为标注为不可信工具输出的上下文消息、外部 JSON 决策采用严格 fail-closed 校验、AgentRunner 显式抛 `DecisionError` 替代 assert）；定向 35 passed、完整 158 passed。
 
 ## 当前验证基线
 
-任务 8 完成后的真实结果：
+任务 8 通过督导复审后的真实结果：
 
-- 完整测试：`146 passed`（任务 7 基线 123 + 任务 8 定向 23：注册表 8 + 受限循环 7 + 演示服务 8）。
+- 定向测试：`35 passed`（注册表 8 + 受限循环 19 + 演示服务 8）。
+- 完整测试：`158 passed`（任务 8 基线 146 + 复审定向 12：决策契约严格校验、工具输出不可信标注、AgentRunner DecisionError）。
 - Ruff format：97 个文件格式正确。
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：62 个源文件无问题。
@@ -131,7 +132,7 @@
 
 ## 下一步：任务 9（审批与 Operation 持久化）
 
-任务 8 已完成并通过完整验证，等待督导复审。复审通过后进入任务 9：
+任务 8 已通过督导复审（2026-08-24），下一项为任务 9（尚未开始）：
 
 1. 严格 TDD：先写失败测试并记录正确红灯。
 2. 实现 Policy、审批绑定与 Operation 持久化（任务 9 范围）。
@@ -141,7 +142,7 @@
 
 - 任务 6：BGE Reranker、上下文预算、DeepSeek 引用回答与 Citation Validator（✅ 已完成，督导复审通过）。
 - 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已通过督导复审）。
-- 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已完成，待督导复审）。
+- 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已通过督导复审）。
 - 任务 9–12：审批、Operation fencing、OUTCOME_UNKNOWN 核对和可靠 SSE。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。
@@ -152,7 +153,7 @@
 ## 已知技术债
 
 - `attempt=0` 的历史 Outbox 在 0008 迁移时会按 Document 状态回填并设置 lease，但当前 retry reconciler 只处理人工 attempt（`attempt > 0`）。它不影响人工重试或 M2；后续需选择统一管理初始入库 lifecycle，或在模型和文档中明确 status/lease 只服务人工 attempt。
-- 当前本地 pytest 临时目录可能因 Windows ACL 产生访问警告；使用 worktree 内独立 `--basetemp` 可稳定运行，不影响测试结果。
+- 当前本地 pytest 临时目录可能因 Windows ACL 产生访问警告；使用仓库内独立 `--basetemp` 可稳定运行，不影响测试结果。
 
 ## 开发约束
 
