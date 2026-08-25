@@ -164,7 +164,7 @@ async def test_http_adapters_map_results() -> None:
         assert order_result.data["order_number"] == "A100"
 
         refund_result = await refund_order_adapter(payment_client)(
-            RefundOrderArgs(order_number="A100")
+            RefundOrderArgs(order_number="A100", amount=250.0)
         )
         assert refund_result.ok is True
         assert refund_result.data["refund_id"]
@@ -190,7 +190,9 @@ async def test_refund_adapter_maps_transport_timeout_to_retryable_error() -> Non
         base_url="http://payment",
         timeout=CLIENT_TIMEOUT,
     ) as client:
-        result = await refund_order_adapter(client)(RefundOrderArgs(order_number="A100"))
+        result = await refund_order_adapter(client)(
+            RefundOrderArgs(order_number="A100", amount=250.0)
+        )
 
     assert result.ok is False
     assert "timeout" in (result.error or "")

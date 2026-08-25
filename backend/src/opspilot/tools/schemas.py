@@ -24,6 +24,9 @@ class CheckRefundEligibilityArgs(BaseModel):
 
 class RefundOrderArgs(BaseModel):
     order_number: str = Field(..., min_length=1, max_length=64)
+    # Task 9: the refund amount feeds the deterministic policy (ALLOW /
+    # REQUIRE_APPROVAL / DENY); a non-positive amount is rejected by the schema.
+    amount: float = Field(..., gt=0)
 
 
 class GetRefundStatusArgs(BaseModel):

@@ -9,6 +9,7 @@ from alembic.config import Config
 
 from alembic import command
 from opspilot.config import Settings
+from opspilot.db import engine
 
 
 def alembic_config() -> Config:
@@ -106,4 +107,10 @@ def test_0007_retry_history_is_backfilled_during_0008_upgrade() -> None:
         command.upgrade(config, "head")
     finally:
         command.upgrade(config, "head")
+        # The downgrade/upgrade cycle drops and recreates enum types with new
+        # OIDs. Any pooled asyncpg connection created before this cycle caches
+        # the old OIDs, so later tests that reuse such a connection fail with
+        # "cache lookup failed for type NNNN". Dispose the app engine's pool so
+        # the stale connections are dropped and fresh ones resolve the new OIDs.
+        asyncio.run(engine.dispose())
         asyncio.run(cleanup(knowledge_base_id))

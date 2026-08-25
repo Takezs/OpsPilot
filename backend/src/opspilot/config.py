@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
+    # Task 9: default time-to-decide for a pending approval request.
+    approval_ttl_seconds: int = 86400
 
     @model_validator(mode="after")
     def reject_weak_production_secret(self) -> Self:
