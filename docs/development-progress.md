@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-25  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已通过督导复审（2026-08-25）；任务 10（Claim/Lease、fencing 与状态事务）已实现待复审；下一项任务 11（安全重试与 Reconciliation）
+> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已通过督导复审（2026-08-25）；任务 10（Claim/Lease、fencing 与状态事务）复审自检修复完成，等待督导复审；下一项任务 11（安全重试与 Reconciliation）
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8、任务 9 已通过督导复审；任务 10（Claim/Lease、fencing 与状态事务）已实现待复审；核对属任务 11、SSE 属任务 12 |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8、任务 9 已通过督导复审；任务 10（Claim/Lease、fencing 与状态事务）复审自检修复完成，等待督导复审；核对属任务 11、SSE 属任务 12 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -148,19 +148,20 @@
 - **状态机**：`state_machine.py` 定义合法转换（含 OUTCOME_UNKNOWN/RECONCILING 完整性定义），非法转换 fail-closed 抛 `IllegalStateTransitionError`；MANUAL_REVIEW/SUCCEEDED/FAILED/DENIED/REJECTED 终态不可认领；未破坏任务 9 的 approval/occupancy/immutability 约束（EXECUTING occupancy 受 `guard_occupancy_release` 扩展保护列表保护）。
 - **迁移**：`0014_operation_lease_fencing`（`ADD VALUE` 扩 4 个状态，OID 不变无需 dispose；新增 claim_token/lease_owner/lease_expires_at/provider_reference_id/result_payload 5 个可空列；`guard_occupancy_release` 保护列表扩展到 8 个非终态）。downgrade 重建枚举并恢复 4 状态保护列表。
 - 提交：`f36e435`（feat: fence leased tool operation execution，7 文件 +1624 行，含 `execution/claim.py`、`execution/state_machine.py`、`execution/executor.py`、`tests/execution/test_claim.py` 20 个定向测试、`tests/integration/test_operation_transactions.py` 5 个事务测试）。
+- **复审自检修复（2026-08-25，提交 `b6729c1` "fix: harden leased operation fencing"）**：发现并修复的唯一真实缺陷是时间语义（风险 5）——租约到期判断原先依赖应用本地时钟 `datetime.now(UTC)`。修复为：租约决策一律解析到 PostgreSQL `clock_timestamp()`（新增 `_resolve_now`/`_clock_value`，`now`/`Clock` 仅作为确定性测试注入点）；`_ensure_aware_utc` 将 naive 注入时钟规范化为显式 UTC。新增 8 个 DB 时钟测试（默认走数据库时钟、时钟偏移被 fencing 兜底而非依赖时间、fenced 写入在租约过期后被拒、并发恢复单胜者、invoke 抛异常/取消后保持 EXECUTING）与 2 个事务测试（recovery/result write 事务注入失败全回滚）。其余 7 项风险（claim 并发、两事务执行、fencing、续租生命周期、过期恢复、状态机/终态/占用、迁移 0014）审查后代码正确，无需改动。迁移 0014↔0013 往返与"带 EXECUTING 数据降级必须响亮失败且原子回滚"已在 scratch 数据库验证通过。
 
 ## 当前验证基线
 
-任务 10（Claim/Lease、fencing 与状态事务）实现后的真实结果（2026-08-25，提交 `f36e435`）：
+任务 10（Claim/Lease、fencing 与状态事务）复审自检修复后的真实结果（2026-08-25，提交 `b6729c1`）：
 
-- 定向测试：`25 passed`（execution/test_claim.py 20 + integration/test_operation_transactions.py 5；test_claim.py 覆盖状态机 1 + claim/fencing/续租/失权/过期恢复/executor/occupancy 19）。
-- 完整测试：`236 passed`（上一轮 211 + 任务 10 新增 25）。
+- 定向测试：`35 passed`（execution/test_claim.py 28 + integration/test_operation_transactions.py 7；test_claim.py 覆盖状态机 1 + claim/fencing/续租/失权/过期恢复/executor/occupancy + DB 时钟 8 项）。
+- 完整测试：`246 passed`（236 + 复审自检新增 10）。
 - Ruff format：150 个文件格式正确。
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：75 个源文件无问题。
-- Alembic：`0014_operation_lease_fencing (head)`；0001→0014 全链在全新数据库升级成功，0014→0013→0014 往返验证通过（downgrade 重建枚举为 8 值并删除 5 列，重新 upgrade 后 12 值 + 5 列恢复且 functional claim UPDATE 生效）。
-- PostgreSQL：healthy，`pg_isready` 为 accepting connections。
-- Redis：healthy，`redis-cli ping` 返回 `PONG`。
+- Alembic：`0014_operation_lease_fencing (head)`；0001→0014 全链在全新数据库升级成功，0014→0013→0014 往返验证通过（downgrade 重建枚举为 8 值并删除 5 列，重新 upgrade 后 12 值 + 5 列恢复且 functional claim UPDATE 生效）；**带 EXECUTING 数据的 downgrade 响亮失败（`invalid input value for enum operation_status: "EXECUTING"`）且事务原子回滚（仍停在 0014、数据完整，无静默丢失）**；asyncpg 连接池在枚举重建后经惰性 OID 重解析自愈。
+- PostgreSQL：healthy，`PostgreSQL 16.15` 连接探针通过（`pg_isready` 不在本机 bash PATH，改用 asyncpg 探针）。
+- Redis：healthy，`PONG`。
 
 ### 任务 5 复审修复
 
@@ -180,7 +181,7 @@
 
 ## 下一步：任务 11（副作用分类、安全重试与 Reconciliation）
 
-任务 10 已实现待复审（2026-08-25，提交 `f36e435`）。下一项任务 11（副作用分类、安全重试与 Reconciliation）：为 OUTCOME_UNKNOWN 的 SIDE_EFFECT Operation 实现实际 reconciliation（幂等 provider 查询/核对、确定 verdict、收敛到 SUCCEEDED/FAILED/RETRYING 等），以及安全重试路径（复用任务 9/10 的 claim/fencing/occupancy/approval 约束）。**任务 11 不实现可靠 SSE（属任务 12）**。
+任务 10 复审自检修复完成，等待督导复审（2026-08-25，实现提交 `f36e435`，自检修复提交 `b6729c1`）。下一项任务 11（副作用分类、安全重试与 Reconciliation）：为 OUTCOME_UNKNOWN 的 SIDE_EFFECT Operation 实现实际 reconciliation（幂等 provider 查询/核对、确定 verdict、收敛到 SUCCEEDED/FAILED/RETRYING 等），以及安全重试路径（复用任务 9/10 的 claim/fencing/occupancy/approval 约束）。**任务 11 不实现可靠 SSE（属任务 12）**。
 
 ## 后续开发计划
 
@@ -188,7 +189,7 @@
 - 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已通过督导复审）。
 - 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已通过督导复审）。
 - 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已通过督导复审（2026-08-25），提交 `e82a57c`/`276a5cc`/`26ede61`）。
-- 任务 10：Claim/Lease、fencing 与状态事务（✅ 已实现待复审（2026-08-25），提交 `f36e435`；过期副作用 Operation 原子转 OUTCOME_UNKNOWN/RECONCILING，不实现实际核对）。
+- 任务 10：Claim/Lease、fencing 与状态事务（✅ 复审自检修复完成，等待督导复审（2026-08-25），提交 `f36e435` + 自检修复 `b6729c1`；过期副作用 Operation 原子转 OUTCOME_UNKNOWN/RECONCILING，不实现实际核对）。
 - 任务 11：副作用分类、安全重试与 Reconciliation（待开发，依赖任务 10 复审通过）。
 - 任务 12：可靠 SSE（待开发）。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。

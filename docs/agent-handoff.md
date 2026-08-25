@@ -9,7 +9,7 @@
 - 任务 7（Run Journal 与 Transactional Outbox）已通过督导复审
 - 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已通过督导复审，实现提交 `db2cae5`、复审修复提交 `8e8adfb`
 - 任务 9（Policy、审批绑定与 Operation 持久化）已通过督导复审（2026-08-25），批准提交 `e82a57c`、`276a5cc`、`26ede61`
-- 任务 10（Claim/Lease、fencing 与状态事务）已实现待复审（2026-08-25），实现提交 `f36e435`
+- 任务 10（Claim/Lease、fencing 与状态事务）复审自检修复完成，等待督导复审（2026-08-25），实现提交 `f36e435`、自检修复提交 `b6729c1`（租约决策改为数据库时钟，其余 7 项风险审查后无需改动）
 - 下一任务：任务 11，副作用分类、安全重试与 Reconciliation（为 OUTCOME_UNKNOWN 的 SIDE_EFFECT Operation 实现实际 reconciliation 与安全重试路径；可靠 SSE 属任务 12）
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
@@ -83,9 +83,9 @@ P2 修复（数据库完整性）已落地：`replacement_operation_id` 绑定�
 
 已批准设计修订（2026-08-25）已落地：幂等键唯一性在独立占用表 `operation_idempotency_occupancy`（`UNIQUE(tool_name, idempotency_key)`）；业务幂等键稳定为 `refund:{order_id}`；`tool_operations.retry_of_operation_id` 审计链；MANUAL_REVIEW 占用不自动释放，仅存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时方可同一事务释放旧占用并创建重试新 Operation（数据库触发器证明门控）。审批、Operation fencing、SSE 与前端仍属任务 10–12/13–15，未在任务 9 实现。
 
-## 任务 10（已实现，待复审）范围
+## 任务 10（已实现，自检修复完成）范围
 
-目标：Claim/Lease、fencing 与状态事务。实现提交 `f36e435`（feat: fence leased tool operation execution，7 文件 +1624 行）。
+目标：Claim/Lease、fencing 与状态事务。实现提交 `f36e435`（feat: fence leased tool operation execution，7 文件 +1624 行）；复审自检修复提交 `b6729c1`（fix: harden leased operation fencing，4 文件 +428/-16 行）。
 
 已落地：
 - **Claim**：只有 READY/RETRYING 可条件 UPDATE 认领 → EXECUTING；`version` 单调 +1；一次性 `claim_token`（`secrets.token_urlsafe(32)`）；`lease_owner`/`lease_expires_at`；并发 Worker 至多一胜（`OperationNotClaimableError`）。
@@ -96,6 +96,7 @@ P2 修复（数据库完整性）已落地：`replacement_operation_id` 绑定�
 - **状态机**：`state_machine.py` 合法转换表 fail-closed；终态（MANUAL_REVIEW/SUCCEEDED/FAILED/DENIED/REJECTED）不可认领；未破坏任务 9 的 approval/occupancy/immutability（`guard_occupancy_release` 保护列表扩展到 8 个非终态）。
 - **迁移**：`0014_operation_lease_fencing`（`ADD VALUE` 扩 4 状态，OID 不变；5 个新可空列；downgrade 重建枚举）。0001→0014 全链与 0014↔0013 往返在全新数据库验证通过。
 - 新增文件：`src/opspilot/execution/claim.py`、`state_machine.py`、`executor.py`；测试 `tests/execution/test_claim.py`（20）+ `tests/integration/test_operation_transactions.py`（5）。定向 25 passed、完整 236 passed。
+- **复审自检修复（`b6729c1`）**：唯一真实缺陷为时间语义——租约决策原先用应用本地 `datetime.now(UTC)`。改为默认解析 PostgreSQL `clock_timestamp()`（`_resolve_now`/`_clock_value`，`now`/`Clock` 仅测试注入），naive 时钟经 `_ensure_aware_utc` 规范化为显式 UTC。新增 DB 时钟/并发恢复/invoke 异常与取消 8 项测试 + recovery/result write 事务回滚 2 项测试。定向 35 passed、完整 246 passed。
 
 **任务 10 只负责过期副作用 Operation 原子进入 OUTCOME_UNKNOWN/RECONCILING，不实现实际退款状态查询/核对决策（属任务 11），也不实现可靠 SSE（属任务 12）**。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 10”章节。
 
