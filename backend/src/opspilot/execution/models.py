@@ -38,6 +38,10 @@ class OperationStatus(StrEnum):
     REJECTED = "REJECTED"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    EXECUTING = "EXECUTING"
+    RETRYING = "RETRYING"
+    OUTCOME_UNKNOWN = "OUTCOME_UNKNOWN"
+    RECONCILING = "RECONCILING"
 
 
 class Operation(Base):
@@ -66,6 +70,15 @@ class Operation(Base):
         ForeignKey("tool_operations.id", ondelete="CASCADE"),
         nullable=True,
     )
+    # Task 10 lease state: set by the winning claim, cleared on terminal writes
+    # and on expiry recovery. ``claim_token`` is one-shot and non-reusable.
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    provider_reference_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    result_payload: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )
