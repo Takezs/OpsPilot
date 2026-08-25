@@ -9,7 +9,7 @@
 - 任务 7（Run Journal 与 Transactional Outbox）已通过督导复审
 - 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已通过督导复审，实现提交 `db2cae5`、复审修复提交 `8e8adfb`
 - 任务 9（Policy、审批绑定与 Operation 持久化）已通过督导复审（2026-08-25），批准提交 `e82a57c`、`276a5cc`、`26ede61`
-- 任务 10（Claim/Lease、fencing 与状态事务）复审自检修复完成，等待督导复审（2026-08-25），实现提交 `f36e435`、自检修复提交 `b6729c1`（租约决策改为数据库时钟，其余 7 项风险审查后无需改动）
+- 任务 10（Claim/Lease、fencing 与状态事务）P1 复审修复完成，等待督导复审（2026-08-25），实现提交 `f36e435`、自检修复 `b6729c1`（数据库时钟）、P1 修复 `3c7cecb`（provider 调用期间并发 heartbeat 续租 + SIDE_EFFECT 模糊失败映射 OUTCOME_UNKNOWN）
 - 下一任务：任务 11，副作用分类、安全重试与 Reconciliation（为 OUTCOME_UNKNOWN 的 SIDE_EFFECT Operation 实现实际 reconciliation 与安全重试路径；可靠 SSE 属任务 12）
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
@@ -85,18 +85,19 @@ P2 修复（数据库完整性）已落地：`replacement_operation_id` 绑定�
 
 ## 任务 10（已实现，自检修复完成）范围
 
-目标：Claim/Lease、fencing 与状态事务。实现提交 `f36e435`（feat: fence leased tool operation execution，7 文件 +1624 行）；复审自检修复提交 `b6729c1`（fix: harden leased operation fencing，4 文件 +428/-16 行）。
+目标：Claim/Lease、fencing 与状态事务。实现提交 `f36e435`（feat: fence leased tool operation execution，7 文件 +1624 行）；复审自检修复提交 `b6729c1`（fix: harden leased operation fencing，4 文件 +428/-16 行）；P1 复审修复提交 `3c7cecb`（fix: renew operation leases during provider calls，4 文件 +605/-45 行）。
 
 已落地：
 - **Claim**：只有 READY/RETRYING 可条件 UPDATE 认领 → EXECUTING；`version` 单调 +1；一次性 `claim_token`（`secrets.token_urlsafe(32)`）；`lease_owner`/`lease_expires_at`；并发 Worker 至多一胜（`OperationNotClaimableError`）。
 - **Fencing**：renewal/result 写入匹配 `id + expected version + claim_token + lease_owner + 未过期 lease`；stale version/token、wrong owner、expired lease 均修改 0 行并抛 `LeaseConflictError`；晚到旧 worker 响应不能覆盖新持有者 result。
 - **过期恢复**：READ_ONLY → RETRYING（可重新认领）；SIDE_EFFECT → OUTCOME_UNKNOWN（不可认领 → Provider 不会被重新调用），原子转换且不调用 Provider；实际 reconciliation 属任务 11。
-- **续租与失权**：~1/3 租期处续约（不 bump version）；续租失败即失去 DB 写入权。Executor 两事务：claim 先提交（持久 lease），result write 在第二个 fenced 事务 —— 失权时保持 EXECUTING（不可重新认领）。
+- **续租与失权**：provider 调用期间由**并发 heartbeat**（`asyncio.Task`）每 ~`lease_seconds/3` 续约（独立 session/事务、走 PostgreSQL `clock_timestamp()`、提交 `operation_lease_renewed` event/outbox、不 bump version）——超过一个 lease 窗口的长调用仍保有写入权；renewal 失败即失去 DB 写入权（`LeaseConflictError`），旧 worker 立即被撤销且永不写终态。Executor 两事务：claim 先提交（持久 lease），result write 在第二个 fenced 事务 —— 失权时保持 EXECUTING（不可重新认领）。
 - **状态事务**：状态更新 + `run_event` + `event_outbox` 同一 PostgreSQL 事务（`next_seq` 原子递增）；注入 Event/Outbox 失败时 status/version/token/lease/seq 全回滚；Redis publish 在外部。
 - **状态机**：`state_machine.py` 合法转换表 fail-closed；终态（MANUAL_REVIEW/SUCCEEDED/FAILED/DENIED/REJECTED）不可认领；未破坏任务 9 的 approval/occupancy/immutability（`guard_occupancy_release` 保护列表扩展到 8 个非终态）。
 - **迁移**：`0014_operation_lease_fencing`（`ADD VALUE` 扩 4 状态，OID 不变；5 个新可空列；downgrade 重建枚举）。0001→0014 全链与 0014↔0013 往返在全新数据库验证通过。
 - 新增文件：`src/opspilot/execution/claim.py`、`state_machine.py`、`executor.py`；测试 `tests/execution/test_claim.py`（20）+ `tests/integration/test_operation_transactions.py`（5）。定向 25 passed、完整 236 passed。
 - **复审自检修复（`b6729c1`）**：唯一真实缺陷为时间语义——租约决策原先用应用本地 `datetime.now(UTC)`。改为默认解析 PostgreSQL `clock_timestamp()`（`_resolve_now`/`_clock_value`，`now`/`Clock` 仅测试注入），naive 时钟经 `_ensure_aware_utc` 规范化为显式 UTC。新增 DB 时钟/并发恢复/invoke 异常与取消 8 项测试 + recovery/result write 事务回滚 2 项测试。定向 35 passed、完整 246 passed。
+- **P1 复审修复（`3c7cecb`）**：督导指出 `b6729c1` 的"无后台任务、内联续租"是错误结论——`await invoke()` 期间完全没有续租，调用时长超过 lease 时租约必过期。修复：`executor.py` 引入与 invoke 并发的周期 heartbeat（`asyncio.Task`，每 ~`lease_seconds/3` 用独立 session/事务续租，走 `clock_timestamp()`，提交 `operation_lease_renewed` event/outbox，不 bump version）。生命周期收敛：invoke 正常返回 → 停并 await heartbeat → fenced 写结果；invoke 抛异常/worker 取消 → 停 heartbeat、不写终态；heartbeat 失权 → 立即撤销 provider 并抛 `LeaseConflictError`（不响应取消的 provider 经 1s 有界宽限放弃而非无限等待）；并发/竞争一律由 fenced DB 写入决定；结束后无遗留 asyncio Task。同时把 `token/expires_at` 的 `assert` 换成显式领域异常 `LeaseStateError`；SIDE_EFFECT 模糊失败（无法证明 Provider 未执行）不再直接 `mark_failed`，改为最小安全处理 `mark_unknown → OUTCOME_UNKNOWN`（新增 `operation_outcome_unknown` 事件，实际核对归 Task 11），契约最小扩展为 `ToolResult.provider_not_called`（默认 None=未知）。Red 证据：4 个 heartbeat 特性测试（invoke 阻塞期间 lease 延长、多 interval 多次续租、DB 时钟非应用时钟、heartbeat 运行时 `recover_expired` 不能接管）在 `b6729c1` 上失败；修复后全绿。定向 44 passed、完整 255 passed。
 
 **任务 10 只负责过期副作用 Operation 原子进入 OUTCOME_UNKNOWN/RECONCILING，不实现实际退款状态查询/核对决策（属任务 11），也不实现可靠 SSE（属任务 12）**。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 10”章节。
 

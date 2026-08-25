@@ -143,19 +143,20 @@
 - **Claim 规则**：只有 READY/RETRYING 可通过条件 UPDATE 认领 → EXECUTING；`version` 单调 +1；生成一次性 `claim_token`（`secrets.token_urlsafe(32)`）；设置 `lease_owner`/`lease_expires_at`。并发 worker 至多一个胜出（`test_concurrent_claim_allows_exactly_one_winner`，asyncio.gather 双 session 串行化后 1 胜 1 抛 `OperationNotClaimableError`）。
 - **Fencing 回写**：renewal/result 写入均匹配 `id + expected version + claim_token + lease_owner + 未过期 lease`；stale version/token、wrong owner、expired lease 均修改 0 行并抛 `LeaseConflictError`；晚到的旧 worker 响应不能覆盖新持有者的 result（`test_late_response_from_old_worker_cannot_overwrite_new_holder`）。
 - **过期租约恢复**：READ_ONLY 从 EXECUTING 原子转 RETRYING（可重新认领）；SIDE_EFFECT 转 OUTCOME_UNKNOWN（不在 CLAIMABLE_STATUSES，claim 永远失败 → Provider 永远不会被重新调用）；EXECUTING 且租约过期时不重新调用 Provider。实际 reconciliation 归 Task 11。
-- **续租与失权**：在 ~1/3 lease period 处续约，renewal 使用 version/token 条件且不 bump version；renewal 失败后旧 worker 立即失去 DB 写入权（`test_expired_lease_cannot_renew_and_worker_loses_write_rights`）。Executor 分两个事务：claim 先提交（持久 lease），result write 在第二个 fenced 事务中 —— 失去租约时操作保持 EXECUTING（不可重新认领），而不是回滚回 READY。
+- **续租与失权**：provider 调用期间由**并发 heartbeat** 每 ~`lease_seconds/3` 续租（独立 session/事务、走 PostgreSQL `clock_timestamp()`、提交 `operation_lease_renewed` event/outbox、不 bump version）——超过一个 lease 窗口的长调用仍保有写入权；renewal 失败后旧 worker 立即失权（`LeaseConflictError`）。Executor 分两个事务：claim 先提交（持久 lease），result write 在第二个 fenced 事务中 —— 失去租约时操作保持 EXECUTING（不可重新认领），而不是回滚回 READY。
 - **状态事务**：每次状态更新 + `run_event` + `event_outbox` 在同一个 PostgreSQL 事务中（`next_seq` 原子递增）；注入 Event/Outbox 失败时 operation status/version/token/lease/seq 全部回滚（claim/success/renewal 三种路径各有回归测试）；Redis publish 不属于业务事实事务。
 - **状态机**：`state_machine.py` 定义合法转换（含 OUTCOME_UNKNOWN/RECONCILING 完整性定义），非法转换 fail-closed 抛 `IllegalStateTransitionError`；MANUAL_REVIEW/SUCCEEDED/FAILED/DENIED/REJECTED 终态不可认领；未破坏任务 9 的 approval/occupancy/immutability 约束（EXECUTING occupancy 受 `guard_occupancy_release` 扩展保护列表保护）。
 - **迁移**：`0014_operation_lease_fencing`（`ADD VALUE` 扩 4 个状态，OID 不变无需 dispose；新增 claim_token/lease_owner/lease_expires_at/provider_reference_id/result_payload 5 个可空列；`guard_occupancy_release` 保护列表扩展到 8 个非终态）。downgrade 重建枚举并恢复 4 状态保护列表。
 - 提交：`f36e435`（feat: fence leased tool operation execution，7 文件 +1624 行，含 `execution/claim.py`、`execution/state_machine.py`、`execution/executor.py`、`tests/execution/test_claim.py` 20 个定向测试、`tests/integration/test_operation_transactions.py` 5 个事务测试）。
 - **复审自检修复（2026-08-25，提交 `b6729c1` "fix: harden leased operation fencing"）**：发现并修复的唯一真实缺陷是时间语义（风险 5）——租约到期判断原先依赖应用本地时钟 `datetime.now(UTC)`。修复为：租约决策一律解析到 PostgreSQL `clock_timestamp()`（新增 `_resolve_now`/`_clock_value`，`now`/`Clock` 仅作为确定性测试注入点）；`_ensure_aware_utc` 将 naive 注入时钟规范化为显式 UTC。新增 8 个 DB 时钟测试（默认走数据库时钟、时钟偏移被 fencing 兜底而非依赖时间、fenced 写入在租约过期后被拒、并发恢复单胜者、invoke 抛异常/取消后保持 EXECUTING）与 2 个事务测试（recovery/result write 事务注入失败全回滚）。其余 7 项风险（claim 并发、两事务执行、fencing、续租生命周期、过期恢复、状态机/终态/占用、迁移 0014）审查后代码正确，无需改动。迁移 0014↔0013 往返与"带 EXECUTING 数据降级必须响亮失败且原子回滚"已在 scratch 数据库验证通过。
+- **P1 复审驳回修复（2026-08-25，提交 `3c7cecb` "fix: renew operation leases during provider calls"）**：督导指出 `b6729c1` 的"无后台任务、内联续租"是错误结论——`await invoke()` 期间完全没有续租，调用时长超过 lease 时租约必过期。修复：`executor.py` 引入**与 invoke 并发的周期 heartbeat**（`asyncio.Task`，每 ~`lease_seconds/3` 用独立 session/事务续租，走 `clock_timestamp()`，提交 `operation_lease_renewed` event/outbox，不 bump version）。生命周期收敛：invoke 正常返回 → 停并 await heartbeat → fenced 写结果；invoke 抛异常/worker 取消 → 停 heartbeat、不写终态；heartbeat 失权 → 立即撤销 provider 并抛 `LeaseConflictError`（不响应取消的 provider 经 1s 有界宽限放弃而非无限等待）；并发/竞争一律由 fenced DB 写入决定；结束后无遗留 asyncio Task。同时：把 `token/expires_at` 的 `assert` 换成显式领域异常 `LeaseStateError`；SIDE_EFFECT 模糊失败（无法证明 Provider 未执行）不再直接 `mark_failed`，改为最小安全处理 `mark_unknown → OUTCOME_UNKNOWN`（新增 `operation_outcome_unknown` 事件，实际核对归 Task 11），契约最小扩展为 `ToolResult.provider_not_called`（默认 None=未知）。Red 证据：4 个 heartbeat 特性测试（invoke 阻塞期间 lease 延长、多 interval 多次续租、DB 时钟非应用时钟、heartbeat 运行时 `recover_expired` 不能接管）在 `b6729c1` 上失败；修复后全绿。
 
 ## 当前验证基线
 
-任务 10（Claim/Lease、fencing 与状态事务）复审自检修复后的真实结果（2026-08-25，提交 `b6729c1`）：
+任务 10（Claim/Lease、fencing 与状态事务）P1 复审修复后的真实结果（2026-08-25，提交 `3c7cecb`）：
 
-- 定向测试：`35 passed`（execution/test_claim.py 28 + integration/test_operation_transactions.py 7；test_claim.py 覆盖状态机 1 + claim/fencing/续租/失权/过期恢复/executor/occupancy + DB 时钟 8 项）。
-- 完整测试：`246 passed`（236 + 复审自检新增 10）。
+- 定向测试：`44 passed`（execution/test_claim.py 36 + integration/test_operation_transactions.py 8；含 7 个 heartbeat 生命周期测试 + SIDE_EFFECT 模糊失败 3 路径 + 无遗留任务断言）。
+- 完整测试：`255 passed`（246 + P1 修复新增 9）。
 - Ruff format：150 个文件格式正确。
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：75 个源文件无问题。
