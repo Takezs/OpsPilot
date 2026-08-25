@@ -9,7 +9,8 @@
 - 任务 7（Run Journal 与 Transactional Outbox）已通过督导复审
 - 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已通过督导复审，实现提交 `db2cae5`、复审修复提交 `8e8adfb`
 - 任务 9（Policy、审批绑定与 Operation 持久化）已通过督导复审（2026-08-25），批准提交 `e82a57c`、`276a5cc`、`26ede61`
-- 下一任务：任务 10，Claim/Lease、fencing 与状态事务（过期副作用 Operation 原子转 OUTCOME_UNKNOWN/RECONCILING；不实现实际核对流程，核对属任务 11、可靠 SSE 属任务 12）
+- 任务 10（Claim/Lease、fencing 与状态事务）已实现待复审（2026-08-25），实现提交 `f36e435`
+- 下一任务：任务 11，副作用分类、安全重试与 Reconciliation（为 OUTCOME_UNKNOWN 的 SIDE_EFFECT Operation 实现实际 reconciliation 与安全重试路径；可靠 SSE 属任务 12）
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
 
@@ -48,7 +49,7 @@ cd backend
 ..\.venv\Scripts\alembic.exe -c alembic.ini current
 ```
 
-预期 PostgreSQL、Redis 为 healthy，`pg_isready` 接受连接，Redis 返回 `PONG`，Alembic 为 `0013_resolution_binding (head)`。
+预期 PostgreSQL、Redis 为 healthy，`pg_isready` 接受连接，Redis 返回 `PONG`，Alembic 为 `0014_operation_lease_fencing (head)`。
 
 ## 任务 7（已通过督导复审）范围与验收
 
@@ -82,9 +83,21 @@ P2 修复（数据库完整性）已落地：`replacement_operation_id` 绑定�
 
 已批准设计修订（2026-08-25）已落地：幂等键唯一性在独立占用表 `operation_idempotency_occupancy`（`UNIQUE(tool_name, idempotency_key)`）；业务幂等键稳定为 `refund:{order_id}`；`tool_operations.retry_of_operation_id` 审计链；MANUAL_REVIEW 占用不自动释放，仅存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时方可同一事务释放旧占用并创建重试新 Operation（数据库触发器证明门控）。审批、Operation fencing、SSE 与前端仍属任务 10–12/13–15，未在任务 9 实现。
 
-## 任务 10（当前任务）范围
+## 任务 10（已实现，待复审）范围
 
-目标：Claim/Lease、fencing 与状态事务。READY/RETRYING 条件更新 Claim（version 单调递增、不可复用 claim_token、lease_owner、lease_expires_at → EXECUTING，并发 Worker 最多一胜）；fencing 回写匹配 `id + expected version + claim_token`（旧 token/version/错误 owner/过期 lease 均 0 行）；过期 EXECUTING SIDE_EFFECT Operation 只能原子转 OUTCOME_UNKNOWN/RECONCILING 且不调用 Provider；长任务按租期约 1/3 续租、续租失败即失权；每次状态更新 + run_event + outbox 同一 PostgreSQL 事务。**任务 10 只负责过期副作用 Operation 原子进入 OUTCOME_UNKNOWN/RECONCILING，不实现实际退款状态查询/核对决策（属任务 11），也不实现可靠 SSE（属任务 12）**。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 10”章节。
+目标：Claim/Lease、fencing 与状态事务。实现提交 `f36e435`（feat: fence leased tool operation execution，7 文件 +1624 行）。
+
+已落地：
+- **Claim**：只有 READY/RETRYING 可条件 UPDATE 认领 → EXECUTING；`version` 单调 +1；一次性 `claim_token`（`secrets.token_urlsafe(32)`）；`lease_owner`/`lease_expires_at`；并发 Worker 至多一胜（`OperationNotClaimableError`）。
+- **Fencing**：renewal/result 写入匹配 `id + expected version + claim_token + lease_owner + 未过期 lease`；stale version/token、wrong owner、expired lease 均修改 0 行并抛 `LeaseConflictError`；晚到旧 worker 响应不能覆盖新持有者 result。
+- **过期恢复**：READ_ONLY → RETRYING（可重新认领）；SIDE_EFFECT → OUTCOME_UNKNOWN（不可认领 → Provider 不会被重新调用），原子转换且不调用 Provider；实际 reconciliation 属任务 11。
+- **续租与失权**：~1/3 租期处续约（不 bump version）；续租失败即失去 DB 写入权。Executor 两事务：claim 先提交（持久 lease），result write 在第二个 fenced 事务 —— 失权时保持 EXECUTING（不可重新认领）。
+- **状态事务**：状态更新 + `run_event` + `event_outbox` 同一 PostgreSQL 事务（`next_seq` 原子递增）；注入 Event/Outbox 失败时 status/version/token/lease/seq 全回滚；Redis publish 在外部。
+- **状态机**：`state_machine.py` 合法转换表 fail-closed；终态（MANUAL_REVIEW/SUCCEEDED/FAILED/DENIED/REJECTED）不可认领；未破坏任务 9 的 approval/occupancy/immutability（`guard_occupancy_release` 保护列表扩展到 8 个非终态）。
+- **迁移**：`0014_operation_lease_fencing`（`ADD VALUE` 扩 4 状态，OID 不变；5 个新可空列；downgrade 重建枚举）。0001→0014 全链与 0014↔0013 往返在全新数据库验证通过。
+- 新增文件：`src/opspilot/execution/claim.py`、`state_machine.py`、`executor.py`；测试 `tests/execution/test_claim.py`（20）+ `tests/integration/test_operation_transactions.py`（5）。定向 25 passed、完整 236 passed。
+
+**任务 10 只负责过期副作用 Operation 原子进入 OUTCOME_UNKNOWN/RECONCILING，不实现实际退款状态查询/核对决策（属任务 11），也不实现可靠 SSE（属任务 12）**。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 10”章节。
 
 ## 完整验证命令
 
@@ -107,7 +120,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 不在 Python 层做权限后过滤；权限、READY 状态过滤必须保留在候选 SQL。
 - 不用 SQLite/Fake 数据库宣称检索集成通过。
 - 不把 PostgreSQL FTS 写成 BM25。
-- 不顺手实现任务 10 或更后任务。
+- 不顺手实现任务 11 或更后任务。
 - 不声称通过未实际运行的命令。
 - 不提交 `.env`、API Key、Authorization、PII、临时目录或本地文件。
 

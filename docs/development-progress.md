@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-25  
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已通过督导复审（2026-08-25）；下一项任务 10（Claim/Lease、fencing 与状态事务）
+> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已通过督导复审（2026-08-25）；任务 10（Claim/Lease、fencing 与状态事务）已实现待复审；下一项任务 11（安全重试与 Reconciliation）
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8、任务 9 已通过督导复审；任务 10（Claim/Lease、fencing 与状态事务）进行中；核对与 SSE 属任务 11/12 |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8、任务 9 已通过督导复审；任务 10（Claim/Lease、fencing 与状态事务）已实现待复审；核对属任务 11、SSE 属任务 12 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -138,16 +138,27 @@
 4. **迁移链证据**：0001→0013 全链在全新数据库验证通过；0013 upgrade/downgrade/upgrade 往返验证通过（含迁移往返测试 `test_0013_resolution_binding_roundtrip`）；ORM 外键同步为 `ondelete="RESTRICT"`，与数据库行为一致。
 5. **质量门禁**：定向 70 passed、完整 211 passed、Ruff format 144 文件、Ruff check 通过、Mypy 72 源文件无问题、Alembic `0013_resolution_binding (head)`、PG/Redis 健康全部通过，见下方验证基线。
 
+### 任务 10：Claim/Lease、fencing 与状态事务
+
+- **Claim 规则**：只有 READY/RETRYING 可通过条件 UPDATE 认领 → EXECUTING；`version` 单调 +1；生成一次性 `claim_token`（`secrets.token_urlsafe(32)`）；设置 `lease_owner`/`lease_expires_at`。并发 worker 至多一个胜出（`test_concurrent_claim_allows_exactly_one_winner`，asyncio.gather 双 session 串行化后 1 胜 1 抛 `OperationNotClaimableError`）。
+- **Fencing 回写**：renewal/result 写入均匹配 `id + expected version + claim_token + lease_owner + 未过期 lease`；stale version/token、wrong owner、expired lease 均修改 0 行并抛 `LeaseConflictError`；晚到的旧 worker 响应不能覆盖新持有者的 result（`test_late_response_from_old_worker_cannot_overwrite_new_holder`）。
+- **过期租约恢复**：READ_ONLY 从 EXECUTING 原子转 RETRYING（可重新认领）；SIDE_EFFECT 转 OUTCOME_UNKNOWN（不在 CLAIMABLE_STATUSES，claim 永远失败 → Provider 永远不会被重新调用）；EXECUTING 且租约过期时不重新调用 Provider。实际 reconciliation 归 Task 11。
+- **续租与失权**：在 ~1/3 lease period 处续约，renewal 使用 version/token 条件且不 bump version；renewal 失败后旧 worker 立即失去 DB 写入权（`test_expired_lease_cannot_renew_and_worker_loses_write_rights`）。Executor 分两个事务：claim 先提交（持久 lease），result write 在第二个 fenced 事务中 —— 失去租约时操作保持 EXECUTING（不可重新认领），而不是回滚回 READY。
+- **状态事务**：每次状态更新 + `run_event` + `event_outbox` 在同一个 PostgreSQL 事务中（`next_seq` 原子递增）；注入 Event/Outbox 失败时 operation status/version/token/lease/seq 全部回滚（claim/success/renewal 三种路径各有回归测试）；Redis publish 不属于业务事实事务。
+- **状态机**：`state_machine.py` 定义合法转换（含 OUTCOME_UNKNOWN/RECONCILING 完整性定义），非法转换 fail-closed 抛 `IllegalStateTransitionError`；MANUAL_REVIEW/SUCCEEDED/FAILED/DENIED/REJECTED 终态不可认领；未破坏任务 9 的 approval/occupancy/immutability 约束（EXECUTING occupancy 受 `guard_occupancy_release` 扩展保护列表保护）。
+- **迁移**：`0014_operation_lease_fencing`（`ADD VALUE` 扩 4 个状态，OID 不变无需 dispose；新增 claim_token/lease_owner/lease_expires_at/provider_reference_id/result_payload 5 个可空列；`guard_occupancy_release` 保护列表扩展到 8 个非终态）。downgrade 重建枚举并恢复 4 状态保护列表。
+- 提交：`f36e435`（feat: fence leased tool operation execution，7 文件 +1624 行，含 `execution/claim.py`、`execution/state_machine.py`、`execution/executor.py`、`tests/execution/test_claim.py` 20 个定向测试、`tests/integration/test_operation_transactions.py` 5 个事务测试）。
+
 ## 当前验证基线
 
-任务 9 复审修复（含 P2）后的真实结果（2026-08-25）：
+任务 10（Claim/Lease、fencing 与状态事务）实现后的真实结果（2026-08-25，提交 `f36e435`）：
 
-- 定向测试：`70 passed`（execution/test_policy.py 8 + approvals/test_approval.py 43 + agent/test_runner.py 19）。
-- 完整测试：`211 passed`（上一轮 205 + P2 新增 6：5 个绑定不可变/删除保护原始 SQL 负向测试 + 1 个迁移往返测试）。
-- Ruff format：144 个文件格式正确。
+- 定向测试：`25 passed`（execution/test_claim.py 20 + integration/test_operation_transactions.py 5；test_claim.py 覆盖状态机 1 + claim/fencing/续租/失权/过期恢复/executor/occupancy 19）。
+- 完整测试：`236 passed`（上一轮 211 + 任务 10 新增 25）。
+- Ruff format：150 个文件格式正确。
 - Ruff check：全部通过。
-- Mypy `--no-incremental`：72 个源文件无问题。
-- Alembic：`0013_resolution_binding (head)`；0001→0013 全链（含 0012↔0013 往返）在全新数据库验证通过。
+- Mypy `--no-incremental`：75 个源文件无问题。
+- Alembic：`0014_operation_lease_fencing (head)`；0001→0014 全链在全新数据库升级成功，0014→0013→0014 往返验证通过（downgrade 重建枚举为 8 值并删除 5 列，重新 upgrade 后 12 值 + 5 列恢复且 functional claim UPDATE 生效）。
 - PostgreSQL：healthy，`pg_isready` 为 accepting connections。
 - Redis：healthy，`redis-cli ping` 返回 `PONG`。
 
@@ -167,9 +178,9 @@
 - MANUAL_REVIEW 终态不自动释放占用；仅当存在 outcome=`RETRY_NEW_OPERATION` 的 `manual_review_resolutions` 时，才允许在同一 PostgreSQL 事务中释放旧占用并创建重试新 Operation（重新经过 Policy 与 Approval），该门控由数据库触发器证明，禁止应用层先查后插。
 - 已同步修订核心设计规格 §4.3/§6.2/§7/§11、实现计划任务 9 章节。
 
-## 下一步：任务 10（Claim/Lease、fencing 与状态事务）
+## 下一步：任务 11（副作用分类、安全重试与 Reconciliation）
 
-任务 9 已通过督导复审（2026-08-25）。下一项任务 10（Claim/Lease、fencing 与状态事务）：READY/RETRYING 条件更新 Claim（version 递增、claim_token、lease_owner、lease_expires_at → EXECUTING），fencing 回写匹配 id+version+token，SIDE_EFFECT Operation 在 EXECUTING 租约过期后原子转 OUTCOME_UNKNOWN/RECONCILING（不调用 Provider），续租与失权，状态+run_event+outbox 同事务。**任务 10 不实现实际核对流程（属任务 11）与可靠 SSE（属任务 12）**。
+任务 10 已实现待复审（2026-08-25，提交 `f36e435`）。下一项任务 11（副作用分类、安全重试与 Reconciliation）：为 OUTCOME_UNKNOWN 的 SIDE_EFFECT Operation 实现实际 reconciliation（幂等 provider 查询/核对、确定 verdict、收敛到 SUCCEEDED/FAILED/RETRYING 等），以及安全重试路径（复用任务 9/10 的 claim/fencing/occupancy/approval 约束）。**任务 11 不实现可靠 SSE（属任务 12）**。
 
 ## 后续开发计划
 
@@ -177,8 +188,8 @@
 - 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已通过督导复审）。
 - 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已通过督导复审）。
 - 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已通过督导复审（2026-08-25），提交 `e82a57c`/`276a5cc`/`26ede61`）。
-- 任务 10：Claim/Lease、fencing 与状态事务（进行中；过期副作用 Operation 原子转 OUTCOME_UNKNOWN/RECONCILING，不实现实际核对）。
-- 任务 11：副作用分类、安全重试与 Reconciliation（待开发）。
+- 任务 10：Claim/Lease、fencing 与状态事务（✅ 已实现待复审（2026-08-25），提交 `f36e435`；过期副作用 Operation 原子转 OUTCOME_UNKNOWN/RECONCILING，不实现实际核对）。
+- 任务 11：副作用分类、安全重试与 Reconciliation（待开发，依赖任务 10 复审通过）。
 - 任务 12：可靠 SSE（待开发）。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。

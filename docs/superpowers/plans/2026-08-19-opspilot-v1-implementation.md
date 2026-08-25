@@ -421,30 +421,32 @@ git commit -m "feat: bind durable approvals to immutable operations"
 - 创建：`backend/tests/execution/test_claim.py`
 - 创建：`backend/tests/integration/test_operation_transactions.py`
 
-- [ ] **步骤 1：编写 Claim 规则测试**
+- [x] **步骤 1：编写 Claim 规则测试**
 
-READY/RETRYING 可认领；其他状态不可直接认领。Claim 增加 version、生成 claim token、设置 owner/expiry。旧 token 提交结果影响行数为 0。
+READY/RETRYING 可认领；其他状态不可直接认领。Claim 增加 version、生成 claim token、设置 owner/expiry。旧 token 提交结果影响行数为 0。✅ 已实现：`test_ready_operation_is_claimable`、`test_retrying_operation_is_claimable`、`test_terminal_and_non_executable_statuses_are_not_claimable`、`test_concurrent_claim_allows_exactly_one_winner`、`test_claim_token_is_one_shot_and_non_reusable`、`test_stale_token_write_affects_zero_rows`。
 
-- [ ] **步骤 2：编写过期 EXECUTING 接管测试**
+- [x] **步骤 2：编写过期 EXECUTING 接管测试**
 
-副作用 Operation 在 EXECUTING 租约过期时，新 Worker 只能原子转为 OUTCOME_UNKNOWN/RECONCILING，不能调用 `refund_order`。
+副作用 Operation 在 EXECUTING 租约过期时，新 Worker 只能原子转为 OUTCOME_UNKNOWN/RECONCILING，不能调用 `refund_order`。✅ 已实现：`test_side_effect_expired_lease_moves_to_outcome_unknown_and_is_not_reclaimable`（OUTCOME_UNKNOWN 不可认领 → Provider 不重新调用）、`test_read_only_expired_lease_moves_to_retrying_and_is_reclaimable`、`test_expired_lease_cannot_renew_and_worker_loses_write_rights`。
 
-- [ ] **步骤 3：实现条件状态更新**
+- [x] **步骤 3：实现条件状态更新**
 
-所有更新使用 `WHERE id=:id AND version=:expected AND claim_token=:token`；状态更新、Run Event 和 Outbox row 同一事务。
+所有更新使用 `WHERE id=:id AND version=:expected AND claim_token=:token`；状态更新、Run Event 和 Outbox row 同一事务。✅ 已实现：`claim.py` 全部 fencing WHERE；`test_stale_version_write_affects_zero_rows`、`test_wrong_owner_write_affects_zero_rows`、`test_late_response_from_old_worker_cannot_overwrite_new_holder`；`tests/integration/test_operation_transactions.py` 的 claim/success/renewal 三条原子性回滚测试。
 
-- [ ] **步骤 4：实现续租与失权处理**
+- [x] **步骤 4：实现续租与失权处理**
 
-长任务按租期三分之一续租；续租失败立即停止数据库写入。外部响应迟到时只允许使用当前 token 提交。
+长任务按租期三分之一续租；续租失败立即停止数据库写入。外部响应迟到时只允许使用当前 token 提交。✅ 已实现：`executor.py` 在 `~1/3` 租期处续约、result 写在第二个 fenced 事务（失权保持 EXECUTING）；`test_lease_renewal_extends_expiry_without_bumping_version`、`test_renewal_with_stale_token_or_version_or_owner_fails`、`test_executor_does_not_commit_result_after_losing_lease`。
 
-- [ ] **步骤 5：验证并提交**
+- [x] **步骤 5：验证并提交**
 
-运行：`cd backend && pytest tests/execution/test_claim.py tests/integration/test_operation_transactions.py -q`。预期 PASS。
+运行：`cd backend && pytest tests/execution/test_claim.py tests/integration/test_operation_transactions.py -q`。预期 PASS。✅ 定向 `25 passed`。
 
 ```bash
 git add backend/src/opspilot/execution backend/tests/execution backend/tests/integration/test_operation_transactions.py
 git commit -m "feat: fence leased tool operation execution"
 ```
+
+**状态：✅ 已实现待复审（2026-08-25）。** 实现提交：`f36e435`（feat: fence leased tool operation execution，7 文件 +1624 行）。新增 `execution/claim.py`（条件 UPDATE Claim/fencing、`OperationNotClaimableError`/`LeaseConflictError`）、`execution/state_machine.py`（合法转换表 fail-closed、终态不可认领）、`execution/executor.py`（两事务：claim 先提交持久 lease，result write 在第二个 fenced 事务，失权保持 EXECUTING）；迁移 `0014_operation_lease_fencing`（`ADD VALUE` 扩 4 状态、5 个新可空列、`guard_occupancy_release` 保护列表扩展到 8 个非终态）。定向 25 passed（execution/test_claim.py 20 + integration/test_operation_transactions.py 5）、完整 236 passed；Ruff format 150 文件、Ruff check 通过、Mypy 75 源文件无问题；`0014_operation_lease_fencing (head)`，0001→0014 全链与 0014↔0013 往返（downgrade 重建枚举、重新 upgrade 恢复）在全新数据库验证通过；PostgreSQL/Redis healthy。实际 reconciliation 归任务 11，未实现。
 
 ### 任务 11：副作用分类、重试与 Reconciliation
 
