@@ -9,7 +9,7 @@
 - 任务 7（Run Journal 与 Transactional Outbox）已通过督导复审
 - 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已通过督导复审，实现提交 `db2cae5`、复审修复提交 `8e8adfb`
 - 任务 9（Policy、审批绑定与 Operation 持久化）已通过督导复审（2026-08-25），批准提交 `e82a57c`、`276a5cc`、`26ede61`
-- 任务 10 独立复审修复完成，等待督导再次复审（2026-08-26）：`f36e435`、`b6729c1`、`3c7cecb`，以及 detached provider 管理修复 `9863d4a`
+- 任务 10 已通过督导复审（2026-08-26），批准提交：`f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`
 - 下一任务：任务 11，副作用分类、安全重试与 Reconciliation（为 OUTCOME_UNKNOWN 的 SIDE_EFFECT Operation 实现实际 reconciliation 与安全重试路径；可靠 SSE 属任务 12）
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
@@ -83,7 +83,7 @@ P2 修复（数据库完整性）已落地：`replacement_operation_id` 绑定�
 
 已批准设计修订（2026-08-25）已落地：幂等键唯一性在独立占用表 `operation_idempotency_occupancy`（`UNIQUE(tool_name, idempotency_key)`）；业务幂等键稳定为 `refund:{order_id}`；`tool_operations.retry_of_operation_id` 审计链；MANUAL_REVIEW 占用不自动释放，仅存在 outcome=`RETRY_NEW_OPERATION` 的 resolution 时方可同一事务释放旧占用并创建重试新 Operation（数据库触发器证明门控）。审批、Operation fencing、SSE 与前端仍属任务 10–12/13–15，未在任务 9 实现。
 
-## 任务 10（独立复审修复完成，等待再次复审）范围
+## 任务 10（已通过督导复审，2026-08-26）范围
 
 目标：Claim/Lease、fencing 与状态事务。实现提交 `f36e435`；复审修复 `b6729c1`、`3c7cecb`；独立复审修复 `9863d4a`（fix: supervise detached operation providers）。
 
@@ -98,7 +98,7 @@ P2 修复（数据库完整性）已落地：`replacement_operation_id` 绑定�
 - 新增文件：`src/opspilot/execution/claim.py`、`state_machine.py`、`executor.py`；测试 `tests/execution/test_claim.py`（20）+ `tests/integration/test_operation_transactions.py`（5）。定向 25 passed、完整 236 passed。
 - **复审自检修复（`b6729c1`）**：唯一真实缺陷为时间语义——租约决策原先用应用本地 `datetime.now(UTC)`。改为默认解析 PostgreSQL `clock_timestamp()`（`_resolve_now`/`_clock_value`，`now`/`Clock` 仅测试注入），naive 时钟经 `_ensure_aware_utc` 规范化为显式 UTC。新增 DB 时钟/并发恢复/invoke 异常与取消 8 项测试 + recovery/result write 事务回滚 2 项测试。定向 35 passed、完整 246 passed。
 - **P1 复审修复（`3c7cecb`）**：督导指出 `b6729c1` 的"无后台任务、内联续租"是错误结论——`await invoke()` 期间完全没有续租，调用时长超过 lease 时租约必过期。修复：`executor.py` 引入与 invoke 并发的周期 heartbeat（`asyncio.Task`，每 ~`lease_seconds/3` 用独立 session/事务续租，走 `clock_timestamp()`，提交 `operation_lease_renewed` event/outbox，不 bump version）。生命周期收敛：invoke 正常返回 → 停并 await heartbeat → fenced 写结果；invoke 抛异常/worker 取消 → 停 heartbeat、不写终态；heartbeat 失权 → 立即撤销 provider 并抛 `LeaseConflictError`（不响应取消的 provider 经 1s 有界宽限放弃而非无限等待）；并发/竞争一律由 fenced DB 写入决定；结束后无遗留 asyncio Task。同时把 `token/expires_at` 的 `assert` 换成显式领域异常 `LeaseStateError`；SIDE_EFFECT 模糊失败（无法证明 Provider 未执行）不再直接 `mark_failed`，改为最小安全处理 `mark_unknown → OUTCOME_UNKNOWN`（新增 `operation_outcome_unknown` 事件，实际核对归 Task 11），契约最小扩展为 `ToolResult.provider_not_called`（默认 None=未知）。Red 证据：4 个 heartbeat 特性测试（invoke 阻塞期间 lease 延长、多 interval 多次续租、DB 时钟非应用时钟、heartbeat 运行时 `recover_expired` 不能接管）在 `b6729c1` 上失败；修复后全绿。定向 44 passed、完整 255 passed。
-- **独立复审修复（`9863d4a`）**：`3c7cecb` 的不响应取消 provider 会在 `shield + 1s` 后继续成为未受控 Task，原“无遗留 Task”声明不真实。修复后该 Task 被强引用注册、最终异常被读取、完成后自动移除，并提供显式 drain；heartbeat 始终 cancel+await。同轮 invoke/heartbeat 完成时 heartbeat 失权优先、invoke 异常也被读取，旧 worker 永不写结果。`provider_not_called=True` 才允许 SIDE_EFFECT 确定失败，False/None 均进入 OUTCOME_UNKNOWN；状态/event/outbox/next_seq 注入失败全回滚。定向 47 passed、完整 259 passed；Ruff/Mypy/Alembic/PG/Redis 通过。
+- **独立复审修复（`9863d4a`）**：`3c7cecb` 的不响应取消 provider 会在 `shield + 1s` 后继续成为未受控 Task，原“无遗留 Task”声明不真实。修复后该 Task 被强引用注册、最终异常被读取、完成后自动移除，并提供显式 drain；heartbeat 始终 cancel+await。同轮 invoke/heartbeat 完成时 heartbeat 失权优先、invoke 异常也被读取，旧 worker 永不写结果。`provider_not_called=True` 才允许 SIDE_EFFECT 确定失败，False/None 均进入 OUTCOME_UNKNOWN；状态/event/outbox/next_seq 注入失败全回滚。督导独立定向 48 passed；本轮完整 259 passed；Ruff/Mypy/Alembic/PG/Redis 通过。
 
 **任务 10 只负责过期副作用 Operation 原子进入 OUTCOME_UNKNOWN/RECONCILING，不实现实际退款状态查询/核对决策（属任务 11），也不实现可靠 SSE（属任务 12）**。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 10”章节。
 

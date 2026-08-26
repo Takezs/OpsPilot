@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-26
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2–M3 / 任务 1–9 已通过督导复审；任务 10 独立复审修复完成，等待督导再次复审；不得开始任务 11
+> 当前阶段：M2–M3 / 任务 1–10 已通过督导复审；当前开发任务为任务 11（安全重试与 Reconciliation）
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8、任务 9 已通过督导复审；任务 10 独立复审修复完成，等待督导再次复审；核对属任务 11、SSE 属任务 12 |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8–10 已通过督导复审；当前任务 11 负责错误分类、安全重试与核对；SSE 属任务 12 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -154,9 +154,9 @@
 
 ## 当前验证基线
 
-任务 10 独立复审修复后的真实结果（2026-08-26，提交 `9863d4a`）：
+任务 10 已通过督导复审（2026-08-26）。批准提交：`f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`。最新验证：
 
-- 定向测试：`47 passed`（`tests/execution/test_claim.py` + `tests/integration/test_operation_transactions.py`）。
+- 督导独立定向测试：`48 passed`（`tests/execution/test_claim.py` + `tests/integration/test_operation_transactions.py`）。
 - 完整测试：`259 passed`。
 - Ruff format：`121 files already formatted`（排除既有且禁止触碰的 ACL 临时目录 `backend/JavaProjectsOpsPilot.pytest-temp-agent/`）。
 - Ruff check：全部通过。
@@ -183,7 +183,7 @@
 
 ## 下一步：任务 11（副作用分类、安全重试与 Reconciliation）
 
-任务 10 独立复审修复完成，等待督导再次复审（2026-08-26，最新修复 `9863d4a`）。不得开始任务 11；后续任务 11 才负责 OUTCOME_UNKNOWN 的实际 reconciliation 与安全重试，可靠 SSE 仍属任务 12。
+任务 10 已通过督导复审（2026-08-26）。当前任务 11 负责 OUTCOME_UNKNOWN 的实际 reconciliation、错误分类与安全重试；可靠 SSE 仍属任务 12。
 
 ## 后续开发计划
 
@@ -191,8 +191,8 @@
 - 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已通过督导复审）。
 - 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已通过督导复审）。
 - 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已通过督导复审（2026-08-25），提交 `e82a57c`/`276a5cc`/`26ede61`）。
-- 任务 10：Claim/Lease、fencing 与状态事务（✅ 独立复审修复完成，等待督导再次复审（2026-08-26），最新修复 `9863d4a`；过期副作用 Operation 原子转 OUTCOME_UNKNOWN，不实现实际核对）。
-- 任务 11：副作用分类、安全重试与 Reconciliation（待开发，依赖任务 10 复审通过）。
+- 任务 10：Claim/Lease、fencing 与状态事务（✅ 已通过督导复审（2026-08-26），批准提交 `f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`；只建立 OUTCOME_UNKNOWN/RECONCILING 安全状态边界）。
+- 任务 11：副作用分类、安全重试与 Reconciliation（当前开发任务）。
 - 任务 12：可靠 SSE（待开发）。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
