@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-26
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2–M3 / 任务 1–11 已通过督导复审；任务 12 可靠 SSE 已实现，等待督导复审
+> 当前阶段：M1–M3 / 任务 1–12 已通过督导复审；下一项是任务 13 Vue 应用壳
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8–11 已通过督导复审；任务 12 已实现、等待复审 |
+| M3 可靠 Agent | 8–12 | 已完成并批准 | 任务 8–12 已通过督导复审 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -207,7 +207,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - MANUAL_REVIEW 终态不自动释放占用；仅当存在 outcome=`RETRY_NEW_OPERATION` 的 `manual_review_resolutions` 时，才允许在同一 PostgreSQL 事务中释放旧占用并创建重试新 Operation（重新经过 Policy 与 Approval），该门控由数据库触发器证明，禁止应用层先查后插。
 - 已同步修订核心设计规格 §4.3/§6.2/§7/§11、实现计划任务 9 章节。
 
-### 任务 12：可靠 SSE（已实现，等待督导复审）
+### 任务 12：可靠 SSE（已通过督导复审，2026-08-26）
 
 - 新增 `0017_run_ownership`：`agent_runs.owner_user_id` nullable FK `users.id`，删除使用 RESTRICT，历史/系统 Run 保持 NULL；索引支持所有权查询。过渡不变量：所有新用户 Run 必须经 `create_agent_run` 由服务端写入 Principal user_id；NULL 仅表示 legacy/system-owned，不是公共可见。
 - 权限矩阵：USER/REVIEWER 仅自己的 owned Run；他人、NULL、不存在均 404；ADMIN 可读所有 Run；任何订阅先认证和授权，再创建 Redis Pub/Sub。
@@ -215,10 +215,11 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 通知 queue 上限 128，满时安全丢提示并依赖 PG；断开时 cancel+await reader，关闭 Pub/Sub/Redis。SSE 使用 `id/event/data`，heartbeat 为注释且不推进 seq；Last-Event-ID 非法、负数、非十进制或超过水位均 400。
 - 真实 PG/Redis 定向 `12 passed in 3.03s`；完整 `302 passed in 43.91s`；Ruff 135 files、Mypy 82 files、Alembic `0017_run_ownership (head)`；0001→0017、0017↔0016、legacy NULL 与 FK RESTRICT 验证通过；PG/Redis healthy。
 - **Task 12 复审修复（2026-08-26，等待再次复审）**：`RedisSSEStream.close()` 幂等关闭 reader/pubsub/client，open/subscribe 部分失败也清理且 endpoint 返回安全 503；共享 event_type 契约 `[A-Za-z0-9_.-]{1,64}` 在 journal 更新 next_seq 前 fail-closed，SSE 编码再次防御；非对象、错误字段与超过 4096 bytes 的 Redis hint 直接丢弃，不触发 reconnect。上一轮未保存行为 pytest Red 的流程偏差继续保留；本轮真实 Red `9 failed`，Green `9 passed`。最终 Task 12+Journal 定向 `32 passed in 3.99s`，完整 `312 passed in 44.59s`；Ruff 136 files、Mypy 83 files、0017 head、PG/Redis 均通过。
+- **督导最终批准（2026-08-26）**：批准 `9a68056`（Task 12 主实现、0017 ownership 与 gap-free SSE）和 `d8b391d`（资源清理、event_type 帧安全、恶意 hint 健壮性）；督导独立定向 `32 passed`，Alembic `0017_run_ownership (head)`。批准文档闭环重新完整运行 `312 passed in 44.71s`。历史 TDD 偏差继续保留：主实现未保存先失败的行为 pytest 输出；复审修复严格保存 `9 failed → 9 passed`。
 
-## 下一步：等待任务 12 督导复审
+## 下一步：任务 13 Vue 应用壳、登录与 API 客户端
 
-任务 12 已实现并停止等待督导复审。任务 13 未开始。
+任务 12 已通过督导复审。下一步只实现任务 13，不进入任务 14。
 
 ## 后续开发计划
 
@@ -228,8 +229,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已通过督导复审（2026-08-25），提交 `e82a57c`/`276a5cc`/`26ede61`）。
 - 任务 10：Claim/Lease、fencing 与状态事务（✅ 已通过督导复审（2026-08-26），批准提交 `f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`；只建立 OUTCOME_UNKNOWN/RECONCILING 安全状态边界）。
 - 任务 11：副作用分类、安全重试与 Reconciliation（✅ 已通过督导复审（2026-08-26）；批准 `ab89d40`、`d27ec00`、`d128eb9`；迁移 `0015`/`0016`）。
-- 任务 12：可靠 SSE（待开发）。
-- 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
+- 任务 12：可靠 SSE（✅ 已通过督导复审；批准 `9a68056`、`d8b391d`；迁移 `0017`）。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。
 - 任务 18：可观测性、脱敏、容器部署、文档与 v1.0 发布。

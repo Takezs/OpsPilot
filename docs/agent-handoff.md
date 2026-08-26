@@ -10,7 +10,7 @@
 - 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已通过督导复审，实现提交 `db2cae5`、复审修复提交 `8e8adfb`
 - 任务 9（Policy、审批绑定与 Operation 持久化）已通过督导复审（2026-08-25），批准提交 `e82a57c`、`276a5cc`、`26ede61`
 - 任务 10 已通过督导复审（2026-08-26），批准提交：`f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`
-- 任务 11 已通过督导复审；任务 12 可靠 SSE 已实现，等待督导复审（2026-08-26）
+- 任务 12 可靠 SSE 已通过督导复审（2026-08-26）；下一项是任务 13 Vue 应用壳
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
 
@@ -135,7 +135,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 不在 Python 层做权限后过滤；权限、READY 状态过滤必须保留在候选 SQL。
 - 不用 SQLite/Fake 数据库宣称检索集成通过。
 - 不把 PostgreSQL FTS 写成 BM25。
-## 任务 12（已实现，等待督导复审）范围
+## 任务 12（已通过督导复审，2026-08-26）范围
 
 - `0017_run_ownership` 新增 nullable `agent_runs.owner_user_id`（FK users.id，RESTRICT + index）。历史 NULL 不回填、不公共可见；新用户 Run 只经 `create_agent_run` 服务绑定 Principal。
 - USER/REVIEWER owner-only，other/NULL/missing 均 404；ADMIN all。认证和授权在 Redis subscribe/历史查询前完成。
@@ -143,6 +143,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - buffer 128 上限，慢客户端丢 hint 不丢事实；清理 reader/pubsub/client；SSE id/event/data 与无 seq heartbeat；Last-Event-ID fail-closed。
 - 定向 12 passed；完整 302 passed；Ruff/Mypy/0017 全链往返/真实 PG Redis 均通过。任务 13 未开始。
 - 复审修复：新增幂等 `close()`，subscribe/open 失败时 pubsub 与 Redis client 各关闭一次、无 reader task，router 映射为 503；授权失败仍不创建 Redis client。event_type 统一严格 ASCII token 1–64，journal 在 next_seq 前拒绝、encode 防御历史脏值，payload 换行仍 JSON 转义。Redis hint 对空对象/数组/字符串/数字/null/错误 run/错误 seq/bool/负数/超 4096 bytes 全部丢弃且不 reconnect，后续合法 hint/PG polling 正常。本轮严格 Red `9 failed` → Green `9 passed`；上一轮未保存行为 pytest Red 的历史流程偏差不得删除。最终定向 32 passed、完整 312 passed；等待再次复审。
+- 批准提交：`9a68056`（主实现、0017 ownership、gap-free SSE）、`d8b391d`（资源/协议/恶意 hint 加固）。督导独立定向 32 passed、0017 head；文档闭环完整 312 passed in 44.71s。历史 TDD 流程偏差保留：主实现未保存行为 Red，复审修复保存 9 failed→9 passed。
 - 不声称通过未实际运行的命令。
 - 不提交 `.env`、API Key、Authorization、PII、临时目录或本地文件。
 
