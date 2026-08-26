@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-26
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2–M3 / 任务 1–11 已通过督导复审；下一项是任务 12 可靠 SSE
+> 当前阶段：M2–M3 / 任务 1–11 已通过督导复审；任务 12 可靠 SSE 已实现，等待督导复审
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8–11 已通过督导复审；下一项是任务 12 可靠 SSE |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8–11 已通过督导复审；任务 12 已实现、等待复审 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -207,9 +207,17 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - MANUAL_REVIEW 终态不自动释放占用；仅当存在 outcome=`RETRY_NEW_OPERATION` 的 `manual_review_resolutions` 时，才允许在同一 PostgreSQL 事务中释放旧占用并创建重试新 Operation（重新经过 Policy 与 Approval），该门控由数据库触发器证明，禁止应用层先查后插。
 - 已同步修订核心设计规格 §4.3/§6.2/§7/§11、实现计划任务 9 章节。
 
-## 下一步：任务 12 可靠 SSE
+### 任务 12：可靠 SSE（已实现，等待督导复审）
 
-任务 11 已通过督导复审。下一步严格执行任务 12，不进入任务 13。
+- 新增 `0017_run_ownership`：`agent_runs.owner_user_id` nullable FK `users.id`，删除使用 RESTRICT，历史/系统 Run 保持 NULL；索引支持所有权查询。过渡不变量：所有新用户 Run 必须经 `create_agent_run` 由服务端写入 Principal user_id；NULL 仅表示 legacy/system-owned，不是公共可见。
+- 权限矩阵：USER/REVIEWER 仅自己的 owned Run；他人、NULL、不存在均 404；ADMIN 可读所有 Run；任何订阅先认证和授权，再创建 Redis Pub/Sub。
+- PostgreSQL `run_events` 是唯一事实源；Redis 只承载 `{run_id,seq}` 不可信提示。连接先订阅，再补历史；按连续 seq 从 PG 输出，重复/乱序/永久丢通知及 Redis 断开均由周期 PG 轮询补齐。
+- 通知 queue 上限 128，满时安全丢提示并依赖 PG；断开时 cancel+await reader，关闭 Pub/Sub/Redis。SSE 使用 `id/event/data`，heartbeat 为注释且不推进 seq；Last-Event-ID 非法、负数、非十进制或超过水位均 400。
+- 真实 PG/Redis 定向 `12 passed in 3.03s`；完整 `302 passed in 43.91s`；Ruff 135 files、Mypy 82 files、Alembic `0017_run_ownership (head)`；0001→0017、0017↔0016、legacy NULL 与 FK RESTRICT 验证通过；PG/Redis healthy。
+
+## 下一步：等待任务 12 督导复审
+
+任务 12 已实现并停止等待督导复审。任务 13 未开始。
 
 ## 后续开发计划
 

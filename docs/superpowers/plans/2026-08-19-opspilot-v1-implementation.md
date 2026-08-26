@@ -494,15 +494,15 @@ git commit -m "feat: reconcile uncertain side effect outcomes"
 - 创建：`backend/tests/runs/test_sse.py`
 - 创建：`backend/tests/integration/test_sse_recovery.py`
 
-- [ ] **步骤 1：编写历史补发与 Redis 丢通知测试**
+- [x] **步骤 1：编写历史补发与 Redis 丢通知测试**
 
 SSE 先订阅 Redis，再按 Last-Event-ID 从 PG 补历史；补拉期间通知进入 buffer。永久丢弃一个 Redis 通知后，周期 PG watermark 仍补齐该 seq。
 
-- [ ] **步骤 2：实现 SSE 服务**
+- [x] **步骤 2：实现 SSE 服务**
 
 通知只含 `{run_id, seq}`，每次按 seq 从 PG 取事实 Event；服务端维护连续发送水位与通知 buffer，按 seq 去重。
 
-- [ ] **步骤 3：验证并提交**
+- [x] **步骤 3：验证并提交**
 
 运行：`cd backend && pytest tests/runs/test_sse.py tests/integration/test_sse_recovery.py -q`。预期 PASS。
 
@@ -510,6 +510,8 @@ SSE 先订阅 Redis，再按 Last-Event-ID 从 PG 补历史；补拉期间通知
 git add backend/src/opspilot/runs backend/tests/runs backend/tests/integration/test_sse_recovery.py
 git commit -m "feat: stream durable run events without gaps"
 ```
+
+**状态：✅ 已实现，等待督导复审（2026-08-26）。** 新增 `0017_run_ownership` 与唯一用户 Run 创建服务；USER/REVIEWER owner-only、ADMIN all，legacy NULL 对非 ADMIN 隐藏。SSE 先授权、再订阅 Redis、后补 PostgreSQL 历史；Redis 仅不可信 `{run_id,seq}` hint，连续水位、重复/乱序/永久丢通知、断线均由 PG polling 补齐。buffer 上限 128，断开完整清理；Last-Event-ID 与 SSE/heartbeat 协议 fail-closed。真实 PG/Redis 定向 12 passed、完整 302 passed；Ruff/Mypy、0017 全链往返、PG/Redis 均通过。任务 13 未开始。
 
 ### 任务 13：Vue 应用壳、登录与 API 客户端
 
