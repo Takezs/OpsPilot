@@ -1,8 +1,8 @@
 # OpsPilot 开发进度
 
-> 最后更新：2026-08-25  
+> 最后更新：2026-08-26
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2–M3 / 任务 1–8 已通过督导复审；任务 9 已通过督导复审（2026-08-25）；任务 10（Claim/Lease、fencing 与状态事务）复审自检修复完成，等待督导复审；下一项任务 11（安全重试与 Reconciliation）
+> 当前阶段：M2–M3 / 任务 1–9 已通过督导复审；任务 10 独立复审修复完成，等待督导再次复审；不得开始任务 11
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8、任务 9 已通过督导复审；任务 10（Claim/Lease、fencing 与状态事务）复审自检修复完成，等待督导复审；核对属任务 11、SSE 属任务 12 |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8、任务 9 已通过督导复审；任务 10 独立复审修复完成，等待督导再次复审；核对属任务 11、SSE 属任务 12 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -150,14 +150,15 @@
 - 提交：`f36e435`（feat: fence leased tool operation execution，7 文件 +1624 行，含 `execution/claim.py`、`execution/state_machine.py`、`execution/executor.py`、`tests/execution/test_claim.py` 20 个定向测试、`tests/integration/test_operation_transactions.py` 5 个事务测试）。
 - **复审自检修复（2026-08-25，提交 `b6729c1` "fix: harden leased operation fencing"）**：发现并修复的唯一真实缺陷是时间语义（风险 5）——租约到期判断原先依赖应用本地时钟 `datetime.now(UTC)`。修复为：租约决策一律解析到 PostgreSQL `clock_timestamp()`（新增 `_resolve_now`/`_clock_value`，`now`/`Clock` 仅作为确定性测试注入点）；`_ensure_aware_utc` 将 naive 注入时钟规范化为显式 UTC。新增 8 个 DB 时钟测试（默认走数据库时钟、时钟偏移被 fencing 兜底而非依赖时间、fenced 写入在租约过期后被拒、并发恢复单胜者、invoke 抛异常/取消后保持 EXECUTING）与 2 个事务测试（recovery/result write 事务注入失败全回滚）。其余 7 项风险（claim 并发、两事务执行、fencing、续租生命周期、过期恢复、状态机/终态/占用、迁移 0014）审查后代码正确，无需改动。迁移 0014↔0013 往返与"带 EXECUTING 数据降级必须响亮失败且原子回滚"已在 scratch 数据库验证通过。
 - **P1 复审驳回修复（2026-08-25，提交 `3c7cecb` "fix: renew operation leases during provider calls"）**：督导指出 `b6729c1` 的"无后台任务、内联续租"是错误结论——`await invoke()` 期间完全没有续租，调用时长超过 lease 时租约必过期。修复：`executor.py` 引入**与 invoke 并发的周期 heartbeat**（`asyncio.Task`，每 ~`lease_seconds/3` 用独立 session/事务续租，走 `clock_timestamp()`，提交 `operation_lease_renewed` event/outbox，不 bump version）。生命周期收敛：invoke 正常返回 → 停并 await heartbeat → fenced 写结果；invoke 抛异常/worker 取消 → 停 heartbeat、不写终态；heartbeat 失权 → 立即撤销 provider 并抛 `LeaseConflictError`（不响应取消的 provider 经 1s 有界宽限放弃而非无限等待）；并发/竞争一律由 fenced DB 写入决定；结束后无遗留 asyncio Task。同时：把 `token/expires_at` 的 `assert` 换成显式领域异常 `LeaseStateError`；SIDE_EFFECT 模糊失败（无法证明 Provider 未执行）不再直接 `mark_failed`，改为最小安全处理 `mark_unknown → OUTCOME_UNKNOWN`（新增 `operation_outcome_unknown` 事件，实际核对归 Task 11），契约最小扩展为 `ToolResult.provider_not_called`（默认 None=未知）。Red 证据：4 个 heartbeat 特性测试（invoke 阻塞期间 lease 延长、多 interval 多次续租、DB 时钟非应用时钟、heartbeat 运行时 `recover_expired` 不能接管）在 `b6729c1` 上失败；修复后全绿。
+- **独立复审修复（2026-08-26，提交 `9863d4a` "fix: supervise detached operation providers"）**：发现 `3c7cecb` 对不响应取消的 provider 仅做 `shield + 1s` 有界等待后丢弃引用，却错误声称无遗留 Task。现在超时 provider 进入进程级受控集合，完成回调统一读取异常并移除，worker shutdown/tests 可显式 drain；正常、异常、取消和失权路径的 heartbeat 仍 cancel 且 await，不进入 detached 集合。补齐同轮双失败、清理 race、外部取消、不响应取消 provider 管理/回收、`provider_not_called=True/False/None` 和 OUTCOME_UNKNOWN 原子回滚测试。取消 Python Task 不能撤销已到达 Provider 的副作用；fencing 只禁止旧 worker 后续数据库回写。
 
 ## 当前验证基线
 
-任务 10（Claim/Lease、fencing 与状态事务）P1 复审修复后的真实结果（2026-08-25，提交 `3c7cecb`）：
+任务 10 独立复审修复后的真实结果（2026-08-26，提交 `9863d4a`）：
 
-- 定向测试：`44 passed`（execution/test_claim.py 36 + integration/test_operation_transactions.py 8；含 7 个 heartbeat 生命周期测试 + SIDE_EFFECT 模糊失败 3 路径 + 无遗留任务断言）。
-- 完整测试：`255 passed`（246 + P1 修复新增 9）。
-- Ruff format：150 个文件格式正确。
+- 定向测试：`47 passed`（`tests/execution/test_claim.py` + `tests/integration/test_operation_transactions.py`）。
+- 完整测试：`259 passed`。
+- Ruff format：`121 files already formatted`（排除既有且禁止触碰的 ACL 临时目录 `backend/JavaProjectsOpsPilot.pytest-temp-agent/`）。
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：75 个源文件无问题。
 - Alembic：`0014_operation_lease_fencing (head)`；0001→0014 全链在全新数据库升级成功，0014→0013→0014 往返验证通过（downgrade 重建枚举为 8 值并删除 5 列，重新 upgrade 后 12 值 + 5 列恢复且 functional claim UPDATE 生效）；**带 EXECUTING 数据的 downgrade 响亮失败（`invalid input value for enum operation_status: "EXECUTING"`）且事务原子回滚（仍停在 0014、数据完整，无静默丢失）**；asyncpg 连接池在枚举重建后经惰性 OID 重解析自愈。
@@ -182,7 +183,7 @@
 
 ## 下一步：任务 11（副作用分类、安全重试与 Reconciliation）
 
-任务 10 复审自检修复完成，等待督导复审（2026-08-25，实现提交 `f36e435`，自检修复提交 `b6729c1`）。下一项任务 11（副作用分类、安全重试与 Reconciliation）：为 OUTCOME_UNKNOWN 的 SIDE_EFFECT Operation 实现实际 reconciliation（幂等 provider 查询/核对、确定 verdict、收敛到 SUCCEEDED/FAILED/RETRYING 等），以及安全重试路径（复用任务 9/10 的 claim/fencing/occupancy/approval 约束）。**任务 11 不实现可靠 SSE（属任务 12）**。
+任务 10 独立复审修复完成，等待督导再次复审（2026-08-26，最新修复 `9863d4a`）。不得开始任务 11；后续任务 11 才负责 OUTCOME_UNKNOWN 的实际 reconciliation 与安全重试，可靠 SSE 仍属任务 12。
 
 ## 后续开发计划
 
@@ -190,7 +191,7 @@
 - 任务 7：Run Journal、连续 seq 与 Transactional Outbox（✅ 已通过督导复审）。
 - 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已通过督导复审）。
 - 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已通过督导复审（2026-08-25），提交 `e82a57c`/`276a5cc`/`26ede61`）。
-- 任务 10：Claim/Lease、fencing 与状态事务（✅ 复审自检修复完成，等待督导复审（2026-08-25），提交 `f36e435` + 自检修复 `b6729c1`；过期副作用 Operation 原子转 OUTCOME_UNKNOWN/RECONCILING，不实现实际核对）。
+- 任务 10：Claim/Lease、fencing 与状态事务（✅ 独立复审修复完成，等待督导再次复审（2026-08-26），最新修复 `9863d4a`；过期副作用 Operation 原子转 OUTCOME_UNKNOWN，不实现实际核对）。
 - 任务 11：副作用分类、安全重试与 Reconciliation（待开发，依赖任务 10 复审通过）。
 - 任务 12：可靠 SSE（待开发）。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
