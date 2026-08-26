@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-26
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M2–M3 / 任务 1–10 已通过督导复审；任务 11 已实现，等待督导复审；未开始任务 12
+> 当前阶段：M2–M3 / 任务 1–10 已通过督导复审；任务 11 Attempt 生命周期修复完成，等待再次督导复审；未开始任务 12
 
 ## 总体进度
 
@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
-| M3 可靠 Agent | 8–12 | 进行中 | 任务 8–10 已通过督导复审；任务 11 已实现、等待复审；SSE 属任务 12 |
+| M3 可靠 Agent | 8–12 | 进行中 | 任务 8–10 已通过督导复审；任务 11 Attempt 生命周期修复完成、等待再次复审；SSE 属任务 12 |
 | M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
@@ -173,6 +173,13 @@
 - Ruff check：全部通过。
 - Mypy `--no-incremental`：79 个源文件无问题。
 - Alembic：`0015_operation_attempts (head)`；隔离 scratch 数据库 0001→0015 全链和 0015→0014→0015 往返通过。
+
+Task 11 Attempt 生命周期复审修复（2026-08-26，等待再次督导复审）：
+
+- 过期 EXECUTION Attempt 不再永久停留 RUNNING：READ_ONLY 恢复关闭为 `ABANDONED`，SIDE_EFFECT 恢复关闭为 `OUTCOME_UNKNOWN`；`completed_at` 使用 PostgreSQL `clock_timestamp()`，固定错误摘要经过既有脱敏限长边界。
+- Attempt 关闭与 Operation、run_event、outbox、next_seq 位于同一调用者事务；事件失败注入证明全部回滚。只锁定并关闭最新 RUNNING EXECUTION Attempt，历史已完成 Attempt 不变，恢复后 Attempt number 连续。
+- 新增 `0016_running_execution_attempt` 部分唯一索引，数据库保证每个 Operation 同时最多一个 `kind=EXECUTION,status=RUNNING` Attempt。
+- 本轮 Task 11 定向 `29 passed`；Task 10+11 核心可靠执行组合 `77 passed`；完整 `288 passed in 39.01s`；Ruff format/check、Mypy（79 files）通过；Alembic 0016↔0015 往返及独立数据库 0001→0016 全链通过；PostgreSQL/Redis healthy。
 - PostgreSQL：healthy，`pg_isready` accepting connections。
 - Redis：healthy，`PONG`。
 
@@ -192,9 +199,9 @@
 - MANUAL_REVIEW 终态不自动释放占用；仅当存在 outcome=`RETRY_NEW_OPERATION` 的 `manual_review_resolutions` 时，才允许在同一 PostgreSQL 事务中释放旧占用并创建重试新 Operation（重新经过 Policy 与 Approval），该门控由数据库触发器证明，禁止应用层先查后插。
 - 已同步修订核心设计规格 §4.3/§6.2/§7/§11、实现计划任务 9 章节。
 
-## 下一步：等待任务 11 督导复审
+## 下一步：等待任务 11 再次督导复审
 
-任务 11 已实现并停止等待督导复审。任务 12 可靠 SSE 未开始。
+任务 11 Attempt 生命周期复审修复完成并停止等待再次督导复审。任务 12 可靠 SSE 未开始。
 
 ## 后续开发计划
 
@@ -203,7 +210,7 @@
 - 任务 8：Tool Registry、受限 Agent Loop 与演示服务（✅ 已通过督导复审）。
 - 任务 9：Policy、审批绑定与 Operation 持久化（✅ 已通过督导复审（2026-08-25），提交 `e82a57c`/`276a5cc`/`26ede61`）。
 - 任务 10：Claim/Lease、fencing 与状态事务（✅ 已通过督导复审（2026-08-26），批准提交 `f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`；只建立 OUTCOME_UNKNOWN/RECONCILING 安全状态边界）。
-- 任务 11：副作用分类、安全重试与 Reconciliation（✅ 已实现，等待督导复审（2026-08-26））。
+- 任务 11：副作用分类、安全重试与 Reconciliation（✅ Attempt 生命周期修复完成，等待再次督导复审（2026-08-26））。
 - 任务 12：可靠 SSE（待开发）。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。
 - 任务 13–15：Vue 管理端、五个主页面、引用详情抽屉和核心退款 E2E。

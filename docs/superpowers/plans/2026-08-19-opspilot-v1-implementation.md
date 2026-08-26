@@ -483,7 +483,7 @@ git add backend/src/opspilot/execution backend/tests/execution/test_reliability.
 git commit -m "feat: reconcile uncertain side effect outcomes"
 ```
 
-**状态：✅ 已实现，等待督导复审（2026-08-26）。** 结构化错误分类不依赖 error 字符串；READ_ONLY 安全失败按持久化有界指数退避重试，SIDE_EFFECT 仅明确未调用 Provider 才 RETRYING，其余进入 OUTCOME_UNKNOWN。专用 fenced reconciliation 通过 Provider reference 或稳定业务键查询并收敛到 SUCCEEDED/RETRYING/MANUAL_REVIEW；真实 Payment Service timeout-after-effect/unknown-5xx-after-effect 均保持退款记录 1。新增 `operation_attempts`/`retry_not_before` 与 `0015_operation_attempts`，状态、Attempt、Event、Outbox、next_seq 原子提交且全载荷脱敏限长；detached supervisor 接入 ARQ shutdown。定向 24 passed，扩展定向 81 passed，完整 283 passed；Ruff/Mypy、0015 全链/往返、PostgreSQL/Redis 均通过。Task 12 未开始。
+**状态：✅ Attempt 生命周期复审修复完成，等待再次督导复审（2026-08-26）。** 主实现保持结构化错误分类、安全重试与 fenced reconciliation。复审修复使过期 READ_ONLY EXECUTION Attempt 关闭为 `ABANDONED`、SIDE_EFFECT 关闭为 `OUTCOME_UNKNOWN`，并与 Operation、run_event、outbox、next_seq 同事务；`completed_at` 取 PostgreSQL 时钟。新增 `0016_running_execution_attempt` 部分唯一索引，数据库保证同一 Operation 最多一个 RUNNING EXECUTION Attempt。失败注入完整回滚，历史 Attempt 不被误关，恢复后编号连续。本轮 Task 11 定向 29 passed、Task 10+11 核心组合 77 passed、完整 288 passed；Ruff/Mypy、0016 往返与 0001→0016 全链、PostgreSQL/Redis 均通过。Task 12 未开始。
 
 ### 任务 12：SSE 不丢事件算法
 

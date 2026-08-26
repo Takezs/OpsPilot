@@ -10,7 +10,7 @@
 - 任务 8（Tool Registry、受限 Agent Loop 与演示服务）已通过督导复审，实现提交 `db2cae5`、复审修复提交 `8e8adfb`
 - 任务 9（Policy、审批绑定与 Operation 持久化）已通过督导复审（2026-08-25），批准提交 `e82a57c`、`276a5cc`、`26ede61`
 - 任务 10 已通过督导复审（2026-08-26），批准提交：`f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`
-- 任务 11 已实现，等待督导复审（2026-08-26）；任务 12 可靠 SSE 未开始
+- 任务 11 Attempt 生命周期修复完成，等待再次督导复审（2026-08-26）；任务 12 可靠 SSE 未开始
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
 
@@ -102,7 +102,7 @@ P2 修复（数据库完整性）已落地：`replacement_operation_id` 绑定�
 
 **任务 10 只负责过期副作用 Operation 原子进入 OUTCOME_UNKNOWN/RECONCILING，不实现实际退款状态查询/核对决策（属任务 11），也不实现可靠 SSE（属任务 12）**。完整步骤见[实现计划](superpowers/plans/2026-08-19-opspilot-v1-implementation.md)中“任务 10”章节。
 
-## 任务 11（已实现，等待督导复审）范围
+## 任务 11（Attempt 生命周期修复完成，等待再次督导复审）范围
 
 - `errors.py` 使用结构化失败类型分类；SIDE_EFFECT 只有 `provider_not_called=True` 可安全重试，False/None、读取超时、发送后断连和未知 5xx 均 OUTCOME_UNKNOWN。
 - `retry.py` 提供有界指数退避；`retry_not_before` 在 PostgreSQL claim 条件中强制等待，执行 Attempt 达到 4 次后不再循环。
@@ -110,6 +110,7 @@ P2 修复（数据库完整性）已落地：`replacement_operation_id` 绑定�
 - `operation_attempts`（迁移 `0015_operation_attempts`）记录脱敏、限长的执行/核对请求响应错误；状态、Attempt、Event、Outbox、next_seq 同事务。
 - 真实 Payment Service 的 timeout-after-effect/unknown-5xx-after-effect 验证退款记录严格为 1；detached provider drain 已接入 `WorkerSettings.on_shutdown`。
 - 验证：Task 11 定向 24 passed；扩展可靠执行定向 81 passed；完整 283 passed；Ruff/Mypy 通过；Alembic `0015 (head)`，全链和往返通过；PostgreSQL/Redis healthy。
+- Attempt 生命周期复审修复：过期 READ_ONLY EXECUTION Attempt 关闭为 `ABANDONED`，SIDE_EFFECT 关闭为 `OUTCOME_UNKNOWN`，与 Operation/Event/Outbox/next_seq 同事务；`0016_running_execution_attempt` 部分唯一索引禁止同一 Operation 多个 RUNNING EXECUTION Attempt。本轮定向 29 passed、Task 10+11 核心组合 77 passed、完整 288 passed；0016 往返和 0001→0016 全链通过。
 
 ## 完整验证命令
 
@@ -132,7 +133,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 不在 Python 层做权限后过滤；权限、READY 状态过滤必须保留在候选 SQL。
 - 不用 SQLite/Fake 数据库宣称检索集成通过。
 - 不把 PostgreSQL FTS 写成 BM25。
-- 不开始任务 12 或更后任务，等待任务 11 督导复审。
+- 不开始任务 12 或更后任务，等待任务 11 再次督导复审。
 - 不声称通过未实际运行的命令。
 - 不提交 `.env`、API Key、Authorization、PII、临时目录或本地文件。
 

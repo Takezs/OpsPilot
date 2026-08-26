@@ -22,6 +22,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -112,6 +113,12 @@ class OperationAttempt(Base):
     __table_args__ = (
         UniqueConstraint("operation_id", "attempt_number", name="uq_operation_attempt_number"),
         Index("ix_operation_attempts_operation", "operation_id"),
+        Index(
+            "uq_operation_attempt_running_execution",
+            "operation_id",
+            unique=True,
+            postgresql_where=text("kind = 'EXECUTION' AND status = 'RUNNING'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

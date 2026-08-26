@@ -54,7 +54,7 @@
 - M3 / 任务 8：Tool Registry、受限 Agent Loop 与演示服务已通过督导复审（实现 `db2cae5`、复审修复 `8e8adfb`）。
 - M3 / 任务 9：Policy、审批绑定与 Operation 持久化已通过督导复审（2026-08-25）：实现 `e82a57c`、复审修复 `276a5cc`（一次性重试授权、副作用路由与 occupancy 加固）、P2 修复 `26ede61`（replacement 绑定不可变与不可删除）。
 - M3 / 任务 10：Claim/Lease、fencing 与状态事务已通过督导复审（2026-08-26），批准提交 `f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`；Task 10 只建立 OUTCOME_UNKNOWN/RECONCILING 安全状态边界。
-- M3 / 任务 11：副作用分类、安全重试与 Reconciliation 已实现，等待督导复审（2026-08-26）。可靠 SSE 属于任务 12，未开始。
+- M3 / 任务 11：Attempt 生命周期复审修复已完成，等待再次督导复审（2026-08-26）。可靠 SSE 属于任务 12，未开始。
 - `attempt=0` outbox lifecycle 是已记录的非阻塞技术债，不要顺带重构。
 
 ## 常用验证命令

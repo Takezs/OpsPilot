@@ -16,7 +16,7 @@ from sqlalchemy import text
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.execution import reconciliation as reconciliation_module
-from opspilot.execution.claim import LeaseConflictError
+from opspilot.execution.claim import LeaseConflictError, recover_expired
 from opspilot.execution.errors import FailureDisposition, ProviderFailureKind, classify_failure
 from opspilot.execution.executor import execute_operation
 from opspilot.execution.models import OperationStatus
@@ -171,6 +171,271 @@ async def test_worker_shutdown_drains_detached_provider_supervisor(
     await worker.shutdown_worker({})
     assert called.is_set()
     assert worker.WorkerSettings.on_shutdown is worker.shutdown_worker
+
+
+async def test_expired_read_only_execution_closes_running_attempt() -> None:
+    run_id, operation_id = await _create_operation("ATTEMPT-RECOVERY", status="READY")
+
+    async def _invoke(operation: object) -> ToolResult:
+        raise RuntimeError("provider connection interrupted")
+
+    try:
+        with pytest.raises(RuntimeError, match="provider connection interrupted"):
+            await execute_operation(
+                async_session_factory,
+                operation_id,
+                owner="worker-dead",
+                lease_seconds=30,
+                effect=ToolEffect.READ_ONLY,
+                invoke=_invoke,
+            )
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            await connection.execute(
+                "UPDATE tool_operations SET lease_expires_at = clock_timestamp() - interval '1s' "
+                "WHERE id = $1",
+                operation_id,
+            )
+        finally:
+            await connection.close()
+
+        async with async_session_factory() as session:
+            recovered = await recover_expired(session, operation_id, effect=ToolEffect.READ_ONLY)
+            await session.commit()
+        assert recovered.status is OperationStatus.RETRYING
+
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            attempt = await connection.fetchrow(
+                "SELECT status, completed_at, error FROM operation_attempts "
+                "WHERE operation_id = $1 ORDER BY attempt_number DESC LIMIT 1",
+                operation_id,
+            )
+            assert attempt is not None
+            assert attempt["status"] == "ABANDONED"
+            assert attempt["completed_at"] is not None
+            assert attempt["error"] == "execution lease expired before a result was recorded"
+        finally:
+            await connection.close()
+    finally:
+        await _cleanup_run(run_id)
+
+
+async def test_expired_cancelled_side_effect_closes_attempt_as_outcome_unknown() -> None:
+    run_id, operation_id = await _create_operation("ATTEMPT-UNKNOWN", status="READY")
+    started = asyncio.Event()
+
+    async def _invoke(operation: object) -> ToolResult:
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    task = asyncio.create_task(
+        execute_operation(
+            async_session_factory,
+            operation_id,
+            owner="worker-cancelled",
+            lease_seconds=30,
+            effect=ToolEffect.SIDE_EFFECT,
+            invoke=_invoke,
+        )
+    )
+    try:
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            await connection.execute(
+                "UPDATE tool_operations SET lease_expires_at = clock_timestamp() - interval '1s' "
+                "WHERE id = $1",
+                operation_id,
+            )
+        finally:
+            await connection.close()
+        async with async_session_factory() as session:
+            recovered = await recover_expired(session, operation_id, effect=ToolEffect.SIDE_EFFECT)
+            await session.commit()
+        assert recovered.status is OperationStatus.OUTCOME_UNKNOWN
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            attempt = await connection.fetchrow(
+                "SELECT status, completed_at FROM operation_attempts WHERE operation_id = $1",
+                operation_id,
+            )
+            assert attempt is not None and attempt["status"] == "OUTCOME_UNKNOWN"
+            assert attempt["completed_at"] is not None
+        finally:
+            await connection.close()
+    finally:
+        await asyncio.gather(task, return_exceptions=True)
+        await _cleanup_run(run_id)
+
+
+async def test_expired_execution_recovery_event_failure_rolls_back_attempt_and_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opspilot.execution import claim as claim_module
+
+    run_id, operation_id = await _create_operation("ATTEMPT-ROLLBACK", status="READY")
+
+    async def _invoke(operation: object) -> ToolResult:
+        raise RuntimeError("worker interrupted")
+
+    try:
+        with pytest.raises(RuntimeError, match="worker interrupted"):
+            await execute_operation(
+                async_session_factory,
+                operation_id,
+                owner="worker-dead",
+                lease_seconds=30,
+                effect=ToolEffect.READ_ONLY,
+                invoke=_invoke,
+            )
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            await connection.execute(
+                "UPDATE tool_operations SET lease_expires_at = clock_timestamp() - interval '1s' "
+                "WHERE id = $1",
+                operation_id,
+            )
+        finally:
+            await connection.close()
+
+        async def _fail_event(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("injected recovery event failure")
+
+        monkeypatch.setattr(claim_module, "append_event", _fail_event)
+        async with async_session_factory() as session:
+            with pytest.raises(RuntimeError, match="injected recovery event failure"):
+                await recover_expired(session, operation_id, effect=ToolEffect.READ_ONLY)
+            await session.rollback()
+
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            operation = await connection.fetchrow(
+                "SELECT status, claim_token FROM tool_operations WHERE id = $1", operation_id
+            )
+            attempt = await connection.fetchrow(
+                "SELECT status, completed_at, error FROM operation_attempts "
+                "WHERE operation_id = $1",
+                operation_id,
+            )
+            assert operation is not None and operation["status"] == "EXECUTING"
+            assert operation["claim_token"] is not None
+            assert attempt is not None and attempt["status"] == "RUNNING"
+            assert attempt["completed_at"] is None and attempt["error"] is None
+            assert (
+                await connection.fetchval("SELECT next_seq FROM agent_runs WHERE id = $1", run_id)
+                == 1
+            )
+            assert (
+                await connection.fetchval(
+                    "SELECT count(*) FROM event_outbox WHERE run_id = $1", run_id
+                )
+                == 1
+            )
+        finally:
+            await connection.close()
+    finally:
+        await _cleanup_run(run_id)
+
+
+async def test_database_rejects_two_running_execution_attempts() -> None:
+    run_id, operation_id = await _create_operation("ATTEMPT-UNIQUE", status="READY")
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    try:
+        await connection.execute(
+            "INSERT INTO operation_attempts "
+            "(id, operation_id, attempt_number, kind, status, request_payload) "
+            "VALUES ($1, $2, 1, 'EXECUTION', 'RUNNING', '{}'::jsonb)",
+            uuid.uuid4(),
+            operation_id,
+        )
+        with pytest.raises(asyncpg.UniqueViolationError):
+            await connection.execute(
+                "INSERT INTO operation_attempts "
+                "(id, operation_id, attempt_number, kind, status, request_payload) "
+                "VALUES ($1, $2, 2, 'EXECUTION', 'RUNNING', '{}'::jsonb)",
+                uuid.uuid4(),
+                operation_id,
+            )
+    finally:
+        await connection.close()
+        await _cleanup_run(run_id)
+
+
+async def test_recovery_closes_only_latest_running_attempt_and_next_number_is_continuous() -> None:
+    run_id, operation_id = await _create_operation("ATTEMPT-LINEAGE", status="READY")
+    connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+    try:
+        await connection.execute(
+            "INSERT INTO operation_attempts "
+            "(id, operation_id, attempt_number, kind, status, request_payload, completed_at) "
+            "VALUES ($1, $2, 1, 'EXECUTION', 'SUCCEEDED', '{}'::jsonb, clock_timestamp())",
+            uuid.uuid4(),
+            operation_id,
+        )
+    finally:
+        await connection.close()
+
+    calls = 0
+
+    async def _invoke(operation: object) -> ToolResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("first worker interrupted")
+        return ToolResult(ok=True, data={"value": "ok"})
+
+    try:
+        with pytest.raises(RuntimeError, match="first worker interrupted"):
+            await execute_operation(
+                async_session_factory,
+                operation_id,
+                owner="worker-1",
+                lease_seconds=30,
+                effect=ToolEffect.READ_ONLY,
+                invoke=_invoke,
+            )
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            await connection.execute(
+                "UPDATE tool_operations SET lease_expires_at = clock_timestamp() - interval '1s' "
+                "WHERE id = $1",
+                operation_id,
+            )
+        finally:
+            await connection.close()
+        async with async_session_factory() as session:
+            await recover_expired(session, operation_id, effect=ToolEffect.READ_ONLY)
+            await session.commit()
+        await execute_operation(
+            async_session_factory,
+            operation_id,
+            owner="worker-2",
+            lease_seconds=30,
+            effect=ToolEffect.READ_ONLY,
+            invoke=_invoke,
+        )
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            rows = await connection.fetch(
+                "SELECT attempt_number, status FROM operation_attempts "
+                "WHERE operation_id = $1 ORDER BY attempt_number",
+                operation_id,
+            )
+            assert [(row["attempt_number"], row["status"]) for row in rows] == [
+                (1, "SUCCEEDED"),
+                (2, "ABANDONED"),
+                (3, "SUCCEEDED"),
+            ]
+            assert sum(row["status"] == "RUNNING" for row in rows) == 0
+        finally:
+            await connection.close()
+    finally:
+        await _cleanup_run(run_id)
 
 
 async def test_reconciliation_finds_timeout_after_effect_and_never_refunds_twice() -> None:

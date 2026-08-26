@@ -29,7 +29,8 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from opspilot.execution.models import Operation, OperationStatus
+from opspilot.execution.attempts import finish_attempt
+from opspilot.execution.models import Operation, OperationAttempt, OperationStatus
 from opspilot.execution.service import OperationError, OperationNotFoundError
 from opspilot.execution.state_machine import CLAIMABLE_STATUSES, assert_transition
 from opspilot.runs.journal import append_event
@@ -459,6 +460,25 @@ async def recover_expired(
         raise LeaseConflictError(
             f"expired-lease recovery denied for operation {operation_id}: "
             "not an EXECUTING operation with an expired lease"
+        )
+    attempt = await session.scalar(
+        select(OperationAttempt)
+        .where(
+            OperationAttempt.operation_id == operation_id,
+            OperationAttempt.kind == "EXECUTION",
+            OperationAttempt.status == "RUNNING",
+        )
+        .order_by(OperationAttempt.attempt_number.desc())
+        .limit(1)
+        .with_for_update()
+    )
+    if attempt is not None:
+        finish_attempt(
+            attempt,
+            status=("ABANDONED" if effect is ToolEffect.READ_ONLY else "OUTCOME_UNKNOWN"),
+            response=None,
+            error="execution lease expired before a result was recorded",
+            completed_at=timestamp,
         )
     await append_event(
         session,
