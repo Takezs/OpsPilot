@@ -214,6 +214,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - PostgreSQL `run_events` 是唯一事实源；Redis 只承载 `{run_id,seq}` 不可信提示。连接先订阅，再补历史；按连续 seq 从 PG 输出，重复/乱序/永久丢通知及 Redis 断开均由周期 PG 轮询补齐。
 - 通知 queue 上限 128，满时安全丢提示并依赖 PG；断开时 cancel+await reader，关闭 Pub/Sub/Redis。SSE 使用 `id/event/data`，heartbeat 为注释且不推进 seq；Last-Event-ID 非法、负数、非十进制或超过水位均 400。
 - 真实 PG/Redis 定向 `12 passed in 3.03s`；完整 `302 passed in 43.91s`；Ruff 135 files、Mypy 82 files、Alembic `0017_run_ownership (head)`；0001→0017、0017↔0016、legacy NULL 与 FK RESTRICT 验证通过；PG/Redis healthy。
+- **Task 12 复审修复（2026-08-26，等待再次复审）**：`RedisSSEStream.close()` 幂等关闭 reader/pubsub/client，open/subscribe 部分失败也清理且 endpoint 返回安全 503；共享 event_type 契约 `[A-Za-z0-9_.-]{1,64}` 在 journal 更新 next_seq 前 fail-closed，SSE 编码再次防御；非对象、错误字段与超过 4096 bytes 的 Redis hint 直接丢弃，不触发 reconnect。上一轮未保存行为 pytest Red 的流程偏差继续保留；本轮真实 Red `9 failed`，Green `9 passed`。最终 Task 12+Journal 定向 `32 passed in 3.99s`，完整 `312 passed in 44.59s`；Ruff 136 files、Mypy 83 files、0017 head、PG/Redis 均通过。
 
 ## 下一步：等待任务 12 督导复审
 

@@ -331,3 +331,45 @@ async def test_append_event_rejects_non_serializable_payload() -> None:
         assert run.next_seq == 0
     finally:
         await cleanup_runs([run_id])
+
+
+async def test_invalid_sse_event_types_fail_before_consuming_sequence() -> None:
+    run_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.QUEUED))
+        await session.commit()
+    invalid = ["", "bad\revent", "bad\nevent", "bad\r\nevent", "x" * 65, "bad\u0085event"]
+    try:
+        async with async_session_factory() as session:
+            for event_type in invalid:
+                with pytest.raises(ValueError):
+                    await append_event(session, run_id, event_type, {"line": "a\nb"})
+            seq = await append_event(session, run_id, "valid.event-type_1", {"line": "a\nb"})
+            await session.commit()
+        assert seq == 1
+        connection = await asyncpg.connect(Settings().database_url.replace("+asyncpg", ""))
+        try:
+            assert (
+                await connection.fetchval("SELECT next_seq FROM agent_runs WHERE id = $1", run_id)
+                == 1
+            )
+            assert (
+                await connection.fetchval(
+                    "SELECT count(*) FROM run_events WHERE run_id = $1", run_id
+                )
+                == 1
+            )
+            assert (
+                await connection.fetchval(
+                    "SELECT count(*) FROM event_outbox WHERE run_id = $1", run_id
+                )
+                == 1
+            )
+            payload = await connection.fetchval(
+                "SELECT payload::text FROM run_events WHERE run_id = $1", run_id
+            )
+            assert "\\n" in payload
+        finally:
+            await connection.close()
+    finally:
+        await cleanup_runs([run_id])

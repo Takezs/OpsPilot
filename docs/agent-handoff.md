@@ -142,6 +142,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - `RedisSSEStream` 先订阅后补 PG 历史；Redis 仅 `{run_id,seq}` hint，所有 payload 从 PG 读取；连续水位、去重、乱序/缺通知/断线由 PG polling 收敛。
 - buffer 128 上限，慢客户端丢 hint 不丢事实；清理 reader/pubsub/client；SSE id/event/data 与无 seq heartbeat；Last-Event-ID fail-closed。
 - 定向 12 passed；完整 302 passed；Ruff/Mypy/0017 全链往返/真实 PG Redis 均通过。任务 13 未开始。
+- 复审修复：新增幂等 `close()`，subscribe/open 失败时 pubsub 与 Redis client 各关闭一次、无 reader task，router 映射为 503；授权失败仍不创建 Redis client。event_type 统一严格 ASCII token 1–64，journal 在 next_seq 前拒绝、encode 防御历史脏值，payload 换行仍 JSON 转义。Redis hint 对空对象/数组/字符串/数字/null/错误 run/错误 seq/bool/负数/超 4096 bytes 全部丢弃且不 reconnect，后续合法 hint/PG polling 正常。本轮严格 Red `9 failed` → Green `9 passed`；上一轮未保存行为 pytest Red 的历史流程偏差不得删除。最终定向 32 passed、完整 312 passed；等待再次复审。
 - 不声称通过未实际运行的命令。
 - 不提交 `.env`、API Key、Authorization、PII、临时目录或本地文件。
 

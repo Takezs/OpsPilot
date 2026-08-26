@@ -33,7 +33,13 @@ async def stream_run_events(
         Settings().redis_url
     )
     stream = RedisSSEStream(run_id, client)
-    await stream.open()
+    try:
+        await stream.open()
+    except Exception as error:
+        await stream.close()
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "run event stream unavailable"
+        ) from error
     return StreamingResponse(
         stream.events(after_seq),
         media_type="text/event-stream",

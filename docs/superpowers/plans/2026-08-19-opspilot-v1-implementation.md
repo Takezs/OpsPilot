@@ -513,6 +513,8 @@ git commit -m "feat: stream durable run events without gaps"
 
 **状态：✅ 已实现，等待督导复审（2026-08-26）。** 新增 `0017_run_ownership` 与唯一用户 Run 创建服务；USER/REVIEWER owner-only、ADMIN all，legacy NULL 对非 ADMIN 隐藏。SSE 先授权、再订阅 Redis、后补 PostgreSQL 历史；Redis 仅不可信 `{run_id,seq}` hint，连续水位、重复/乱序/永久丢通知、断线均由 PG polling 补齐。buffer 上限 128，断开完整清理；Last-Event-ID 与 SSE/heartbeat 协议 fail-closed。真实 PG/Redis 定向 12 passed、完整 302 passed；Ruff/Mypy、0017 全链往返、PG/Redis 均通过。任务 13 未开始。
 
+**复审修复完成，等待再次督导复审（2026-08-26）：** open/subscribe 失败通过幂等 `close()` 关闭部分创建的 Pub/Sub 与 Redis client，endpoint 明确返回 503；event_type 在 journal 写入前与 SSE 编码时统一验证 ASCII token `[A-Za-z0-9_.-]{1,64}`，非法值不消耗 seq；Redis 非对象/非法/超 4096-byte hint 直接丢弃而不重连。本轮严格 Red `9 failed` → Green `9 passed`；上一轮未保留行为 pytest Red 的流程偏差仍记录在交接。Task 12+Journal 定向 32 passed、完整 312 passed；Ruff/Mypy/0017/PG/Redis 通过。任务 13 未开始。
+
 ### 任务 13：Vue 应用壳、登录与 API 客户端
 
 **文件：**
