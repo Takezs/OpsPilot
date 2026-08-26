@@ -21,6 +21,7 @@ from opspilot.execution import claim as claim_module
 from opspilot.execution.claim import (
     claim_operation,
     mark_succeeded,
+    mark_unknown,
     recover_expired,
     renew_lease,
 )
@@ -203,6 +204,46 @@ async def test_event_failure_rolls_back_success_write(
         assert row["claim_token"] == token
         assert row["result_payload"] is None
         # only the claim event survived
+        assert await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id) == 1
+        assert await _count("SELECT count(*) FROM event_outbox WHERE run_id = $1", run_id) == 1
+        assert await _fetch_next_seq(run_id) == 1
+    finally:
+        await _cleanup_runs([run_id])
+
+
+async def test_event_failure_rolls_back_outcome_unknown_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    try:
+        async with async_session_factory() as session:
+            operation = await claim_operation(
+                session, op_id, owner="worker-1", lease_seconds=60, now=_T0
+            )
+            token = operation.claim_token
+            await session.commit()
+
+        monkeypatch.setattr(claim_module, "append_event", _fail_journal)
+        async with async_session_factory() as session:
+            with pytest.raises(RuntimeError, match="injected"):
+                async with session.begin():
+                    await mark_unknown(
+                        session,
+                        op_id,
+                        owner="worker-1",
+                        token=token,
+                        expected_version=2,
+                        error="response read timeout",
+                        now=_T0 + timedelta(seconds=30),
+                    )
+
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["version"] == 2
+        assert row["claim_token"] == token
+        assert row["lease_owner"] == "worker-1"
+        assert row["lease_expires_at"] == _T0 + timedelta(seconds=60)
         assert await _count("SELECT count(*) FROM run_events WHERE run_id = $1", run_id) == 1
         assert await _count("SELECT count(*) FROM event_outbox WHERE run_id = $1", run_id) == 1
         assert await _fetch_next_seq(run_id) == 1

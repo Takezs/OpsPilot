@@ -26,6 +26,7 @@ import pytest
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.execution import claim as claim_module
+from opspilot.execution import executor as executor_module
 from opspilot.execution.claim import (
     LeaseConflictError,
     OperationNotClaimableError,
@@ -35,7 +36,11 @@ from opspilot.execution.claim import (
     recover_expired,
     renew_lease,
 )
-from opspilot.execution.executor import execute_operation
+from opspilot.execution.executor import (
+    detached_provider_task_count,
+    drain_detached_provider_tasks,
+    execute_operation,
+)
 from opspilot.execution.models import Operation, OperationStatus
 from opspilot.execution.state_machine import IllegalStateTransitionError, assert_transition
 from opspilot.runs.models import Run, RunStatus
@@ -622,12 +627,19 @@ async def test_executor_commits_success_while_holding_lease() -> None:
         await _cleanup_runs([run_id])
 
 
-async def test_executor_maps_ambiguous_side_effect_failure_to_outcome_unknown() -> None:
+@pytest.mark.parametrize("provider_not_called", [None, False])
+async def test_executor_maps_ambiguous_side_effect_failure_to_outcome_unknown(
+    provider_not_called: bool | None,
+) -> None:
     run_id = await _create_run()
     op_id = await _insert_operation_raw(run_id, status="READY")
 
     async def _invoke(operation: object) -> ToolResult:
-        return ToolResult(ok=False, error="provider declined")
+        return ToolResult(
+            ok=False,
+            error="provider declined",
+            provider_not_called=provider_not_called,
+        )
 
     try:
         operation = await execute_operation(
@@ -1333,6 +1345,85 @@ async def test_executor_heartbeat_failure_race_with_invoke_return_decided_by_fen
         await _cleanup_runs([run_id])
 
 
+async def test_executor_same_turn_failures_are_both_retrieved_and_lease_wins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Simultaneous invoke/heartbeat failures must not orphan either exception."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    orphaned: list[dict[str, object]] = []
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: orphaned.append(context))
+
+    async def _invoke(operation: object) -> ToolResult:
+        raise RuntimeError("provider failed in same turn")
+
+    async def _failed_heartbeat(*args: object, **kwargs: object) -> None:
+        raise LeaseConflictError("heartbeat failed in same turn")
+
+    monkeypatch.setattr(executor_module, "_heartbeat_loop", _failed_heartbeat)
+    try:
+        with pytest.raises(LeaseConflictError, match="heartbeat failed in same turn"):
+            await execute_operation(
+                async_session_factory,
+                op_id,
+                owner="worker-1",
+                lease_seconds=60,
+                effect=ToolEffect.SIDE_EFFECT,
+                invoke=_invoke,
+                now=lambda: _T0,
+            )
+        await asyncio.sleep(0)
+        assert orphaned == []
+        _assert_no_leftover_tasks()
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["result_payload"] is None
+    finally:
+        loop.set_exception_handler(previous_handler)
+        await _cleanup_runs([run_id])
+
+
+async def test_executor_heartbeat_failure_during_invoke_cleanup_blocks_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A heartbeat failing as invoke wins FIRST_COMPLETED must still fail closed."""
+    run_id = await _create_run()
+    op_id = await _insert_operation_raw(run_id, status="READY")
+    heartbeat_started = asyncio.Event()
+
+    async def _invoke(operation: object) -> ToolResult:
+        await heartbeat_started.wait()
+        return ToolResult(ok=True, data={"refund_id": "must-not-commit"})
+
+    async def _failed_during_stop(*args: object, **kwargs: object) -> None:
+        heartbeat_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise LeaseConflictError("heartbeat failed during cleanup") from None
+
+    monkeypatch.setattr(executor_module, "_heartbeat_loop", _failed_during_stop)
+    try:
+        with pytest.raises(LeaseConflictError, match="heartbeat failed during cleanup"):
+            await execute_operation(
+                async_session_factory,
+                op_id,
+                owner="worker-1",
+                lease_seconds=60,
+                effect=ToolEffect.SIDE_EFFECT,
+                invoke=_invoke,
+                now=lambda: _T0,
+            )
+        row = await _fetch_operation(op_id)
+        assert row["status"] == "EXECUTING"
+        assert row["result_payload"] is None
+        _assert_no_leftover_tasks()
+    finally:
+        await _cleanup_runs([run_id])
+
+
 async def test_executor_non_cancellable_invoke_does_not_block_lease_revocation() -> None:
     """A provider that ignores cancellation must not block the LeaseConflictError."""
     run_id = await _create_run()
@@ -1342,11 +1433,12 @@ async def test_executor_non_cancellable_invoke_does_not_block_lease_revocation()
 
     async def _invoke(operation: object) -> ToolResult:
         started.set()
-        try:
-            await asyncio.Event().wait()  # never resolves
-        except asyncio.CancelledError:
-            # deliberately swallow the cancellation and keep running
-            await teardown.wait()
+        while not teardown.is_set():
+            try:
+                await teardown.wait()
+            except asyncio.CancelledError:
+                # Deliberately swallow every cancellation, not only the first.
+                continue
         return ToolResult(ok=True, data={"refund_id": "r1"})
 
     clock = _AdvancingClock([_T0, _T0 + timedelta(seconds=120)])
@@ -1367,10 +1459,13 @@ async def test_executor_non_cancellable_invoke_does_not_block_lease_revocation()
         # surface even though the provider refuses to terminate.
         with pytest.raises(LeaseConflictError):
             await asyncio.wait_for(task, timeout=6)
+        assert detached_provider_task_count() == 1
         row = await _fetch_operation(op_id)
         assert row["status"] == "EXECUTING"
         assert row["result_payload"] is None
     finally:
         teardown.set()  # let the abandoned provider finish; no task leaks
+        await asyncio.wait_for(drain_detached_provider_tasks(), timeout=15)
+        assert detached_provider_task_count() == 0
         await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=15)
         await _cleanup_runs([run_id])

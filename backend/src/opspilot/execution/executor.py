@@ -53,6 +53,46 @@ SessionFactory = Callable[[], AsyncSession]
 # Bounded grace for abandoning a provider that ignores cancellation: cooperative
 # providers unwind instantly, and a stuck one must not block the revocation.
 _CANCEL_GRACE_SECONDS = 1.0
+_DETACHED_PROVIDER_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _consume_task_result(task: asyncio.Task[Any]) -> None:
+    """Retrieve a finished task's result so its exception is never orphaned."""
+    if not task.done() or task.cancelled():
+        return
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+def _forget_detached_provider(task: asyncio.Task[Any]) -> None:
+    _consume_task_result(task)
+    _DETACHED_PROVIDER_TASKS.discard(task)
+
+
+def _detach_provider_task(task: asyncio.Task[Any]) -> None:
+    """Keep ownership of a non-cooperative provider until it really finishes."""
+    if task.done():
+        _consume_task_result(task)
+        return
+    _DETACHED_PROVIDER_TASKS.add(task)
+    task.add_done_callback(_forget_detached_provider)
+
+
+def detached_provider_task_count() -> int:
+    """Return the number of cancellation-resistant providers still supervised."""
+    return len(_DETACHED_PROVIDER_TASKS)
+
+
+async def drain_detached_provider_tasks() -> None:
+    """Cancel and collect supervised providers during worker shutdown/tests."""
+    tasks = tuple(_DETACHED_PROVIDER_TASKS)
+    if not tasks:
+        return
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _clock_value(session: AsyncSession, clock: Clock | None) -> datetime:
@@ -65,7 +105,7 @@ async def _clock_value(session: AsyncSession, clock: Clock | None) -> datetime:
     return resolved
 
 
-async def _bounded_wait(task: asyncio.Task[Any]) -> None:
+async def _bounded_wait(task: asyncio.Task[Any], *, detach_on_timeout: bool = False) -> None:
     """Wait for a task to finish without propagating its exception.
 
     A provider that ignores cancellation is abandoned after a bounded grace
@@ -73,13 +113,22 @@ async def _bounded_wait(task: asyncio.Task[Any]) -> None:
     but this worker never touches the database again.
     """
     if task.done():
+        _consume_task_result(task)
         return
     try:
         await asyncio.wait_for(asyncio.shield(task), timeout=_CANCEL_GRACE_SECONDS)
     except TimeoutError:
-        pass  # non-cooperative task; leave it to finish on its own
+        if detach_on_timeout:
+            _detach_provider_task(task)
     except asyncio.CancelledError:
-        pass  # the surrounding worker was cancelled; cleanup is best-effort
+        if task.done():
+            _consume_task_result(task)
+            return
+        if detach_on_timeout:
+            _detach_provider_task(task)
+        raise
+    else:
+        _consume_task_result(task)
 
 
 async def _heartbeat_loop(
@@ -187,12 +236,12 @@ async def execute_operation(
                 if failure is not None:
                     # The lease was lost: revoke the provider, never write a result.
                     invoke_task.cancel()
-                    await _bounded_wait(invoke_task)
+                    await _bounded_wait(invoke_task, detach_on_timeout=True)
                     raise failure
                 # The heartbeat stopped before it was asked to: a programming
                 # error, so fail closed rather than write while unguarded.
                 invoke_task.cancel()
-                await _bounded_wait(invoke_task)
+                await _bounded_wait(invoke_task, detach_on_timeout=True)
                 raise LeaseConflictError(
                     f"lease heartbeat stopped unexpectedly for operation {operation_id}"
                 )
@@ -201,12 +250,14 @@ async def execute_operation(
                 break
     finally:
         stop.set()
+        if not heartbeat_task.done():
+            heartbeat_task.cancel()
         await _bounded_wait(heartbeat_task)
-        if heartbeat_task.done():
-            heartbeat_task.exception()  # retrieve any pending exception
         if not invoke_task.done():
             invoke_task.cancel()
-            await _bounded_wait(invoke_task)
+            await _bounded_wait(invoke_task, detach_on_timeout=True)
+        else:
+            _consume_task_result(invoke_task)
 
     # Transaction 2: fenced terminal write. The heartbeat kept the lease alive
     # while invoke ran; the fenced update is the single authoritative decision.
