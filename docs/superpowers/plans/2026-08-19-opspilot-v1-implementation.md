@@ -458,23 +458,23 @@ git commit -m "feat: fence leased tool operation execution"
 - 创建：`backend/src/opspilot/execution/errors.py`、`retry.py`、`reconciliation.py`
 - 创建：`backend/tests/execution/test_reliability.py`
 
-- [ ] **步骤 1：编写错误分类表测试**
+- [x] **步骤 1：编写错误分类表测试**
 
 只读工具对连接错误、429、明确可重试 5xx 退避；副作用工具仅在明确未送达/未执行时 RETRYING。读取超时、发送后断线、未知 5xx 必须 OUTCOME_UNKNOWN。
 
-- [ ] **步骤 2：编写核对测试**
+- [x] **步骤 2：编写核对测试**
 
 timeout-after-effect 通过 Provider reference ID 或幂等键查到退款后进入 SUCCEEDED；确认不存在才 RETRYING；无法确认进入 MANUAL_REVIEW。
 
-- [ ] **步骤 3：编写租约过期重复副作用故障测试**
+- [x] **步骤 3：编写租约过期重复副作用故障测试**
 
 旧 Worker 调用已生效后租约过期，新 Worker 接管先核对并进入 SUCCEEDED；Payment Service 退款记录严格为 1。
 
-- [ ] **步骤 4：实现分类、退避和核对器**
+- [x] **步骤 4：实现分类、退避和核对器**
 
 指数退避带抖动并有最大次数；副作用 Operation 的重试入口必须要求“Provider 明确未执行”证据。
 
-- [ ] **步骤 5：验证并提交**
+- [x] **步骤 5：验证并提交**
 
 运行：`cd backend && pytest tests/execution/test_reliability.py -q`。预期 PASS。
 
@@ -482,6 +482,8 @@ timeout-after-effect 通过 Provider reference ID 或幂等键查到退款后进
 git add backend/src/opspilot/execution backend/tests/execution/test_reliability.py
 git commit -m "feat: reconcile uncertain side effect outcomes"
 ```
+
+**状态：✅ 已实现，等待督导复审（2026-08-26）。** 结构化错误分类不依赖 error 字符串；READ_ONLY 安全失败按持久化有界指数退避重试，SIDE_EFFECT 仅明确未调用 Provider 才 RETRYING，其余进入 OUTCOME_UNKNOWN。专用 fenced reconciliation 通过 Provider reference 或稳定业务键查询并收敛到 SUCCEEDED/RETRYING/MANUAL_REVIEW；真实 Payment Service timeout-after-effect/unknown-5xx-after-effect 均保持退款记录 1。新增 `operation_attempts`/`retry_not_before` 与 `0015_operation_attempts`，状态、Attempt、Event、Outbox、next_seq 原子提交且全载荷脱敏限长；detached supervisor 接入 ARQ shutdown。定向 24 passed，扩展定向 81 passed，完整 283 passed；Ruff/Mypy、0015 全链/往返、PostgreSQL/Redis 均通过。Task 12 未开始。
 
 ### 任务 12：SSE 不丢事件算法
 

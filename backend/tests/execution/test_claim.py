@@ -672,7 +672,7 @@ async def test_executor_maps_ambiguous_side_effect_failure_to_outcome_unknown(
         await _cleanup_runs([run_id])
 
 
-async def test_executor_commits_failure_when_side_effect_provably_not_executed() -> None:
+async def test_executor_retries_when_side_effect_provably_not_executed() -> None:
     run_id = await _create_run()
     op_id = await _insert_operation_raw(run_id, status="READY")
 
@@ -693,9 +693,9 @@ async def test_executor_commits_failure_when_side_effect_provably_not_executed()
             invoke=_invoke,
             now=lambda: _T0,
         )
-        assert operation.status is OperationStatus.FAILED
+        assert operation.status is OperationStatus.RETRYING
         row = await _fetch_operation(op_id)
-        assert row["status"] == "FAILED"
+        assert row["status"] == "RETRYING"
         assert row["version"] == 3
         assert row["claim_token"] is None
     finally:

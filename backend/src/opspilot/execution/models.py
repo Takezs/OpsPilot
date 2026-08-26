@@ -79,6 +79,9 @@ class Operation(Base):
     )
     provider_reference_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     result_payload: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    retry_not_before: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )
@@ -102,3 +105,26 @@ class OperationIdempotencyOccupancy(Base):
     operation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tool_operations.id", ondelete="CASCADE"), index=True
     )
+
+
+class OperationAttempt(Base):
+    __tablename__ = "operation_attempts"
+    __table_args__ = (
+        UniqueConstraint("operation_id", "attempt_number", name="uq_operation_attempt_number"),
+        Index("ix_operation_attempts_operation", "operation_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tool_operations.id", ondelete="CASCADE")
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(24))
+    request_payload: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
+    response_payload: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -26,6 +26,7 @@ state.
 """
 
 import asyncio
+import random
 import uuid
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
@@ -34,16 +35,20 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from opspilot.execution.attempts import finish_attempt, start_attempt
 from opspilot.execution.claim import (
     LeaseConflictError,
     LeaseStateError,
     claim_operation,
     mark_failed,
+    mark_retrying,
     mark_succeeded,
     mark_unknown,
     renew_lease,
 )
-from opspilot.execution.models import Operation
+from opspilot.execution.errors import FailureDisposition, classify_failure
+from opspilot.execution.models import Operation, OperationAttempt
+from opspilot.execution.retry import RetryPolicy
 from opspilot.tools.types import ToolEffect, ToolResult
 
 Invoker = Callable[[Operation], Coroutine[Any, Any, ToolResult]]
@@ -53,6 +58,7 @@ SessionFactory = Callable[[], AsyncSession]
 # Bounded grace for abandoning a provider that ignores cancellation: cooperative
 # providers unwind instantly, and a stuck one must not block the revocation.
 _CANCEL_GRACE_SECONDS = 1.0
+_RETRY_POLICY = RetryPolicy()
 _DETACHED_PROVIDER_TASKS: set[asyncio.Task[Any]] = set()
 
 
@@ -203,6 +209,16 @@ async def execute_operation(
         operation = await claim_operation(
             session, operation_id, owner=owner, lease_seconds=lease_seconds, now=timestamp
         )
+        attempt = await start_attempt(
+            session,
+            operation,
+            kind="EXECUTION",
+            request={
+                "tool_name": operation.tool_name,
+                "arguments": operation.normalized_arguments,
+                "idempotency_key": operation.idempotency_key,
+            },
+        )
         await session.commit()
 
     token = operation.claim_token
@@ -210,6 +226,7 @@ async def execute_operation(
     if token is None or expires_at is None:
         raise LeaseStateError(f"operation {operation_id} was not claimed with a live lease")
     claimed_version = operation.version
+    attempt_id = attempt.id
 
     # Run the provider invocation concurrently with the lease heartbeat.
     invoke_task: asyncio.Task[ToolResult] = asyncio.create_task(invoke(operation))
@@ -265,6 +282,7 @@ async def execute_operation(
         timestamp = await _clock_value(session, now)
         try:
             if outcome.ok:
+                reference = outcome.data.get("provider_reference") if outcome.data else None
                 operation = await mark_succeeded(
                     session,
                     operation_id,
@@ -272,34 +290,62 @@ async def execute_operation(
                     token=token,
                     expected_version=claimed_version,
                     result=outcome.data,
-                    now=timestamp,
-                )
-            elif effect is ToolEffect.READ_ONLY or outcome.provider_not_called is True:
-                # Read-only work has no external effect, and a side-effect tool
-                # that proves it never reached the provider can be failed
-                # definitively.
-                operation = await mark_failed(
-                    session,
-                    operation_id,
-                    owner=owner,
-                    token=token,
-                    expected_version=claimed_version,
-                    error=outcome.error,
+                    provider_reference_id=reference if isinstance(reference, str) else None,
                     now=timestamp,
                 )
             else:
-                # A SIDE_EFFECT failure that cannot prove the provider was never
-                # reached: the effect may or may not have happened. Record the
-                # uncertainty; task 11 reconciles it. Never mark FAILED here.
-                operation = await mark_unknown(
-                    session,
-                    operation_id,
-                    owner=owner,
-                    token=token,
-                    expected_version=claimed_version,
-                    error=outcome.error,
-                    now=timestamp,
-                )
+                disposition = classify_failure(effect, outcome)
+                if disposition is FailureDisposition.RETRY and _RETRY_POLICY.can_retry(
+                    attempt.attempt_number
+                ):
+                    operation = await mark_retrying(
+                        session,
+                        operation_id,
+                        owner=owner,
+                        token=token,
+                        expected_version=claimed_version,
+                        error=outcome.error,
+                        retry_delay_seconds=_RETRY_POLICY.delay_for(
+                            attempt.attempt_number, jitter=random.random()
+                        ),
+                        now=timestamp,
+                    )
+                elif disposition is FailureDisposition.FAIL or (
+                    disposition is FailureDisposition.RETRY
+                    and not _RETRY_POLICY.can_retry(attempt.attempt_number)
+                ):
+                    operation = await mark_failed(
+                        session,
+                        operation_id,
+                        owner=owner,
+                        token=token,
+                        expected_version=claimed_version,
+                        error=outcome.error,
+                        now=timestamp,
+                    )
+                else:
+                    # A SIDE_EFFECT failure that cannot prove the provider was never
+                    # reached: the effect may or may not have happened. Record the
+                    # uncertainty; reconciliation decides the verdict.
+                    operation = await mark_unknown(
+                        session,
+                        operation_id,
+                        owner=owner,
+                        token=token,
+                        expected_version=claimed_version,
+                        error=outcome.error,
+                        now=timestamp,
+                    )
+            stored_attempt = await session.get(OperationAttempt, attempt_id)
+            if stored_attempt is None:
+                raise LeaseStateError(f"operation attempt {attempt_id} disappeared")
+            finish_attempt(
+                stored_attempt,
+                status="SUCCEEDED" if outcome.ok else "FAILED",
+                response=outcome.data,
+                error=outcome.error,
+                completed_at=timestamp,
+            )
             await session.commit()
         except LeaseConflictError:
             await session.rollback()

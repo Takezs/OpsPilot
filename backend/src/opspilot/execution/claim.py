@@ -26,7 +26,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from opspilot.execution.models import Operation, OperationStatus
@@ -101,6 +101,12 @@ async def claim_operation(
         raise OperationNotClaimableError(
             f"operation {operation_id} in {operation.status.value} is not claimable"
         )
+    if (
+        operation.status is OperationStatus.RETRYING
+        and operation.retry_not_before is not None
+        and operation.retry_not_before > timestamp
+    ):
+        raise OperationNotClaimableError(f"operation {operation_id} retry backoff has not elapsed")
     assert_transition(operation.status, OperationStatus.EXECUTING)
     token = secrets.token_urlsafe(32)
     expires_at = timestamp + timedelta(seconds=lease_seconds)
@@ -108,7 +114,16 @@ async def claim_operation(
         update(Operation)
         .where(
             Operation.id == operation_id,
-            Operation.status.in_(CLAIMABLE_STATUSES),
+            or_(
+                Operation.status == OperationStatus.READY,
+                and_(
+                    Operation.status == OperationStatus.RETRYING,
+                    or_(
+                        Operation.retry_not_before.is_(None),
+                        Operation.retry_not_before <= timestamp,
+                    ),
+                ),
+            ),
         )
         .values(
             status=OperationStatus.EXECUTING,
@@ -116,6 +131,7 @@ async def claim_operation(
             claim_token=token,
             lease_owner=owner,
             lease_expires_at=expires_at,
+            retry_not_before=None,
         )
         .returning(Operation.id)
     )
@@ -350,6 +366,54 @@ async def mark_unknown(
     unknown = await _load_or_raise(session, operation_id)
     await session.refresh(unknown)
     return unknown
+
+
+async def mark_retrying(
+    session: AsyncSession,
+    operation_id: uuid.UUID,
+    *,
+    owner: str,
+    token: str,
+    expected_version: int,
+    error: str | None = None,
+    retry_delay_seconds: float = 0.0,
+    now: datetime | None = None,
+) -> Operation:
+    """Return a safely retryable execution to RETRYING under the live fence."""
+    timestamp = await _resolve_now(session, now)
+    operation = await _load_or_raise(session, operation_id)
+    updated = await session.execute(
+        update(Operation)
+        .where(
+            Operation.id == operation_id,
+            Operation.status == OperationStatus.EXECUTING,
+            Operation.version == expected_version,
+            Operation.claim_token == token,
+            Operation.lease_owner == owner,
+            Operation.lease_expires_at > timestamp,
+        )
+        .values(
+            status=OperationStatus.RETRYING,
+            version=Operation.version + 1,
+            claim_token=None,
+            lease_owner=None,
+            lease_expires_at=None,
+            retry_not_before=timestamp + timedelta(seconds=retry_delay_seconds),
+        )
+    )
+    if (updated.rowcount or 0) == 0:  # type: ignore[attr-defined]
+        raise LeaseConflictError(
+            f"retry write denied for operation {operation_id}: fencing mismatch"
+        )
+    await append_event(
+        session,
+        operation.run_id,
+        "operation_retry_scheduled",
+        {"operation_id": str(operation_id), "version": expected_version + 1, "error": error},
+    )
+    retrying = await _load_or_raise(session, operation_id)
+    await session.refresh(retrying)
+    return retrying
 
 
 async def recover_expired(

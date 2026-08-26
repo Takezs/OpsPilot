@@ -1,10 +1,15 @@
 """Shared types for the Tool Gateway's registry surface."""
 
+from __future__ import annotations
+
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from opspilot.execution.errors import ProviderFailureKind
 
 from pydantic import BaseModel
 
@@ -29,6 +34,7 @@ class ToolResult:
     data: dict[str, Any] | None = None
     error: str | None = None
     provider_not_called: bool | None = None
+    failure_kind: ProviderFailureKind | None = None
 
     def render(self) -> str:
         if self.ok:
