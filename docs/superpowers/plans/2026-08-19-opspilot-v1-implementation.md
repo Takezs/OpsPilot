@@ -483,9 +483,9 @@ git add backend/src/opspilot/execution backend/tests/execution/test_reliability.
 git commit -m "feat: reconcile uncertain side effect outcomes"
 ```
 
-**状态：✅ Attempt 生命周期复审修复完成，等待再次督导复审（2026-08-26）。** 主实现保持结构化错误分类、安全重试与 fenced reconciliation。复审修复使过期 READ_ONLY EXECUTION Attempt 关闭为 `ABANDONED`、SIDE_EFFECT 关闭为 `OUTCOME_UNKNOWN`，并与 Operation、run_event、outbox、next_seq 同事务；`completed_at` 取 PostgreSQL 时钟。新增 `0016_running_execution_attempt` 部分唯一索引，数据库保证同一 Operation 最多一个 RUNNING EXECUTION Attempt。失败注入完整回滚，历史 Attempt 不被误关，恢复后编号连续。本轮 Task 11 定向 29 passed、Task 10+11 核心组合 77 passed、完整 288 passed；Ruff/Mypy、0016 往返与 0001→0016 全链、PostgreSQL/Redis 均通过。Task 12 未开始。
+**状态：✅ 已通过督导复审（2026-08-26）。** 批准提交：`ab89d40`（Task 11 主实现）、`d27ec00`（关闭遗留 RUNNING EXECUTION Attempt 与数据库唯一约束）、`d128eb9`（0016 脏历史数据确定性回填与升级原子性）。迁移为 `0015_operation_attempts` 与 `0016_running_execution_attempt`。督导独立 Task 11 + 0016 定向 `31 passed`；文档闭环完整套件重新运行 `290 passed in 41.82s`。Task 12 是下一项。
 
-**0016 升级兼容复审修复（2026-08-26，等待再次督导复审）：** 原迁移直接创建部分唯一索引，在 0015 遗留多个 RUNNING EXECUTION Attempt 时会 duplicate-key 失败。现于同一 0016 upgrade 事务中先确定性回填：EXECUTING 仅保留 `(attempt_number DESC, id DESC)` 最新项；OUTCOME_UNKNOWN/RECONCILING 关闭为 `OUTCOME_UNKNOWN`；RETRYING 及其他非执行状态关闭为 `ABANDONED`；完成时间取数据库时钟且不覆盖既有完成 Attempt，再创建索引。真实 PG Red 复现 UniqueViolation，Green 覆盖脏升级、失败原子回滚、索引与往返；最新定向 31 passed、核心组合 79 passed、完整 290 passed。Task 12 未开始。
+**0016 升级兼容复审修复（`d128eb9`，已批准）：** 原迁移直接创建部分唯一索引，在 0015 遗留多个 RUNNING EXECUTION Attempt 时会 duplicate-key 失败。现于同一 0016 upgrade 事务中先确定性回填：EXECUTING 仅保留 `(attempt_number DESC, id DESC)` 最新项；OUTCOME_UNKNOWN/RECONCILING 关闭为 `OUTCOME_UNKNOWN`；RETRYING 及其他非执行状态关闭为 `ABANDONED`；完成时间取数据库时钟且不覆盖既有完成 Attempt，再创建索引。真实 PG Red 复现 UniqueViolation，Green 覆盖脏升级、失败原子回滚、索引与往返。
 
 ### 任务 12：SSE 不丢事件算法
 
