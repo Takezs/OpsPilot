@@ -180,6 +180,13 @@ Task 11 Attempt 生命周期复审修复（2026-08-26，等待再次督导复审
 - Attempt 关闭与 Operation、run_event、outbox、next_seq 位于同一调用者事务；事件失败注入证明全部回滚。只锁定并关闭最新 RUNNING EXECUTION Attempt，历史已完成 Attempt 不变，恢复后 Attempt number 连续。
 - 新增 `0016_running_execution_attempt` 部分唯一索引，数据库保证每个 Operation 同时最多一个 `kind=EXECUTION,status=RUNNING` Attempt。
 - 本轮 Task 11 定向 `29 passed`；Task 10+11 核心可靠执行组合 `77 passed`；完整 `288 passed in 39.01s`；Ruff format/check、Mypy（79 files）通过；Alembic 0016↔0015 往返及独立数据库 0001→0016 全链通过；PostgreSQL/Redis healthy。
+
+Task 11 / 0016 脏数据升级兼容修复（2026-08-26，等待再次督导复审）：
+
+- `0016_running_execution_attempt` 建唯一索引前确定性回填 0015 历史脏数据：EXECUTING 按 `(attempt_number DESC, id DESC)` 仅保留最新 RUNNING；OUTCOME_UNKNOWN/RECONCILING 全部关闭为 `OUTCOME_UNKNOWN`；RETRYING 与其他非执行状态关闭为 `ABANDONED`。只更新 RUNNING EXECUTION，不覆盖历史完成 Attempt。
+- 回填使用 `clock_timestamp()`、固定安全错误摘要；状态以 `operation.status::text` 比较，兼容 0014 新 enum 值与 0016 在同一 Alembic upgrade 事务中的 PostgreSQL 可见性规则。
+- 真实 PostgreSQL 脏数据 Red：原 0016 创建索引报 `UniqueViolationError: Key (operation_id) ... is duplicated`。Green：迁移测试 2 passed；包含脏数据升级、索引拒绝第二条 RUNNING、0016→0015→0016 往返及建索引失败全事务回滚。
+- 最新 Task 11 定向 `31 passed in 4.52s`；Task 10+11 核心组合 `79 passed in 29.97s`；完整 `290 passed in 42.14s`；Ruff/Mypy、0001→0016/往返、PostgreSQL/Redis 均通过。
 - PostgreSQL：healthy，`pg_isready` accepting connections。
 - Redis：healthy，`PONG`。
 

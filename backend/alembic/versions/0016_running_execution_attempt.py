@@ -17,6 +17,39 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.execute(
+        sa.text(
+            """
+            WITH ranked_running AS (
+                SELECT
+                    attempt.id,
+                    operation.status::text AS operation_status,
+                    row_number() OVER (
+                        PARTITION BY attempt.operation_id
+                        ORDER BY attempt.attempt_number DESC, attempt.id DESC
+                    ) AS running_rank
+                FROM operation_attempts AS attempt
+                JOIN tool_operations AS operation ON operation.id = attempt.operation_id
+                WHERE attempt.kind = 'EXECUTION' AND attempt.status = 'RUNNING'
+            )
+            UPDATE operation_attempts AS attempt
+            SET
+                status = CASE
+                    WHEN ranked.operation_status IN ('OUTCOME_UNKNOWN', 'RECONCILING')
+                        THEN 'OUTCOME_UNKNOWN'
+                    ELSE 'ABANDONED'
+                END,
+                completed_at = clock_timestamp(),
+                error = 'closed by 0016 running execution attempt backfill'
+            FROM ranked_running AS ranked
+            WHERE attempt.id = ranked.id
+              AND NOT (
+                  ranked.operation_status = 'EXECUTING'
+                  AND ranked.running_rank = 1
+              )
+            """
+        )
+    )
     op.create_index(
         "uq_operation_attempt_running_execution",
         "operation_attempts",

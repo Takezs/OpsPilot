@@ -111,6 +111,7 @@ P2 修复（数据库完整性）已落地：`replacement_operation_id` 绑定�
 - 真实 Payment Service 的 timeout-after-effect/unknown-5xx-after-effect 验证退款记录严格为 1；detached provider drain 已接入 `WorkerSettings.on_shutdown`。
 - 验证：Task 11 定向 24 passed；扩展可靠执行定向 81 passed；完整 283 passed；Ruff/Mypy 通过；Alembic `0015 (head)`，全链和往返通过；PostgreSQL/Redis healthy。
 - Attempt 生命周期复审修复：过期 READ_ONLY EXECUTION Attempt 关闭为 `ABANDONED`，SIDE_EFFECT 关闭为 `OUTCOME_UNKNOWN`，与 Operation/Event/Outbox/next_seq 同事务；`0016_running_execution_attempt` 部分唯一索引禁止同一 Operation 多个 RUNNING EXECUTION Attempt。本轮定向 29 passed、Task 10+11 核心组合 77 passed、完整 288 passed；0016 往返和 0001→0016 全链通过。
+- 0016 升级兼容复审修复：索引创建前回填 0015 遗留的重复 RUNNING EXECUTION Attempt；EXECUTING 仅保留 `(attempt_number DESC, id DESC)` 最新项，OUTCOME_UNKNOWN/RECONCILING 关闭为 `OUTCOME_UNKNOWN`，其他状态关闭为 `ABANDONED`。真实 PG Red 为 duplicate-key UniqueViolation；Green 覆盖脏数据、索引、事务失败回滚与往返。最新定向 31 passed、核心组合 79 passed、完整 290 passed；Ruff/Mypy/全链/PG/Redis 通过。
 
 ## 完整验证命令
 
