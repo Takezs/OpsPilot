@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-27
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M1–M4 / 任务 1–13 已通过督导复审；任务 14 已实现并等待督导复审
+> 当前阶段：M1–M4 / 任务 1–14 已通过督导复审；下一项是任务 15
 
 ## 总体进度
 
@@ -227,7 +227,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - **Task 13 复审修复（2026-08-27，已批准）**：新增签名验证的 `GET /api/v1/auth/me`，Principal 从数据库恢复当前 active/role/departments/access level；token 中旧 role 不再覆盖数据库事实。前端 localStorage token 仅作为待验证凭据，单例异步 initialization 必须成功读取 `/auth/me` 后才建立 Principal，守卫等待期间不渲染受保护壳。登录同样以 `/me` 为准；并发 401 单次导航，成功重新登录会复位闩锁。严格 Red：后端 `/me` 404（`1 failed, 12 passed`），前端缺少 `initialize`（`1 failed, 1 passed`）；Green：auth 定向 `13 passed`、Vitest `2 passed`、Playwright `4 passed`。完整后端 `313 passed in 43.33s`，typecheck/build、Ruff/Mypy/0017、PG/Redis 通过。
 - **督导最终批准（2026-08-27）**：批准 `10b0d65`（应用壳、登录、API客户端和路由守卫）与 `cb41271`（`/auth/me` 可信恢复及数据库角色事实源）。督导独立验证 frontend unit `2 passed`、typecheck/build、backend auth `13 passed`、Alembic 0017 head。本次批准闭环完整后端 `313 passed in 43.54s`，前端 unit `2 passed`、login E2E `4 passed`，其余门禁通过。
 
-## 任务 14：知识库、检索调试器与引用抽屉（等待督导复审）
+## 任务 14：知识库、检索调试器与引用抽屉（已通过督导复审）
 
 - 规格裁决后在同一纵向切片新增最小后端只读契约：scope-filtered KB/document list/detail、四阶段 `POST /retrieval/debug`、精确 `{document_id,version,chunk_id}` 引用详情。所有权限过滤与 metadata enrichment 均在 PostgreSQL JOIN/WHERE 层执行，missing/unauthorized/version mismatch 统一 404。
 - DocumentStatus 完整复用既有枚举；列表 limit 1–100、offset有界且稳定排序。内部 failure_reason 不返回，只映射固定安全 failure_message；引用原文按精确旧版本纯文本返回，当前无墓碑语义统一404。
@@ -235,11 +235,12 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 前端 `/knowledge` 支持上传进度、READY/FAILED和单document有界退避轮询；终态、401、卸载取消。`/retrieval` 展示 Dense/PostgreSQL FTS/RRF/Reranker，CitationDrawer精确版本读取并用文本节点高亮，不使用v-html。
 - Red证据：读取与引用 API `2 failed`（404）；retrieval debug `1 failed`（404）；前端轮询模块缺失 `1 failed, 1 passed`；首轮E2E `2 failed`（mock URL契约匹配/XSS断言范围），修正后Green。
 - 当前验证：后端 Task14相关 `19 passed`，完整 `317 passed in 44.35s`；frontend unit `4 passed`、Task14 E2E `2 passed`、login回归 `4 passed`，typecheck/build、Ruff/Mypy/0017、PG/Redis通过。
-- **Task 14 复审修复（2026-08-27，等待再次复审）**：文档轮询 fetch 契约现接收并传递 AbortSignal 至 Axios GET，响应返回后、`onUpdate` 前再次检查 signal，覆盖响应/abort同轮竞态；卸载可取消飞行中请求且不再陈旧写入。CitationDrawer 使用 AbortController + 单调 generation，关闭、切换snapshot、卸载均取消；旧/已关闭响应不能更新detail/loading/error，Axios cancellation不显示错误。严格Red：轮询 abort 后错误解析READY（`1 failed, 1 passed`），citation loader缺失（suite failed）；Green frontend unit `5 passed`。最终Task14后端相关`19 passed`、完整`317 passed in 44.68s`，Task14 E2E `2 passed`、login `4 passed`、其余门禁通过。
+- **Task 14 复审修复（2026-08-27，已批准）**：文档轮询 fetch 契约现接收并传递 AbortSignal 至 Axios GET，响应返回后、`onUpdate` 前再次检查 signal，覆盖响应/abort同轮竞态；卸载可取消飞行中请求且不再陈旧写入。CitationDrawer 使用 AbortController + 单调 generation，关闭、切换snapshot、卸载均取消；旧/已关闭响应不能更新detail/loading/error，Axios cancellation不显示错误。严格Red：轮询 abort 后错误解析READY（`1 failed, 1 passed`），citation loader缺失（suite failed）；Green frontend unit `5 passed`。最终Task14后端相关`19 passed`、完整`317 passed in 44.68s`，Task14 E2E `2 passed`、login `4 passed`、其余门禁通过。
+- **督导最终批准（2026-08-27）**：批准 `2b6dc34`（scope知识读取/检索调试/精确版本引用API）、`6eab4a4`（知识入库、四阶段检索与引用抽屉UI）、`d6f98ed`（异步取消与generation防陈旧回写）。独立 frontend unit `5 passed`、typecheck、Task14 E2E `2 passed`；后端scope/retrieval独立定向 `8 passed`。
 
-## 下一步：等待任务 14 督导复审
+## 下一步：任务 15 工作台、审批、Run 时间线与核心退款 E2E
 
-不得开始任务 15。
+先审计生产 Run/Agent、审批、History/SSE、Operation/Attempt、Payment/Reconciliation 公开契约，缺失则停止报告。
 
 ## 后续开发计划
 
@@ -251,7 +252,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 任务 11：副作用分类、安全重试与 Reconciliation（✅ 已通过督导复审（2026-08-26）；批准 `ab89d40`、`d27ec00`、`d128eb9`；迁移 `0015`/`0016`）。
 - 任务 12：可靠 SSE（✅ 已通过督导复审；批准 `9a68056`、`d8b391d`；迁移 `0017`）。
 - 任务 13：Vue 应用壳、登录与 API 客户端（✅ 已通过督导复审（2026-08-27），批准 `10b0d65`、`cb41271`）。
-- 任务 14：知识库、检索调试器与引用抽屉（异步取消修复完成，等待再次督导复审）。
+- 任务 14：知识库、检索调试器与引用抽屉（✅ 已通过督导复审（2026-08-27），批准 `2b6dc34`、`6eab4a4`、`d6f98ed`）。
 - 任务 15：工作台、审批、Run时间线与核心退款 E2E（未开始）。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。
 - 任务 18：可观测性、脱敏、容器部署、文档与 v1.0 发布。
