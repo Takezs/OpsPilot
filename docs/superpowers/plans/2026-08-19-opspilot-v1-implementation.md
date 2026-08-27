@@ -555,24 +555,26 @@ git commit -m "feat: add authenticated opspilot web shell"
 
 ### 任务 14：知识库、检索调试器与引用抽屉
 
+**状态：实现完成，等待督导复审（2026-08-27）。** 经规格裁决，同一纵向切片新增权限感知知识读取、四阶段 retrieval debug 与精确版本 citation detail；后端提交 `2b6dc34`。Red：后端404 `2 failed`及`1 failed`、前端模块缺失 `1 failed, 1 passed`、首轮E2E `2 failed`；Green：后端相关 `19 passed`、完整 `317 passed in 44.35s`，frontend unit `4 passed`、Task14 E2E `2 passed`、login `4 passed`，其余门禁通过。任务15未开始。
+
 **文件：**
 - 创建：`frontend/src/views/KnowledgeBaseView.vue`、`RetrievalDebuggerView.vue`
 - 创建：`frontend/src/components/DocumentStatusTable.vue`、`RetrievalStageColumn.vue`、`CitationDrawer.vue`
 - 创建：`frontend/tests/knowledge-retrieval.spec.ts`
 
-- [ ] **步骤 1：编写上传与检索调试 E2E**
+- [x] **步骤 1：编写上传与检索调试 E2E**
 
 断言上传状态从 UPLOADED 到 READY/FAILED，调试器分别显示 Dense、PostgreSQL FTS、RRF、Reranker 的 rank/score。
 
-- [ ] **步骤 2：编写引用版本定位测试**
+- [x] **步骤 2：编写引用版本定位测试**
 
 点击引用打开 Drawer，断言展示生成时 `document_version`、`chunk_id`、章节、页码和高亮原文；引用抽屉不是独立路由。
 
-- [ ] **步骤 3：实现页面与组件**
+- [x] **步骤 3：实现页面与组件**
 
 严格使用后端状态枚举；轮询只用于文档入库，Run 实时状态使用 SSE。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
 运行：`cd frontend && npm run test && npm run test:e2e -- tests/knowledge-retrieval.spec.ts`。预期 PASS。
 

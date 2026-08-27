@@ -3,6 +3,8 @@ import { useAuthStore } from '../stores/auth'
 import AppLayout from '../layout/AppLayout.vue'
 import LoginView from '../views/LoginView.vue'
 import ShellView from '../views/ShellView.vue'
+import KnowledgeBaseView from '../views/KnowledgeBaseView.vue'
+import RetrievalDebuggerView from '../views/RetrievalDebuggerView.vue'
 import { sanitizeReturnUrl } from './security'
 
 export const router = createRouter({
@@ -13,8 +15,8 @@ export const router = createRouter({
     {
       path: '/', component: AppLayout, meta: { requiresAuth: true }, children: [
         { path: 'workspace', name: 'workspace', component: ShellView, meta: { title: 'Agent 工作台' } },
-        { path: 'knowledge', name: 'knowledge', component: ShellView, meta: { title: '知识库' } },
-        { path: 'retrieval', name: 'retrieval', component: ShellView, meta: { title: '检索调试器' } },
+        { path: 'knowledge', name: 'knowledge', component: KnowledgeBaseView, meta: { title: '知识库' } },
+        { path: 'retrieval', name: 'retrieval', component: RetrievalDebuggerView, meta: { title: '检索调试器' } },
         { path: 'approvals', name: 'approvals', component: ShellView, meta: { title: '审批中心', roles: ['REVIEWER', 'ADMIN'] } },
         { path: 'runs/:id', name: 'run', component: ShellView, meta: { title: 'Run 时间线' } },
       ],

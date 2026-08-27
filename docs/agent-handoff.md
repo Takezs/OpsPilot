@@ -11,7 +11,8 @@
 - 任务 9（Policy、审批绑定与 Operation 持久化）已通过督导复审（2026-08-25），批准提交 `e82a57c`、`276a5cc`、`26ede61`
 - 任务 10 已通过督导复审（2026-08-26），批准提交：`f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`
 - 任务 12 可靠 SSE 已通过督导复审（2026-08-26）
-- 任务 13 Vue 应用壳、登录与 API 客户端已通过督导复审（2026-08-27），批准 `10b0d65`、`cb41271`；下一项任务 14
+- 任务 13 Vue 应用壳、登录与 API 客户端已通过督导复审（2026-08-27），批准 `10b0d65`、`cb41271`
+- 任务 14 知识库、检索调试器与引用抽屉已实现，等待督导复审（2026-08-27）；任务 15 未开始
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
 
@@ -154,6 +155,14 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - Red：无生产源码时 Vitest 因缺少 `src/router/security` 失败。Green：Vitest 2 passed，Playwright 登录 E2E 3 passed，typecheck/build 通过；后端 312 passed in 42.64s，Ruff/Mypy/0017、PG/Redis 通过。
 - 复审修复：后端新增 `GET /api/v1/auth/me`，JWT 仅验证身份凭据，返回数据库当前 active Principal；角色变更即时生效，伪造/过期/inactive 均 401。前端 localStorage token 不再建立角色，只在共享 async initialization 中调用 `/me`，守卫 await 后才渲染；登录也统一读取 `/me`。并发 navigation 只发一次 `/me`，并发 401 只 replace 一次且重新登录复位。Red 为后端 `1 failed, 12 passed`（404）和前端 `1 failed, 1 passed`（initialize 缺失）；Green auth 13、Vitest 2、Playwright 4，完整后端 313 passed in 43.33s。
 - 督导批准 `10b0d65`、`cb41271`；独立 frontend unit 2、typecheck/build、backend auth 13、0017 head 均通过。批准闭环完整后端 313 passed in 43.54s，login E2E 4 passed。下一项任务 14。
+
+## 任务 14（等待督导复审，2026-08-27）范围
+
+- 后端提交 `2b6dc34` 新增权限感知 KB/document list/detail、精确版本 citation detail 与四阶段 retrieval debug；scope/READY在候选和metadata SQL双重约束，unauthorized/missing统一404，failure只返回固定安全消息。
+- Retrieval API复用 Dense、PostgreSQL FTS、RRF和现有reranker timeout fallback；不调用LLM或rewrite，保留后端顺序/score，返回限长脱敏excerpt与degraded状态。
+- 前端 KnowledgeBaseView/DocumentStatusTable 仅轮询上传document，指数退避上限4s，终态/401/卸载停止；RetrievalDebugger/StageColumn保留四阶段语义；CitationDrawer按精确版本请求、纯文本高亮、无独立路由。
+- Red：后端404为 `2 failed` + `1 failed`；前端缺module `1 failed, 1 passed`；首轮E2E `2 failed`后修正测试契约。Green：后端相关19、完整317 passed in 44.35s；frontend unit4、Task14 E2E2、login4，typecheck/build与全门禁通过。
+- 等待督导复审，不得开始任务15。
 - 不声称通过未实际运行的命令。
 - 不提交 `.env`、API Key、Authorization、PII、临时目录或本地文件。
 
