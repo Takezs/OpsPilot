@@ -1,5 +1,6 @@
 """Dense (vector) retrieval over pgvector with SQL-side scope filtering."""
 
+import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import select
@@ -17,6 +18,7 @@ async def dense_search(
     query_vector: Sequence[float],
     scope: KnowledgeScope,
     limit: int = DEFAULT_DENSE_LIMIT,
+    knowledge_base_id: uuid.UUID | None = None,
 ) -> list[RetrievalCandidate]:
     """Return the nearest chunks to ``query_vector`` allowed by ``scope``.
 
@@ -36,6 +38,8 @@ async def dense_search(
         .order_by(distance, Chunk.id)
         .limit(limit)
     )
+    if knowledge_base_id is not None:
+        statement = statement.where(Document.knowledge_base_id == knowledge_base_id)
     rows = (await session.execute(statement)).all()
     return [
         RetrievalCandidate(

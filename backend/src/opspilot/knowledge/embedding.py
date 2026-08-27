@@ -37,6 +37,9 @@ class BgeM3EmbeddingProvider:
         response = await self._client.embeddings.create(model=self.model, input=texts)
         return [item.embedding for item in sorted(response.data, key=lambda item: item.index)]
 
+    async def aclose(self) -> None:
+        await self._client.close()
+
 
 def embedding_cache_key(model: str, content: str) -> str:
     return f"{model}:{hashlib.sha256(content.encode()).hexdigest()}"

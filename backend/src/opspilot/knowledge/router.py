@@ -8,7 +8,7 @@ from typing import Annotated, Protocol
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, StringConstraints
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +19,7 @@ from opspilot.auth.schemas import Principal
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.knowledge.models import (
+    Chunk,
     Document,
     DocumentIndexOutbox,
     DocumentIndexStatus,
@@ -28,8 +29,10 @@ from opspilot.knowledge.models import (
 from opspilot.knowledge.schemas import AccessLevel
 from opspilot.knowledge.storage import FileStorage, InvalidFile, VolumeFileStorage
 from opspilot.knowledge.tasks import DOCUMENT_INDEX_LEASE, document_index_lock_key
+from opspilot.retrieval.types import scope_conditions
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+catalog_router = APIRouter(prefix="/knowledge-bases", tags=["knowledge"])
 upload_session_factory = async_session_factory
 
 
@@ -61,6 +64,158 @@ class RetryResponse(BaseModel):
     document_id: uuid.UUID
     attempt: int
     job_id: str
+
+
+class KnowledgeBaseResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    department: str
+    access_level: AccessLevel
+
+
+class DocumentResponse(BaseModel):
+    id: uuid.UUID
+    knowledge_base_id: uuid.UUID
+    title: str
+    version: int
+    effective_at: datetime
+    status: DocumentStatus
+    failure_message: str | None
+
+
+class CitationDetailResponse(BaseModel):
+    document_id: uuid.UUID
+    document_version: int
+    chunk_id: uuid.UUID
+    document_title: str
+    section_path: list[str]
+    page: int | None
+    content: str
+    effective_at: datetime
+
+
+def _document_response(document: Document) -> DocumentResponse:
+    return DocumentResponse(
+        id=document.id,
+        knowledge_base_id=document.knowledge_base_id,
+        title=document.title,
+        version=document.version,
+        effective_at=document.effective_at,
+        status=document.status,
+        failure_message=(
+            "Document processing failed" if document.failure_reason is not None else None
+        ),
+    )
+
+
+@catalog_router.get("", response_model=list[KnowledgeBaseResponse])
+async def list_knowledge_bases(
+    principal: Annotated[Principal, Depends(get_current_principal)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0, le=10000)] = 0,
+) -> list[KnowledgeBaseResponse]:
+    async with upload_session_factory() as session:
+        statement = (
+            select(KnowledgeBase)
+            .where(scope_conditions(principal.knowledge_scope))
+            .order_by(KnowledgeBase.name, KnowledgeBase.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        items = (await session.scalars(statement)).all()
+        return [
+            KnowledgeBaseResponse(
+                id=item.id,
+                name=item.name,
+                department=item.department,
+                access_level=AccessLevel(item.access_level),
+            )
+            for item in items
+        ]
+
+
+@catalog_router.get("/{knowledge_base_id}/documents", response_model=list[DocumentResponse])
+async def list_documents(
+    knowledge_base_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(get_current_principal)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0, le=10000)] = 0,
+) -> list[DocumentResponse]:
+    async with upload_session_factory() as session:
+        visible_kb = await session.scalar(
+            select(KnowledgeBase.id)
+            .where(KnowledgeBase.id == knowledge_base_id)
+            .where(scope_conditions(principal.knowledge_scope))
+        )
+        if visible_kb is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "knowledge base not found")
+        statement = (
+            select(Document)
+            .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .where(Document.knowledge_base_id == knowledge_base_id)
+            .where(scope_conditions(principal.knowledge_scope))
+            .order_by(Document.effective_at.desc(), Document.version.desc(), Document.id)
+            .offset(offset)
+            .limit(limit)
+        )
+        return [_document_response(item) for item in (await session.scalars(statement)).all()]
+
+
+@router.get("/documents/{document_id}", response_model=DocumentResponse)
+async def get_document(
+    document_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> DocumentResponse:
+    async with upload_session_factory() as session:
+        statement = (
+            select(Document)
+            .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .where(Document.id == document_id)
+            .where(scope_conditions(principal.knowledge_scope))
+        )
+        document = await session.scalar(statement)
+        if document is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+        return _document_response(document)
+
+
+@router.get(
+    "/documents/{document_id}/versions/{document_version}/chunks/{chunk_id}",
+    response_model=CitationDetailResponse,
+)
+async def get_citation_detail(
+    document_id: uuid.UUID,
+    document_version: int,
+    chunk_id: uuid.UUID,
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> CitationDetailResponse:
+    async with upload_session_factory() as session:
+        statement = (
+            select(Chunk, Document)
+            .join(Document, Chunk.document_id == Document.id)
+            .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
+            .where(
+                Chunk.id == chunk_id,
+                Chunk.document_id == document_id,
+                Document.id == document_id,
+                Document.version == document_version,
+            )
+            .where(scope_conditions(principal.knowledge_scope))
+        )
+        row = (await session.execute(statement)).one_or_none()
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "citation not found")
+        chunk, document = row
+        return CitationDetailResponse(
+            document_id=document.id,
+            document_version=document.version,
+            chunk_id=chunk.id,
+            document_title=document.title,
+            section_path=list(chunk.section_path),
+            page=chunk.page,
+            content=chunk.content,
+            effective_at=document.effective_at,
+        )
 
 
 def get_file_storage() -> FileStorage:

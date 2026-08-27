@@ -1,5 +1,7 @@
 """PostgreSQL full-text search retrieval with SQL-side scope filtering."""
 
+import uuid
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +17,7 @@ async def fts_search(
     query: str,
     scope: KnowledgeScope,
     limit: int = DEFAULT_FTS_LIMIT,
+    knowledge_base_id: uuid.UUID | None = None,
 ) -> list[RetrievalCandidate]:
     """Return chunks matching ``query`` via PostgreSQL FTS, scoped in SQL.
 
@@ -35,6 +38,8 @@ async def fts_search(
         .order_by(rank_expr.desc(), Chunk.id)
         .limit(limit)
     )
+    if knowledge_base_id is not None:
+        statement = statement.where(Document.knowledge_base_id == knowledge_base_id)
     rows = (await session.execute(statement)).all()
     return [
         RetrievalCandidate(
