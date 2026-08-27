@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-27
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M1–M3 / 任务 1–12 已通过督导复审；M4 / 任务 13 已实现并等待督导复审
+> 当前阶段：M1–M4 / 任务 1–13 已通过督导复审；下一项是任务 14
 
 ## 总体进度
 
@@ -217,18 +217,19 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - **Task 12 复审修复（2026-08-26，等待再次复审）**：`RedisSSEStream.close()` 幂等关闭 reader/pubsub/client，open/subscribe 部分失败也清理且 endpoint 返回安全 503；共享 event_type 契约 `[A-Za-z0-9_.-]{1,64}` 在 journal 更新 next_seq 前 fail-closed，SSE 编码再次防御；非对象、错误字段与超过 4096 bytes 的 Redis hint 直接丢弃，不触发 reconnect。上一轮未保存行为 pytest Red 的流程偏差继续保留；本轮真实 Red `9 failed`，Green `9 passed`。最终 Task 12+Journal 定向 `32 passed in 3.99s`，完整 `312 passed in 44.59s`；Ruff 136 files、Mypy 83 files、0017 head、PG/Redis 均通过。
 - **督导最终批准（2026-08-26）**：批准 `9a68056`（Task 12 主实现、0017 ownership 与 gap-free SSE）和 `d8b391d`（资源清理、event_type 帧安全、恶意 hint 健壮性）；督导独立定向 `32 passed`，Alembic `0017_run_ownership (head)`。批准文档闭环重新完整运行 `312 passed in 44.71s`。历史 TDD 偏差继续保留：主实现未保存先失败的行为 pytest 输出；复审修复严格保存 `9 failed → 9 passed`。
 
-## 任务 13：Vue 应用壳、登录与 API 客户端（等待督导复审）
+## 任务 13：Vue 应用壳、登录与 API 客户端（已通过督导复审）
 
 - Vue 3 + TypeScript + Vite 应用壳已建立，集成 Element Plus、Pinia、Vue Router、Axios、Vitest 与 Playwright；五个受保护路由均为真实路由和占位页面，未进入任务 14/15 业务功能。
 - 登录严格复用后端 `POST /api/v1/auth/login` 契约。token 只由统一 Axios interceptor 加入 Authorization；持久化仅保存 access token，刷新时校验 JWT 结构、角色和过期时间并恢复最小 Principal。
 - 路由守卫拒绝未认证访问；USER 隐藏且不能直接进入 `/approvals`，REVIEWER/ADMIN 可进入。`returnUrl` 只接受站内受保护路径。登录错误只显示安全文案；并发 401 原子清理会话并只触发一次重定向。
 - Red 证据：生产源码尚不存在时，`npm run test` 因缺少 `src/router/security` 失败；随后实现并 Green。Playwright 由进程内 Vite setup/teardown 管理，避免 Windows 子进程退出挂起。
 - 最终门禁（2026-08-27）：Vitest `2 passed`；Playwright login E2E `3 passed`；`vue-tsc --noEmit`、Vite production build 通过（仅有非阻塞的大 chunk 提示）；后端完整 `312 passed in 42.64s`；Ruff format/check、Mypy 83 files、Alembic `0017_run_ownership (head)` 通过；PostgreSQL accepting connections、Redis PONG。
-- **Task 13 复审修复（2026-08-27，等待再次复审）**：新增签名验证的 `GET /api/v1/auth/me`，Principal 从数据库恢复当前 active/role/departments/access level；token 中旧 role 不再覆盖数据库事实。前端 localStorage token 仅作为待验证凭据，单例异步 initialization 必须成功读取 `/auth/me` 后才建立 Principal，守卫等待期间不渲染受保护壳。登录同样以 `/me` 为准；并发 401 单次导航，成功重新登录会复位闩锁。严格 Red：后端 `/me` 404（`1 failed, 12 passed`），前端缺少 `initialize`（`1 failed, 1 passed`）；Green：auth 定向 `13 passed`、Vitest `2 passed`、Playwright `4 passed`。完整后端 `313 passed in 43.33s`，typecheck/build、Ruff/Mypy/0017、PG/Redis 通过。
+- **Task 13 复审修复（2026-08-27，已批准）**：新增签名验证的 `GET /api/v1/auth/me`，Principal 从数据库恢复当前 active/role/departments/access level；token 中旧 role 不再覆盖数据库事实。前端 localStorage token 仅作为待验证凭据，单例异步 initialization 必须成功读取 `/auth/me` 后才建立 Principal，守卫等待期间不渲染受保护壳。登录同样以 `/me` 为准；并发 401 单次导航，成功重新登录会复位闩锁。严格 Red：后端 `/me` 404（`1 failed, 12 passed`），前端缺少 `initialize`（`1 failed, 1 passed`）；Green：auth 定向 `13 passed`、Vitest `2 passed`、Playwright `4 passed`。完整后端 `313 passed in 43.33s`，typecheck/build、Ruff/Mypy/0017、PG/Redis 通过。
+- **督导最终批准（2026-08-27）**：批准 `10b0d65`（应用壳、登录、API客户端和路由守卫）与 `cb41271`（`/auth/me` 可信恢复及数据库角色事实源）。督导独立验证 frontend unit `2 passed`、typecheck/build、backend auth `13 passed`、Alembic 0017 head。本次批准闭环完整后端 `313 passed in 43.54s`，前端 unit `2 passed`、login E2E `4 passed`，其余门禁通过。
 
-## 下一步：等待任务 13 督导复审
+## 下一步：任务 14 知识库、检索调试器与引用抽屉
 
-不得开始任务 14。
+先审计真实后端 API/schema；缺少最小读取契约时停止报告，不用永久 mock 掩盖。
 
 ## 后续开发计划
 
@@ -239,7 +240,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 任务 10：Claim/Lease、fencing 与状态事务（✅ 已通过督导复审（2026-08-26），批准提交 `f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`；只建立 OUTCOME_UNKNOWN/RECONCILING 安全状态边界）。
 - 任务 11：副作用分类、安全重试与 Reconciliation（✅ 已通过督导复审（2026-08-26）；批准 `ab89d40`、`d27ec00`、`d128eb9`；迁移 `0015`/`0016`）。
 - 任务 12：可靠 SSE（✅ 已通过督导复审；批准 `9a68056`、`d8b391d`；迁移 `0017`）。
-- 任务 13：Vue 应用壳、登录与 API 客户端（可信会话恢复修复完成，等待再次督导复审）。
+- 任务 13：Vue 应用壳、登录与 API 客户端（✅ 已通过督导复审（2026-08-27），批准 `10b0d65`、`cb41271`）。
 - 任务 14–15：知识库/检索调试、引用详情抽屉和核心退款 E2E（未开始）。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。
 - 任务 18：可观测性、脱敏、容器部署、文档与 v1.0 发布。

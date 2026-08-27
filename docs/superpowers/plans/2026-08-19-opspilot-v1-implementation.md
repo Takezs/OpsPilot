@@ -517,9 +517,9 @@ git commit -m "feat: stream durable run events without gaps"
 
 ### 任务 13：Vue 应用壳、登录与 API 客户端
 
-**状态：实现完成，等待督导复审（2026-08-27）。** Red：生产源码不存在时 Vitest 因缺少 `src/router/security` 失败；Green：Vitest `2 passed`、Playwright 登录 E2E `3 passed`。`vue-tsc --noEmit`、Vite build 通过；后端完整 `312 passed in 42.64s`，Ruff/Mypy/Alembic 0017、真实 PostgreSQL/Redis 均通过。只实现认证应用壳，任务 14 未开始。
+**状态：✅ 已通过督导复审（2026-08-27）。** 批准 `10b0d65`（Vue应用壳、登录、API客户端和路由守卫）、`cb41271`（`/auth/me`可信恢复与数据库角色事实源）。督导独立 frontend unit `2 passed`、typecheck/build、backend auth `13 passed`、Alembic 0017 head；批准闭环完整后端 `313 passed in 43.54s`、login E2E `4 passed`。
 
-**可信会话恢复复审修复完成，等待再次督导复审（2026-08-27）：** 新增 `GET /api/v1/auth/me`，签名/expiry/active 验证后从数据库恢复当前 Principal；前端 token payload 不再提供可信 role，路由共享并 await 单次 `/me` 初始化。覆盖伪造/过期/inactive、数据库角色变化、无受保护内容闪现、并发初始化/401及重新登录闩锁复位。严格 Red：后端 `1 failed, 12 passed`、前端 `1 failed, 1 passed`；Green：auth `13 passed`、Vitest `2 passed`、Playwright `4 passed`，完整后端 `313 passed in 43.33s`。任务 14 未开始。
+**可信会话恢复复审修复（已批准，2026-08-27）：** 新增 `GET /api/v1/auth/me`，签名/expiry/active 验证后从数据库恢复当前 Principal；前端 token payload 不再提供可信 role，路由共享并 await 单次 `/me` 初始化。覆盖伪造/过期/inactive、数据库角色变化、无受保护内容闪现、并发初始化/401及重新登录闩锁复位。严格 Red：后端 `1 failed, 12 passed`、前端 `1 failed, 1 passed`；Green：auth `13 passed`、Vitest `2 passed`、Playwright `4 passed`，完整后端 `313 passed in 43.33s`。
 
 **文件：**
 - 创建：`frontend/package.json`
