@@ -11,7 +11,7 @@ const controllers = new Map<string, AbortController>()
 async function loadDocuments(): Promise<void> { if (!selectedId.value) { documents.value = []; return }; documents.value = (await api.get<DocumentRecord[]>(`/knowledge-bases/${selectedId.value}/documents`, { params: { limit: 100 } })).data }
 async function load(): Promise<void> { loading.value = true; error.value = ''; try { knowledgeBases.value = (await api.get<KnowledgeBaseRecord[]>('/knowledge-bases', { params: { limit: 100 } })).data; selectedId.value = knowledgeBases.value[0]?.id ?? ''; await loadDocuments() } catch { error.value = '知识库加载失败' } finally { loading.value = false } }
 function replaceDocument(document: DocumentRecord): void { const index = documents.value.findIndex((item) => item.id === document.id); if (index === -1) documents.value.unshift(document); else documents.value[index] = document }
-async function fetchDocument(id: string): Promise<DocumentRecord> { return (await api.get<DocumentRecord>(`/knowledge/documents/${id}`)).data }
+async function fetchDocument(id: string, signal?: AbortSignal): Promise<DocumentRecord> { return (await api.get<DocumentRecord>(`/knowledge/documents/${id}`, { signal })).data }
 async function upload(): Promise<void> {
   if (!selectedFile.value || !selectedId.value) return
   uploading.value = true; error.value = ''; uploadProgress.value = 0

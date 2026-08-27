@@ -15,7 +15,7 @@ function statusOf(error: unknown): number | undefined {
   if ('response' in error && typeof error.response === 'object' && error.response !== null && 'status' in error.response && typeof error.response.status === 'number') return error.response.status
   return undefined
 }
-export async function pollDocument(documentId: string, fetchDocument: (id: string) => Promise<DocumentRecord>, onUpdate: (document: DocumentRecord) => void, options: PollOptions = {}): Promise<DocumentRecord> {
+export async function pollDocument(documentId: string, fetchDocument: (id: string, signal?: AbortSignal) => Promise<DocumentRecord>, onUpdate: (document: DocumentRecord) => void, options: PollOptions = {}): Promise<DocumentRecord> {
   const initialDelay = options.initialDelayMs ?? 500
   const maxDelay = options.maxDelayMs ?? 4000
   const sleep = options.sleep ?? defaultSleep
@@ -23,7 +23,8 @@ export async function pollDocument(documentId: string, fetchDocument: (id: strin
   while (true) {
     if (options.signal?.aborted) throw abortError()
     try {
-      const document = await fetchDocument(documentId)
+      const document = await fetchDocument(documentId, options.signal)
+      if (options.signal?.aborted) throw abortError()
       onUpdate(document)
       if (terminal.has(document.status)) return document
       await sleep(delay, options.signal)

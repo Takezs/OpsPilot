@@ -557,6 +557,8 @@ git commit -m "feat: add authenticated opspilot web shell"
 
 **状态：实现完成，等待督导复审（2026-08-27）。** 经规格裁决，同一纵向切片新增权限感知知识读取、四阶段 retrieval debug 与精确版本 citation detail；后端提交 `2b6dc34`。Red：后端404 `2 failed`及`1 failed`、前端模块缺失 `1 failed, 1 passed`、首轮E2E `2 failed`；Green：后端相关 `19 passed`、完整 `317 passed in 44.35s`，frontend unit `4 passed`、Task14 E2E `2 passed`、login `4 passed`，其余门禁通过。任务15未开始。
 
+**异步取消/陈旧写入复审修复完成，等待再次督导复审（2026-08-27）：** polling signal贯穿Axios并在响应后回写前再次fence；CitationDrawer使用AbortController+generation，关闭/切换/卸载取消且旧响应不可覆盖。Red：polling `1 failed, 1 passed`、citation loader缺失suite failed；Green frontend unit `5 passed`。最终后端相关`19 passed`、完整`317 passed in 44.68s`，Task14 E2E`2 passed`、login`4 passed`，其余门禁通过；任务15未开始。
+
 **文件：**
 - 创建：`frontend/src/views/KnowledgeBaseView.vue`、`RetrievalDebuggerView.vue`
 - 创建：`frontend/src/components/DocumentStatusTable.vue`、`RetrievalStageColumn.vue`、`CitationDrawer.vue`

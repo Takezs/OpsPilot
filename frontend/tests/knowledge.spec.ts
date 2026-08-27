@@ -42,16 +42,22 @@ describe('document ingestion polling', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
 
     const controller = new AbortController()
-    const cancelledFetch = vi.fn().mockResolvedValue(document('INDEXING'))
-    const active = pollDocument('doc-1', cancelledFetch, vi.fn(), {
+    let resolveFetch!: (value: DocumentRecord) => void
+    let receivedSignal: AbortSignal | undefined
+    const cancelledFetch = vi.fn((_id: string, signal?: AbortSignal) => {
+      receivedSignal = signal
+      return new Promise<DocumentRecord>((resolve) => { resolveFetch = resolve })
+    })
+    const onUpdate = vi.fn()
+    const active = pollDocument('doc-1', cancelledFetch, onUpdate, {
       signal: controller.signal,
-      sleep: async (_delay, signal) => new Promise<void>((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
-      }),
     })
     await vi.waitFor(() => expect(cancelledFetch).toHaveBeenCalledTimes(1))
     controller.abort()
+    resolveFetch(document('READY'))
     await expect(active).rejects.toMatchObject({ name: 'AbortError' })
+    expect(receivedSignal).toBe(controller.signal)
+    expect(onUpdate).not.toHaveBeenCalled()
     expect(cancelledFetch).toHaveBeenCalledTimes(1)
   })
 })

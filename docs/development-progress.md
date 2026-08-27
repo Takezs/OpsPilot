@@ -235,6 +235,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 前端 `/knowledge` 支持上传进度、READY/FAILED和单document有界退避轮询；终态、401、卸载取消。`/retrieval` 展示 Dense/PostgreSQL FTS/RRF/Reranker，CitationDrawer精确版本读取并用文本节点高亮，不使用v-html。
 - Red证据：读取与引用 API `2 failed`（404）；retrieval debug `1 failed`（404）；前端轮询模块缺失 `1 failed, 1 passed`；首轮E2E `2 failed`（mock URL契约匹配/XSS断言范围），修正后Green。
 - 当前验证：后端 Task14相关 `19 passed`，完整 `317 passed in 44.35s`；frontend unit `4 passed`、Task14 E2E `2 passed`、login回归 `4 passed`，typecheck/build、Ruff/Mypy/0017、PG/Redis通过。
+- **Task 14 复审修复（2026-08-27，等待再次复审）**：文档轮询 fetch 契约现接收并传递 AbortSignal 至 Axios GET，响应返回后、`onUpdate` 前再次检查 signal，覆盖响应/abort同轮竞态；卸载可取消飞行中请求且不再陈旧写入。CitationDrawer 使用 AbortController + 单调 generation，关闭、切换snapshot、卸载均取消；旧/已关闭响应不能更新detail/loading/error，Axios cancellation不显示错误。严格Red：轮询 abort 后错误解析READY（`1 failed, 1 passed`），citation loader缺失（suite failed）；Green frontend unit `5 passed`。最终Task14后端相关`19 passed`、完整`317 passed in 44.68s`，Task14 E2E `2 passed`、login `4 passed`、其余门禁通过。
 
 ## 下一步：等待任务 14 督导复审
 
@@ -250,7 +251,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 任务 11：副作用分类、安全重试与 Reconciliation（✅ 已通过督导复审（2026-08-26）；批准 `ab89d40`、`d27ec00`、`d128eb9`；迁移 `0015`/`0016`）。
 - 任务 12：可靠 SSE（✅ 已通过督导复审；批准 `9a68056`、`d8b391d`；迁移 `0017`）。
 - 任务 13：Vue 应用壳、登录与 API 客户端（✅ 已通过督导复审（2026-08-27），批准 `10b0d65`、`cb41271`）。
-- 任务 14：知识库、检索调试器与引用抽屉（已实现，等待督导复审）。
+- 任务 14：知识库、检索调试器与引用抽屉（异步取消修复完成，等待再次督导复审）。
 - 任务 15：工作台、审批、Run时间线与核心退款 E2E（未开始）。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。
 - 任务 18：可观测性、脱敏、容器部署、文档与 v1.0 发布。

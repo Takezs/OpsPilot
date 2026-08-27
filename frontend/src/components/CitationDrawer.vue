@@ -1,20 +1,25 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { api } from '../api/client'
 import type { CitationDetail, CitationSnapshot } from '../api/types'
+import { createLatestCitationLoader } from '../composables/citationLoading'
 const props = defineProps<{ modelValue: boolean; snapshot: CitationSnapshot | null; highlight: string }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 const detail = ref<CitationDetail | null>(null)
 const loading = ref(false)
 const error = ref('')
+const loader = createLatestCitationLoader<CitationDetail>(
+  async (path, signal) => (await api.get<CitationDetail>(path, { signal })).data,
+  (value) => { detail.value = value },
+  () => { error.value = '引用快照不可用或无权访问' },
+  (value) => { loading.value = value },
+)
 watch(() => [props.modelValue, props.snapshot] as const, async ([open, snapshot]) => {
   detail.value = null; error.value = ''
-  if (!open || !snapshot) return
-  loading.value = true
-  try { detail.value = (await api.get<CitationDetail>(`/knowledge/documents/${snapshot.document_id}/versions/${snapshot.document_version}/chunks/${snapshot.chunk_id}`)).data }
-  catch { error.value = '引用快照不可用或无权访问' }
-  finally { loading.value = false }
+  if (!open || !snapshot) { loader.close(); return }
+  await loader.load(`/knowledge/documents/${snapshot.document_id}/versions/${snapshot.document_version}/chunks/${snapshot.chunk_id}`)
 }, { immediate: true })
+onBeforeUnmount(loader.close)
 const segments = computed(() => {
   if (!detail.value || !props.highlight.trim()) return [{ text: detail.value?.content ?? '', hit: false }]
   const needle = props.highlight.trim()
