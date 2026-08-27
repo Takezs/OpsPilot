@@ -224,6 +224,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 路由守卫拒绝未认证访问；USER 隐藏且不能直接进入 `/approvals`，REVIEWER/ADMIN 可进入。`returnUrl` 只接受站内受保护路径。登录错误只显示安全文案；并发 401 原子清理会话并只触发一次重定向。
 - Red 证据：生产源码尚不存在时，`npm run test` 因缺少 `src/router/security` 失败；随后实现并 Green。Playwright 由进程内 Vite setup/teardown 管理，避免 Windows 子进程退出挂起。
 - 最终门禁（2026-08-27）：Vitest `2 passed`；Playwright login E2E `3 passed`；`vue-tsc --noEmit`、Vite production build 通过（仅有非阻塞的大 chunk 提示）；后端完整 `312 passed in 42.64s`；Ruff format/check、Mypy 83 files、Alembic `0017_run_ownership (head)` 通过；PostgreSQL accepting connections、Redis PONG。
+- **Task 13 复审修复（2026-08-27，等待再次复审）**：新增签名验证的 `GET /api/v1/auth/me`，Principal 从数据库恢复当前 active/role/departments/access level；token 中旧 role 不再覆盖数据库事实。前端 localStorage token 仅作为待验证凭据，单例异步 initialization 必须成功读取 `/auth/me` 后才建立 Principal，守卫等待期间不渲染受保护壳。登录同样以 `/me` 为准；并发 401 单次导航，成功重新登录会复位闩锁。严格 Red：后端 `/me` 404（`1 failed, 12 passed`），前端缺少 `initialize`（`1 failed, 1 passed`）；Green：auth 定向 `13 passed`、Vitest `2 passed`、Playwright `4 passed`。完整后端 `313 passed in 43.33s`，typecheck/build、Ruff/Mypy/0017、PG/Redis 通过。
 
 ## 下一步：等待任务 13 督导复审
 
@@ -238,7 +239,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 任务 10：Claim/Lease、fencing 与状态事务（✅ 已通过督导复审（2026-08-26），批准提交 `f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`；只建立 OUTCOME_UNKNOWN/RECONCILING 安全状态边界）。
 - 任务 11：副作用分类、安全重试与 Reconciliation（✅ 已通过督导复审（2026-08-26）；批准 `ab89d40`、`d27ec00`、`d128eb9`；迁移 `0015`/`0016`）。
 - 任务 12：可靠 SSE（✅ 已通过督导复审；批准 `9a68056`、`d8b391d`；迁移 `0017`）。
-- 任务 13：Vue 应用壳、登录与 API 客户端（已实现，等待督导复审）。
+- 任务 13：Vue 应用壳、登录与 API 客户端（可信会话恢复修复完成，等待再次督导复审）。
 - 任务 14–15：知识库/检索调试、引用详情抽屉和核心退款 E2E（未开始）。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。
 - 任务 18：可观测性、脱敏、容器部署、文档与 v1.0 发布。

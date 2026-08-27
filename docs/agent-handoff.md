@@ -11,7 +11,7 @@
 - 任务 9（Policy、审批绑定与 Operation 持久化）已通过督导复审（2026-08-25），批准提交 `e82a57c`、`276a5cc`、`26ede61`
 - 任务 10 已通过督导复审（2026-08-26），批准提交：`f36e435`、`b6729c1`、`3c7cecb`、`9863d4a`
 - 任务 12 可靠 SSE 已通过督导复审（2026-08-26）
-- 任务 13 Vue 应用壳、登录与 API 客户端已实现，等待督导复审（2026-08-27）；任务 14 未开始
+- 任务 13 Vue 应用壳、登录与 API 客户端已完成可信会话恢复复审修复，等待再次督导复审（2026-08-27）；任务 14 未开始
 
 只在 `plan/opspilot-core-mvp` 分支开发。主工作区存在用户文件，不得清理、覆盖或回退。
 
@@ -152,6 +152,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 认证复用后端 `/api/v1/auth/login`；Axios interceptor 独占 Authorization 注入。刷新从经结构、角色、过期校验的 JWT 恢复最小 Principal；401 并发收敛为一次清理和一次登录重定向。
 - 守卫覆盖未认证访问、USER 直接访问 approvals，导航可见性不作为唯一授权；returnUrl 限定站内受保护路径；错误提示不暴露原始响应、堆栈或 token。
 - Red：无生产源码时 Vitest 因缺少 `src/router/security` 失败。Green：Vitest 2 passed，Playwright 登录 E2E 3 passed，typecheck/build 通过；后端 312 passed in 42.64s，Ruff/Mypy/0017、PG/Redis 通过。
+- 复审修复：后端新增 `GET /api/v1/auth/me`，JWT 仅验证身份凭据，返回数据库当前 active Principal；角色变更即时生效，伪造/过期/inactive 均 401。前端 localStorage token 不再建立角色，只在共享 async initialization 中调用 `/me`，守卫 await 后才渲染；登录也统一读取 `/me`。并发 navigation 只发一次 `/me`，并发 401 只 replace 一次且重新登录复位。Red 为后端 `1 failed, 12 passed`（404）和前端 `1 failed, 1 passed`（initialize 缺失）；Green auth 13、Vitest 2、Playwright 4，完整后端 313 passed in 43.33s。
 - 等待督导复审，不得开始任务 14。
 - 不声称通过未实际运行的命令。
 - 不提交 `.env`、API Key、Authorization、PII、临时目录或本地文件。

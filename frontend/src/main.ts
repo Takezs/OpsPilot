@@ -9,6 +9,7 @@ import { configureApi } from './api/client'
 
 const app = createApp(App)
 const pinia = createPinia()
-app.use(pinia).use(router).use(ElementPlus)
+app.use(pinia)
 configureApi(pinia, router)
+app.use(router).use(ElementPlus)
 app.mount('#app')

@@ -32,7 +32,7 @@ async def get_current_principal(
         user = await session.get(User, uuid.UUID(subject.user_id))
     except (AuthenticationError, ValueError) as error:
         raise unauthorized from error
-    if user is None or not user.is_active or user.role is not subject.role:
+    if user is None or not user.is_active:
         raise unauthorized
     principal = Principal(
         user_id=str(user.id),

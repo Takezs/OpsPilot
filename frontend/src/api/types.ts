@@ -3,7 +3,15 @@ export type Role = 'USER' | 'REVIEWER' | 'ADMIN'
 export interface Principal {
   userId: string
   role: Role
-  expiresAt: number
+  allowedDepartments: string[]
+  maxAccessLevel: number
+}
+
+export interface SessionResponse {
+  user_id: string
+  role: Role
+  allowed_departments: string[]
+  max_access_level: number
 }
 
 export interface LoginRequest {

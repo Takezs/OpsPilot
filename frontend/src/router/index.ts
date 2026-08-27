@@ -23,9 +23,9 @@ export const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
-  if (!auth.initialized) auth.restore()
+  await auth.initialize()
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return { name: 'login', query: { returnUrl: sanitizeReturnUrl(to.fullPath) } }
   }

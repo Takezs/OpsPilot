@@ -4,13 +4,21 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from opspilot.auth.dependencies import get_current_principal
 from opspilot.auth.models import User
-from opspilot.auth.schemas import LoginRequest, TokenResponse, TokenSubject
+from opspilot.auth.schemas import LoginRequest, Principal, TokenResponse, TokenSubject
 from opspilot.auth.service import AuthenticationError, AuthService
 from opspilot.config import Settings
 from opspilot.db import get_session
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.get("/me", response_model=Principal)
+async def current_session(
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> Principal:
+    return principal
 
 
 @router.post("/login", response_model=TokenResponse)

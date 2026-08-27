@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { api } from '../src/api/client'
 import { sanitizeReturnUrl } from '../src/router/security'
 import { useAuthStore } from '../src/stores/auth'
 
@@ -10,6 +11,7 @@ function token(role: string, exp = Math.floor(Date.now() / 1000) + 600): string 
 
 describe('authenticated shell security', () => {
   beforeEach(() => {
+    vi.restoreAllMocks()
     localStorage.clear()
     setActivePinia(createPinia())
   })
@@ -21,16 +23,22 @@ describe('authenticated shell security', () => {
     }
   })
 
-  it('restores a valid session and rejects malformed or expired tokens', () => {
-    localStorage.setItem('opspilot.access_token', token('REVIEWER'))
+  it('trusts only /auth/me and shares concurrent initialization', async () => {
+    localStorage.setItem('opspilot.access_token', token('ADMIN'))
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: { user_id: 'user-1', role: 'USER', allowed_departments: [], max_access_level: 1 },
+    })
     const auth = useAuthStore()
-    auth.restore()
-    expect(auth.principal?.role).toBe('REVIEWER')
+    await Promise.all([auth.initialize(), auth.initialize()])
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(auth.principal?.role).toBe('USER')
     expect(auth.token).not.toBeNull()
-    auth.clearSession()
+
+    setActivePinia(createPinia())
     localStorage.setItem('opspilot.access_token', token('USER', 1))
-    auth.restore()
-    expect(auth.token).toBeNull()
+    const expiredAuth = useAuthStore()
+    await expiredAuth.initialize()
+    expect(expiredAuth.token).toBeNull()
     expect(localStorage.getItem('opspilot.access_token')).toBeNull()
   })
 })
