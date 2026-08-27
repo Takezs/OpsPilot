@@ -517,6 +517,8 @@ git commit -m "feat: stream durable run events without gaps"
 
 ### 任务 13：Vue 应用壳、登录与 API 客户端
 
+**状态：实现完成，等待督导复审（2026-08-27）。** Red：生产源码不存在时 Vitest 因缺少 `src/router/security` 失败；Green：Vitest `2 passed`、Playwright 登录 E2E `3 passed`。`vue-tsc --noEmit`、Vite build 通过；后端完整 `312 passed in 42.64s`，Ruff/Mypy/Alembic 0017、真实 PostgreSQL/Redis 均通过。只实现认证应用壳，任务 14 未开始。
+
 **文件：**
 - 创建：`frontend/package.json`
 - 创建：`frontend/src/main.ts`
@@ -528,19 +530,19 @@ git commit -m "feat: stream durable run events without gaps"
 - 创建：`frontend/src/views/LoginView.vue`
 - 创建：`frontend/tests/login.spec.ts`
 
-- [ ] **步骤 1：编写失败的登录测试**
+- [x] **步骤 1：编写失败的登录测试**
 
 覆盖错误密码提示、成功跳转、刷新恢复、401 清理会话和 USER 不显示审批操作。
 
-- [ ] **步骤 2：初始化 Vue 3 + TypeScript + Vite**
+- [x] **步骤 2：初始化 Vue 3 + TypeScript + Vite**
 
 加入 Element Plus、Pinia、Vue Router、Axios、Vitest 和 Playwright；生成类型化 API 错误映射。
 
-- [ ] **步骤 3：实现布局、拦截器和路由守卫**
+- [x] **步骤 3：实现布局、拦截器和路由守卫**
 
 五个主页面路由为 `/workspace`、`/knowledge`、`/retrieval`、`/approvals`、`/runs/:id`。
 
-- [ ] **步骤 4：验证并提交**
+- [x] **步骤 4：验证并提交**
 
 运行：`cd frontend && npm run test && npm run test:e2e -- tests/login.spec.ts`。预期 PASS。
 
