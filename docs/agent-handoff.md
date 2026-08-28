@@ -177,6 +177,8 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - Red证据：recovery intent实际v8却写v9；重复job会并发进入processor；outbox故障同row热循环100次；SSE先3后history 1/2会丢3；Run detail泄露敏感诊断。修复后相关可靠执行组合89 passed，完整后端337 passed，前端unit13 passed、Playwright mock回归5 passed。
 - 迁移：0019 head↔0018↔head及独立scratch 0001→0019均通过；PostgreSQL/Redis健康。
 - 明确阻塞：本机无DeepSeek凭据（仅BGE endpoint已配置），worker真实引用链仍不能验收；未使用Fake Provider，也未把现有直接handler后端测试或Playwright mock称为核心完整E2E。等待督导，不得进入Task16。
+- 第二轮复审修复：Run job heartbeat使用独立PG事务、约lease/3续租与token/owner fencing；FIRST_COMPLETED失权优先，取消不响应processor由受控detached集合和shutdown hook回收。Run状态统一从durable Operation/message事实在原事务重算，MANUAL_REVIEW/不确定态保持RUNNING，最终退款SUCCEEDED后Run收敛COMPLETED。SSE history失败不再产生未处理Promise，改为中止stream、进入RECONNECTING；401停止重连，卸载后无陈旧写。
+- 本轮Red：heartbeat缺失3 failed、scanner冲突候选单轮20次、真实退款后Run仍RUNNING、SSE生命周期3 failed。Green：后端相关34 passed、完整350 passed；frontend unit18、Playwright mock回归5、typecheck/build；Ruff/Mypy通过。真实Provider阻塞不变。
 
 ## 需要维护的文档
 

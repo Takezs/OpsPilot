@@ -26,6 +26,9 @@
 - Run detail对Attempt error/provider reference在HTTP边界再次脱敏限长；Approval list显式JOIN Run；存在非终态Operation时Run保持RUNNING。
 - 本轮真实证据：Task15/10/11可靠执行定向89 passed，完整后端337 passed；frontend unit13 passed、Playwright login+refund mock回归5 passed、typecheck/build通过；0019 head↔0018往返和全新0001→0019 scratch全链通过。
 - 阻塞：当前 `deepseek_configured=False`。依照验收纪律，未使用Fake/规则式引用冒充真实引用链，因此公开Run/message→真实ARQ worker→真实Provider→引用→审批→Payment完整E2E尚不能宣称通过；现有Playwright退款流仅为UI mock回归。
+- 2026-08-29 第二轮复审修复：Run message processor期间以独立session/PG clock每约lease/3 heartbeat，token/owner fencing；失权旧worker不写reply，取消不响应任务进入受控detached集合并在worker shutdown drain。Recovery scanner同轮跳过已尝试候选。
+- 新增统一`recompute_run_status`并接入审批、执行、恢复、reconciliation与assistant事务：非终态及MANUAL_REVIEW保持RUNNING；所有工作终态后COMPLETED。真实HTTP timeout-after-effect流程现验证Operation SUCCEEDED且Run COMPLETED。
+- SSE hint的history同步Promise与reader同一受监督生命周期；失败中止当前stream并RECONNECTING，401统一清理后停止重连，卸载Abort后不写状态。Red为heartbeat 3 failed、scanner同候选20次、Run最终仍RUNNING、SSE 3 failed；Green后端相关34 passed、完整350 passed，frontend unit18、Playwright UI mock回归5、typecheck/build通过。
 - 演示 Order/Payment 增加 ORD-002=350；仅显式 E2E 环境启用一次 timeout-after-effect。真实独立 Uvicorn HTTP进程测试证明 OUTCOME_UNKNOWN→RECONCILING→SUCCEEDED、PG seq连续、退款记录严格为1，并有界清理子进程。
 - Red：后端 Workspace API 5 failed、durable outbox 5 failed；前端 SSE suite 1 failed（模块不存在）。Green：Task15后端定向11 passed，可靠执行组合81 passed，完整328 passed in 65.08s；frontend unit10、Playwright7、typecheck/build通过；Ruff、Mypy90、Alembic0018及0018↔0017往返、PG/Redis健康。
 - 偏离：Run message生产Processor使用既有 DeepSeek AgentRunner，但当前检索工具在operation worker中fail-closed，assistant citation snapshots的真实生成仍依赖部署的Generation组合；核心退款可靠性E2E不依赖Fake数据库/Redis/Payment，但前端交互Playwright使用已存在HTTP契约mock作视觉回归。
