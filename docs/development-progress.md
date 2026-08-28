@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-27
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M1–M4 / 任务 1–14 已通过督导复审；下一项是任务 15
+> 当前阶段：M1–M4 / 任务 1–14 已通过督导复审；任务 15 已完成，等待督导复审
 
 ## 总体进度
 
@@ -16,6 +16,14 @@
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
 
 ## 已完成内容
+
+### 任务 15：工作台、审批、时间线与核心退款 E2E（等待督导复审）
+
+- `778c192` 新增 `run_messages`、独立 `run_job_outbox`/`operation_job_outbox` 与 0018 迁移；Run create/message/detail/history、审批读取均按既有身份边界 fail-closed。审批 READY、OUTCOME_UNKNOWN 和安全 RETRYING 在原状态事务写 version-bound job intent，ARQ handler只编排既有 Task10/11 executor/reconciliation。
+- `e69181c` 实现 AgentWorkspace、ApprovalCenter、RunDetail、ToolCallCard、RunTimeline；集中式 authorized fetch 解析跨 chunk/CRLF/UTF-8 SSE，Last-Event-ID、Abort、401、乱序去重和有界 buffer 均有单元测试。
+- 演示 Order/Payment 增加 ORD-002=350；仅显式 E2E 环境启用一次 timeout-after-effect。真实独立 Uvicorn HTTP进程测试证明 OUTCOME_UNKNOWN→RECONCILING→SUCCEEDED、PG seq连续、退款记录严格为1，并有界清理子进程。
+- Red：后端 Workspace API 5 failed、durable outbox 5 failed；前端 SSE suite 1 failed（模块不存在）。Green：Task15后端定向11 passed，可靠执行组合81 passed，完整328 passed in 65.08s；frontend unit10、Playwright7、typecheck/build通过；Ruff、Mypy90、Alembic0018及0018↔0017往返、PG/Redis健康。
+- 偏离：Run message生产Processor使用既有 DeepSeek AgentRunner，但当前检索工具在operation worker中fail-closed，assistant citation snapshots的真实生成仍依赖部署的Generation组合；核心退款可靠性E2E不依赖Fake数据库/Redis/Payment，但前端交互Playwright使用已存在HTTP契约mock作视觉回归。
 
 ### 任务 1：仓库骨架与质量门禁
 

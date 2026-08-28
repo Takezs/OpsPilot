@@ -167,6 +167,14 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 不声称通过未实际运行的命令。
 - 不提交 `.env`、API Key、Authorization、PII、临时目录或本地文件。
 
+## 任务 15（实现完成，等待督导复审，2026-08-28）
+
+- 后端提交 `778c192`：0018 `run_messages`、Run/Operation两个独立job outbox、公开Run/History/Approval/Timeline读取、ARQ编排及真实HTTP demo退款E2E。
+- 前端提交 `e69181c`：工作台、审批中心、Run时间线和集中式授权SSE客户端；USER路由权限沿用Task13，批准文案不等同退款成功。
+- Red→Green：后端 `5 failed + 5 failed → 11 passed`；前端 `1 failed suite → 5 passed`。完整后端328 passed；前端unit10、E2E7、typecheck/build通过。
+- 0018已验证upgrade/downgrade/upgrade；PG/Redis healthy；Payment独立Uvicorn进程有界清理且ORD-002退款严格1。
+- 明确遗留：部署环境必须配置DeepSeek与完整Generation/Retrieval processor才能生成真实引用快照；当前operation worker search工具fail-closed。等待督导复审，不得进入Task16。
+
 ## 需要维护的文档
 
 任务完成后更新：
