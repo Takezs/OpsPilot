@@ -33,6 +33,7 @@ from opspilot.execution.attempts import finish_attempt
 from opspilot.execution.models import Operation, OperationAttempt, OperationStatus
 from opspilot.execution.service import OperationError, OperationNotFoundError
 from opspilot.execution.state_machine import CLAIMABLE_STATUSES, assert_transition
+from opspilot.jobs.service import enqueue_operation_job
 from opspilot.runs.journal import append_event
 from opspilot.tools.types import ToolEffect
 
@@ -364,6 +365,7 @@ async def mark_unknown(
             "error": error,
         },
     )
+    enqueue_operation_job(session, operation_id, expected_version + 1, "RECONCILE")
     unknown = await _load_or_raise(session, operation_id)
     await session.refresh(unknown)
     return unknown

@@ -14,6 +14,7 @@ never create a duplicate refund.
 """
 
 import asyncio
+import os
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -28,10 +29,22 @@ ORDER_AMOUNTS: dict[str, float] = {
     "A101": 50.0,
     "A102": 350.0,
     "A103": 1200.0,
+    "ORD-002": 350.0,
 }
 
 # Server-side business idempotency key -> refund.
 REFUNDS: dict[str, dict] = {}
+_FAULTED_ORDERS: set[str] = set()
+
+
+def _configured_mode(order_number: str) -> str:
+    if os.getenv("OPSPILOT_DEMO_E2E", "").lower() not in {"1", "true"}:
+        return "success"
+    configured_order = os.getenv("OPSPILOT_DEMO_E2E_TIMEOUT_ORDER", "")
+    if configured_order == order_number and order_number not in _FAULTED_ORDERS:
+        _FAULTED_ORDERS.add(order_number)
+        return "timeout_after_effect"
+    return "success"
 
 
 class RefundRequest(BaseModel):
@@ -66,6 +79,13 @@ async def get_refund(order_number: str) -> dict:
     return refund
 
 
+@app.get("/__e2e/refunds/{order_number}/count")
+async def e2e_refund_count(order_number: str) -> dict[str, int]:
+    if os.getenv("OPSPILOT_DEMO_E2E", "").lower() not in {"1", "true"}:
+        raise HTTPException(status_code=404, detail="not found")
+    return {"count": int(_refund_key(order_number) in REFUNDS)}
+
+
 @app.get("/refunds/{order_number}/eligibility")
 async def check_eligibility(order_number: str) -> dict:
     if order_number not in ORDER_AMOUNTS:
@@ -83,7 +103,7 @@ async def check_eligibility(order_number: str) -> dict:
 async def create_refund(request: RefundRequest, raw: Request, response: Response) -> dict:
     if request.order_number not in ORDER_AMOUNTS:
         raise HTTPException(status_code=404, detail="order not found")
-    mode = raw.headers.get("x-failure-mode", "success")
+    mode = raw.headers.get("x-failure-mode", _configured_mode(request.order_number))
     delay = float(raw.headers.get("x-failure-delay", str(DEFAULT_FAILURE_DELAY_SECONDS)))
 
     if mode == "timeout_before_effect":

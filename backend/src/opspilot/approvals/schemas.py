@@ -1,6 +1,7 @@
 """HTTP request/response schemas for the approvals router."""
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -38,3 +39,16 @@ class RetryResponse(BaseModel):
     operation_id: uuid.UUID
     status: str
     idempotency_key: str
+
+
+class ApprovalListItem(BaseModel):
+    id: uuid.UUID
+    operation_id: uuid.UUID
+    arguments_hash: str
+    operation_version: int
+    status: str
+    operation_status: str
+    tool_name: str
+    arguments: dict[str, object]
+    expires_at: datetime
+    created_at: datetime

@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-v4-flash"
     # Task 9: default time-to-decide for a pending approval request.
     approval_ttl_seconds: int = 86400
+    order_service_url: str = "http://127.0.0.1:8101"
+    payment_service_url: str = "http://127.0.0.1:8102"
+    email_service_url: str = "http://127.0.0.1:8103"
+    payment_timeout_seconds: float = 1.0
+    operation_lease_seconds: int = 30
 
     @model_validator(mode="after")
     def reject_weak_production_secret(self) -> Self:

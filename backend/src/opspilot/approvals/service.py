@@ -34,6 +34,7 @@ from opspilot.execution.service import (
     ManualReviewNotTerminalError,
     OperationNotFoundError,
 )
+from opspilot.jobs.service import enqueue_operation_job
 from opspilot.runs.journal import append_event
 
 
@@ -137,6 +138,8 @@ async def decide_approval(
             "reviewed_by": decided_by,
         },
     )
+    if approved:
+        enqueue_operation_job(session, operation.id, operation.version, "EXECUTE")
     return ApprovalDecisionResult(
         already_processed=False, transitioned=True, approval=approval, operation=operation
     )

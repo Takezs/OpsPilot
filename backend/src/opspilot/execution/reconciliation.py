@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from opspilot.execution.attempts import finish_attempt, start_attempt
 from opspilot.execution.claim import LeaseConflictError
 from opspilot.execution.models import Operation, OperationAttempt, OperationStatus
+from opspilot.jobs.service import enqueue_operation_job
 from opspilot.runs.journal import append_event
 from opspilot.runs.sanitize import sanitize_payload
 from opspilot.tools.types import ToolResult
@@ -173,6 +174,8 @@ async def _finish_reconciliation(
             "error": outcome.error,
         },
     )
+    if target is OperationStatus.RETRYING:
+        enqueue_operation_job(session, operation_id, expected_version + 1, "EXECUTE")
     await session.refresh(operation)
     return operation
 

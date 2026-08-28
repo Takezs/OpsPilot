@@ -22,6 +22,7 @@ ORDERS: dict[str, Order] = {
     "A101": Order(order_number="A101", status="OPEN", amount=50.0),
     "A102": Order(order_number="A102", status="OPEN", amount=350.0),
     "A103": Order(order_number="A103", status="OPEN", amount=1200.0),
+    "ORD-002": Order(order_number="ORD-002", status="OPEN", amount=350.0),
 }
 
 

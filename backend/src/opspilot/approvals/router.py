@@ -3,12 +3,14 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 
-from opspilot.approvals.models import ResolutionOutcome
+from opspilot.approvals.models import ApprovalRequest, ApprovalStatus, ResolutionOutcome
 from opspilot.approvals.schemas import (
     ApprovalDecisionRequest,
     ApprovalDecisionResponse,
+    ApprovalListItem,
     ManualReviewResolutionRequest,
     ManualReviewResolutionResponse,
     RetryRequest,
@@ -35,8 +37,46 @@ from opspilot.execution.service import (
     RetryNotAuthorizedError,
     create_refund_operation,
 )
+from opspilot.runs.sanitize import sanitize_payload
 
 router = APIRouter()
+
+
+@router.get("/approval-requests", response_model=list[ApprovalListItem])
+async def list_approvals(
+    principal: Annotated[Principal, Depends(get_current_principal)],
+    approval_status: Annotated[ApprovalStatus, Query(alias="status")] = ApprovalStatus.PENDING,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[ApprovalListItem]:
+    if principal.role not in {Role.REVIEWER, Role.ADMIN}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "reviewer or admin role required")
+    async with async_session_factory() as session:
+        rows = (
+            await session.execute(
+                select(ApprovalRequest, Operation)
+                .join(Operation, Operation.id == ApprovalRequest.operation_id)
+                .where(ApprovalRequest.status == approval_status)
+                .order_by(ApprovalRequest.created_at, ApprovalRequest.id)
+                .offset(offset)
+                .limit(limit)
+            )
+        ).all()
+    return [
+        ApprovalListItem(
+            id=approval.id,
+            operation_id=operation.id,
+            arguments_hash=approval.arguments_hash,
+            operation_version=approval.operation_version,
+            status=approval.status.value,
+            operation_status=operation.status.value,
+            tool_name=operation.tool_name,
+            arguments=sanitize_payload(operation.normalized_arguments),
+            expires_at=approval.expires_at,
+            created_at=approval.created_at,
+        )
+        for approval, operation in rows
+    ]
 
 
 @router.post(

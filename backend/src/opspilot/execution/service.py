@@ -47,6 +47,7 @@ from opspilot.execution.idempotency import (
 )
 from opspilot.execution.models import Operation, OperationIdempotencyOccupancy, OperationStatus
 from opspilot.execution.policy import PolicyDecision, decide_refund_policy
+from opspilot.jobs.service import enqueue_operation_job
 from opspilot.runs.journal import append_event
 from opspilot.tools.schemas import RefundOrderArgs
 from opspilot.tools.types import ToolDefinition, ToolResult
@@ -275,6 +276,8 @@ async def create_refund_operation(
                         "expires_at": expires_at.isoformat(),
                     },
                 )
+            elif status is OperationStatus.READY:
+                enqueue_operation_job(session, operation.id, operation.version, "EXECUTE")
     except IntegrityError as error:
         # Concurrent occupancy winner (fresh create) or a trigger refusal.
         if retry_of_operation_id is not None:
