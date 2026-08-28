@@ -37,6 +37,7 @@ from opspilot.execution.service import (
     RetryNotAuthorizedError,
     create_refund_operation,
 )
+from opspilot.runs.models import Run
 from opspilot.runs.sanitize import sanitize_payload
 
 router = APIRouter()
@@ -56,6 +57,7 @@ async def list_approvals(
             await session.execute(
                 select(ApprovalRequest, Operation)
                 .join(Operation, Operation.id == ApprovalRequest.operation_id)
+                .join(Run, Run.id == Operation.run_id)
                 .where(ApprovalRequest.status == approval_status)
                 .order_by(ApprovalRequest.created_at, ApprovalRequest.id)
                 .offset(offset)

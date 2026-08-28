@@ -1,7 +1,76 @@
+import { onBeforeUnmount, ref, type Ref } from 'vue'
+import { api, authorizedStreamFetch } from '../api/client'
+import type { RunEventRecord } from '../api/types'
+
 export interface RunEventFrame {
   id: number
   event: string
   data: Record<string, unknown>
+}
+
+type FetchRunEventPage = (afterSeq: number, limit: number) => Promise<RunEventRecord[]>
+
+export interface RunEventFactSynchronizer {
+  readonly lastSentId: number
+  hint(frame: RunEventFrame): Promise<void>
+  syncAll(): Promise<void>
+}
+
+/**
+ * Redis/SSE frames are notifications only. Rendered facts always come from the
+ * authorized PostgreSQL history endpoint, through one serial paginated drain.
+ */
+export function createRunEventFactSynchronizer(
+  fetchPage: FetchRunEventPage,
+  onReady: (rows: RunEventRecord[]) => void,
+  pageSize = 500,
+): RunEventFactSynchronizer {
+  let last = 0
+  let targetWatermark = 0
+  let syncPromise: Promise<void> | null = null
+  const facts = new Map<number, RunEventRecord>()
+
+  function drain(): void {
+    const ready: RunEventRecord[] = []
+    while (facts.has(last + 1)) {
+      const fact = facts.get(last + 1)!
+      facts.delete(last + 1)
+      last += 1
+      ready.push(fact)
+    }
+    if (ready.length > 0) onReady(ready)
+  }
+
+  function synchronize(untilHistoryEnd: boolean): Promise<void> {
+    if (syncPromise) return syncPromise
+    syncPromise = (async () => {
+      while (true) {
+        const rows = await fetchPage(last, pageSize)
+        for (const row of rows) {
+          if (Number.isSafeInteger(row.seq) && row.seq > last) facts.set(row.seq, row)
+        }
+        drain()
+        if (rows.length === 0) return
+        if (untilHistoryEnd) {
+          if (rows.length < pageSize) return
+        } else if (last >= targetWatermark && rows.length < pageSize) {
+          return
+        }
+      }
+    })().finally(() => { syncPromise = null })
+    return syncPromise
+  }
+
+  return {
+    get lastSentId() { return last },
+    async hint(frame: RunEventFrame): Promise<void> {
+      if (Number.isSafeInteger(frame.id) && frame.id > targetWatermark) {
+        targetWatermark = frame.id
+      }
+      await synchronize(false)
+    },
+    syncAll: () => synchronize(true),
+  }
 }
 
 export interface RunEventSequencer {
@@ -110,34 +179,25 @@ export function useRunEvents(runId: string): {
   const events = ref<RunEventRecord[]>([])
   const connection = ref<'CONNECTING' | 'CONNECTED' | 'RECONNECTING'>('CONNECTING')
   const controller = new AbortController()
-  const sequencer = createRunEventSequencer(0)
   let stopped = false
-
-  async function backfill(afterSeq: number): Promise<void> {
-    const rows = (await api.get<RunEventRecord[]>(`/runs/${runId}/history`, {
-      params: { after_seq: afterSeq, limit: 500 }, signal: controller.signal,
-    })).data
-    for (const row of rows) {
-      for (const applied of sequencer.accept({ id: row.seq, event: row.event_type, data: row.payload })) {
-        const fact = rows.find((candidate) => candidate.seq === applied.id)
-        if (fact && !events.value.some((item) => item.seq === fact.seq)) events.value.push(fact)
-      }
-    }
-  }
+  const synchronizer = createRunEventFactSynchronizer(
+    async (afterSeq, limit) => (await api.get<RunEventRecord[]>(`/runs/${runId}/history`, {
+      params: { after_seq: afterSeq, limit }, signal: controller.signal,
+    })).data,
+    (rows) => events.value.push(...rows),
+  )
 
   async function start(): Promise<void> {
-    await backfill(0)
+    await synchronizer.syncAll()
     let delay = 250
     while (!stopped) {
       try {
         connection.value = connection.value === 'CONNECTING' ? 'CONNECTING' : 'RECONNECTING'
         await streamRunEvents({
-          runId, lastEventId: sequencer.lastSentId, signal: controller.signal,
+          runId, lastEventId: synchronizer.lastSentId, signal: controller.signal,
           authorizedFetch: authorizedStreamFetch, onUnauthorized: () => undefined,
           onFrame: (frame) => {
-            const ready = sequencer.accept(frame)
-            if (ready.length === 0 && frame.id > sequencer.lastSentId + 1) void backfill(sequencer.lastSentId)
-            for (const item of ready) events.value.push({ run_id: runId, seq: item.id, event_type: item.event, payload: item.data, created_at: new Date().toISOString() })
+            void synchronizer.hint(frame)
             connection.value = 'CONNECTED'
           },
         })
@@ -153,6 +213,3 @@ export function useRunEvents(runId: string): {
   onBeforeUnmount(() => { stopped = true; controller.abort() })
   return { events, connection, start }
 }
-import { onBeforeUnmount, ref, type Ref } from 'vue'
-import { api, authorizedStreamFetch } from '../api/client'
-import type { RunEventRecord } from '../api/types'

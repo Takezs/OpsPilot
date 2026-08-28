@@ -1,13 +1,25 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  createRunEventFactSynchronizer,
   createRunEventSequencer,
   parseSseStream,
   streamRunEvents,
   type RunEventFrame,
 } from '../src/composables/useRunEvents'
+import type { RunEventRecord } from '../src/api/types'
 
 function event(seq: number): RunEventFrame {
   return { id: seq, event: 'operation_updated', data: { seq } }
+}
+
+function fact(seq: number, createdAt = `2026-08-29T00:00:${String(seq).padStart(2, '0')}Z`): RunEventRecord {
+  return {
+    run_id: 'run-1',
+    seq,
+    event_type: 'operation_updated',
+    payload: { seq, source: 'postgres' },
+    created_at: createdAt,
+  }
 }
 
 function byteStream(parts: Uint8Array[]): ReadableStream<Uint8Array> {
@@ -20,6 +32,54 @@ function byteStream(parts: Uint8Array[]): ReadableStream<Uint8Array> {
 }
 
 describe('Task 15 reliable run event client', () => {
+  it('retains an early seq 3 hint while PostgreSQL history returns seq 1 and 2 first', async () => {
+    const pages = [[fact(1), fact(2)], [fact(3, '2026-08-29T03:03:03Z')]]
+    const fetchPage = vi.fn(async () => pages.shift() ?? [])
+    const rendered: RunEventRecord[] = []
+    const synchronizer = createRunEventFactSynchronizer(fetchPage, (rows) => rendered.push(...rows), 2)
+
+    await synchronizer.hint(event(3))
+
+    expect(rendered.map((row) => row.seq)).toEqual([1, 2, 3])
+    expect(rendered[2]?.created_at).toBe('2026-08-29T03:03:03Z')
+    expect(rendered[2]?.payload).toEqual({ seq: 3, source: 'postgres' })
+  })
+
+  it('coalesces concurrent hints into one backfill and drains duplicate out-of-order hints once', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const fetchPage = vi.fn(async (afterSeq: number, _limit: number) => {
+      await gate
+      return Array.from({ length: 5 - afterSeq }, (_, offset) => fact(afterSeq + offset + 1))
+    })
+    const rendered: RunEventRecord[] = []
+    const synchronizer = createRunEventFactSynchronizer(fetchPage, (rows) => rendered.push(...rows))
+
+    const pending = [3, 1, 2, 3, 5, 4].map((seq) => synchronizer.hint(event(seq)))
+    expect(fetchPage).toHaveBeenCalledOnce()
+    release()
+    await Promise.all(pending)
+
+    expect(rendered.map((row) => row.seq)).toEqual([1, 2, 3, 4, 5])
+    expect(fetchPage.mock.calls.every((call) => call[1] === 500)).toBe(true)
+  })
+
+  it('paginates beyond 500 rows until the hinted PostgreSQL watermark is closed', async () => {
+    const allRows = Array.from({ length: 1201 }, (_, offset) => fact(offset + 1))
+    const fetchPage = vi.fn(async (afterSeq: number, limit: number) =>
+      allRows.slice(afterSeq, afterSeq + limit),
+    )
+    const rendered: RunEventRecord[] = []
+    const synchronizer = createRunEventFactSynchronizer(fetchPage, (rows) => rendered.push(...rows))
+
+    await synchronizer.hint(event(1201))
+
+    expect(fetchPage).toHaveBeenCalledTimes(3)
+    expect(fetchPage.mock.calls.map((call) => call[0])).toEqual([0, 500, 1000])
+    expect(rendered).toHaveLength(1201)
+    expect(rendered.at(-1)?.seq).toBe(1201)
+  })
+
   it('renders an out-of-order duplicate sequence exactly once and in order', () => {
     const sequencer = createRunEventSequencer(0)
     const rendered = [1, 3, 2, 3, 5, 4].flatMap((seq) => sequencer.accept(event(seq)))

@@ -1,16 +1,19 @@
+import secrets
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.execution.executor import execute_operation
 from opspilot.execution.models import Operation, OperationStatus
 from opspilot.execution.reconciliation import ReconciliationLookup, reconcile_operation
+from opspilot.jobs.models import RunJobOutbox, RunJobStatus
 from opspilot.runs.journal import append_event
 from opspilot.runs.models import Run, RunMessage, RunStatus
 from opspilot.tools.adapters.python import get_refund_status_adapter, refund_order_adapter
@@ -33,6 +36,33 @@ async def process_run_message(ctx: dict[str, Any], message_id: str) -> None:
     processor = ctx.get("run_message_processor")
     if not callable(processor):
         raise RuntimeError("run message processor is not configured")
+    owner = f"arq:{ctx.get('job_id', 'run-message')}"
+    token = secrets.token_urlsafe(32)
+    lease_seconds = int(ctx.get("run_job_lease_seconds", 120))
+    async with async_session_factory() as session:
+        claimed = await session.execute(
+            update(RunJobOutbox)
+            .where(
+                RunJobOutbox.message_id == parsed_id,
+                (
+                    (RunJobOutbox.status == RunJobStatus.PENDING)
+                    | (
+                        (RunJobOutbox.status == RunJobStatus.RUNNING)
+                        & (RunJobOutbox.lease_expires_at < func.clock_timestamp())
+                    )
+                ),
+            )
+            .values(
+                status=RunJobStatus.RUNNING,
+                claim_token=token,
+                lease_owner=owner,
+                lease_expires_at=func.clock_timestamp() + timedelta(seconds=lease_seconds),
+            )
+        )
+        if (claimed.rowcount or 0) != 1:  # type: ignore[attr-defined]
+            await session.rollback()
+            return
+        await session.commit()
     async with async_session_factory() as session:
         message = await session.get(RunMessage, parsed_id)
         if message is None or message.role != "USER":
@@ -41,9 +71,37 @@ async def process_run_message(ctx: dict[str, Any], message_id: str) -> None:
             select(RunMessage).where(RunMessage.in_reply_to_message_id == parsed_id)
         )
         if existing is not None:
+            await session.execute(
+                update(RunJobOutbox)
+                .where(
+                    RunJobOutbox.message_id == parsed_id,
+                    RunJobOutbox.claim_token == token,
+                )
+                .values(
+                    status=RunJobStatus.COMPLETED,
+                    completed_at=func.clock_timestamp(),
+                    claim_token=None,
+                    lease_owner=None,
+                    lease_expires_at=None,
+                )
+            )
+            await session.commit()
             return
     result = await processor(message)
     async with async_session_factory() as session:
+        job = await session.scalar(
+            select(RunJobOutbox)
+            .where(
+                RunJobOutbox.message_id == parsed_id,
+                RunJobOutbox.status == RunJobStatus.RUNNING,
+                RunJobOutbox.claim_token == token,
+                RunJobOutbox.lease_owner == owner,
+                RunJobOutbox.lease_expires_at >= func.clock_timestamp(),
+            )
+            .with_for_update()
+        )
+        if job is None:
+            return
         message = await session.get(RunMessage, parsed_id)
         if message is None:
             return
@@ -51,6 +109,12 @@ async def process_run_message(ctx: dict[str, Any], message_id: str) -> None:
             select(RunMessage).where(RunMessage.in_reply_to_message_id == parsed_id)
         )
         if existing is not None:
+            job.status = RunJobStatus.COMPLETED
+            job.completed_at = await session.scalar(select(func.clock_timestamp()))
+            job.claim_token = None
+            job.lease_owner = None
+            job.lease_expires_at = None
+            await session.commit()
             return
         reply = RunMessage(
             run_id=message.run_id,
@@ -63,7 +127,27 @@ async def process_run_message(ctx: dict[str, Any], message_id: str) -> None:
         await session.flush()
         run = await session.get(Run, message.run_id)
         if run is not None:
-            run.status = RunStatus.COMPLETED
+            nonterminal_operation = await session.scalar(
+                select(Operation.id)
+                .where(
+                    Operation.run_id == message.run_id,
+                    Operation.status.in_(
+                        (
+                            OperationStatus.CREATED,
+                            OperationStatus.WAITING_APPROVAL,
+                            OperationStatus.READY,
+                            OperationStatus.EXECUTING,
+                            OperationStatus.RETRYING,
+                            OperationStatus.OUTCOME_UNKNOWN,
+                            OperationStatus.RECONCILING,
+                        )
+                    ),
+                )
+                .limit(1)
+            )
+            run.status = (
+                RunStatus.RUNNING if nonterminal_operation is not None else RunStatus.COMPLETED
+            )
         await append_event(
             session,
             message.run_id,
@@ -74,6 +158,11 @@ async def process_run_message(ctx: dict[str, Any], message_id: str) -> None:
                 "citations": result.citation_snapshots,
             },
         )
+        job.status = RunJobStatus.COMPLETED
+        job.completed_at = await session.scalar(select(func.clock_timestamp()))
+        job.claim_token = None
+        job.lease_owner = None
+        job.lease_expires_at = None
         await session.commit()
 
 

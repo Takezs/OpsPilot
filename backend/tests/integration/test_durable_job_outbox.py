@@ -21,7 +21,8 @@ from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.execution.claim import claim_operation, mark_unknown
 from opspilot.execution.models import Operation, OperationStatus
-from opspilot.runs.models import Run, RunStatus
+from opspilot.jobs.models import RunJobOutbox
+from opspilot.runs.models import Run, RunMessage, RunStatus
 
 _NOW = datetime(2026, 8, 28, tzinfo=UTC)
 
@@ -317,4 +318,106 @@ async def test_run_job_intent_has_stable_unique_message_identity() -> None:
             )
     finally:
         await connection.close()
+        await _cleanup_runs([run_id])
+
+
+async def test_duplicate_run_jobs_claim_before_calling_processor() -> None:
+    """At-least-once ARQ delivery must not duplicate Provider/tool orchestration."""
+    from opspilot.jobs.tasks import RunMessageResult, process_run_message
+
+    run_id = uuid.uuid4()
+    message_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.RUNNING))
+        session.add(
+            RunMessage(
+                id=message_id,
+                run_id=run_id,
+                role="USER",
+                content="refund ORD-002",
+            )
+        )
+        await session.flush()
+        session.add(RunJobOutbox(message_id=message_id))
+        await session.commit()
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def processor(message: RunMessage) -> RunMessageResult:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return RunMessageResult(content="approval requested", citation_snapshots=[])
+
+    try:
+        first = asyncio.create_task(
+            process_run_message({"run_message_processor": processor}, str(message_id))
+        )
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        second = asyncio.create_task(
+            process_run_message({"run_message_processor": processor}, str(message_id))
+        )
+        await asyncio.sleep(0.15)
+        release.set()
+        await asyncio.gather(first, second)
+        assert calls == 1
+        async with async_session_factory() as session:
+            replies = list(
+                await session.scalars(
+                    __import__("sqlalchemy")
+                    .select(RunMessage)
+                    .where(RunMessage.in_reply_to_message_id == message_id)
+                )
+            )
+        assert len(replies) == 1
+    finally:
+        release.set()
+        await _cleanup_runs([run_id])
+
+
+async def test_run_stays_running_while_created_operation_is_not_terminal() -> None:
+    from opspilot.jobs.tasks import RunMessageResult, process_run_message
+
+    run_id = uuid.uuid4()
+    message_id = uuid.uuid4()
+    operation_id = uuid.uuid4()
+    async with async_session_factory() as session:
+        session.add(Run(id=run_id, status=RunStatus.RUNNING))
+        await session.flush()
+        session.add(
+            RunMessage(
+                id=message_id,
+                run_id=run_id,
+                role="USER",
+                content="refund ORD-002",
+            )
+        )
+        session.add(
+            Operation(
+                id=operation_id,
+                run_id=run_id,
+                tool_name="refund_order",
+                normalized_arguments={"order_id": "ORD-002", "amount": 350},
+                arguments_hash=uuid.uuid4().hex * 2,
+                idempotency_key=f"refund:ORD-002:{operation_id}",
+                status=OperationStatus.WAITING_APPROVAL,
+                version=1,
+                policy_decision="REQUIRE_APPROVAL",
+            )
+        )
+        await session.commit()
+
+    async def processor(message: RunMessage) -> RunMessageResult:
+        return RunMessageResult(content="approval requested", citation_snapshots=[])
+
+    try:
+        await process_run_message({"run_message_processor": processor}, str(message_id))
+        async with async_session_factory() as session:
+            run = await session.get(Run, run_id)
+            assert run is not None
+            assert run.status is RunStatus.RUNNING
+    finally:
         await _cleanup_runs([run_id])

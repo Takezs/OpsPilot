@@ -11,14 +11,14 @@ from datetime import UTC, datetime
 import asyncpg
 import httpx
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
 
 from opspilot.approvals.models import ApprovalRequest, ApprovalStatus
 from opspilot.auth.dependencies import get_current_principal
 from opspilot.auth.models import Role, User
 from opspilot.auth.schemas import Principal
 from opspilot.config import Settings
-from opspilot.db import async_session_factory
+from opspilot.db import async_session_factory, engine
 from opspilot.execution.models import OperationAttempt
 from opspilot.execution.service import create_refund_operation
 from opspilot.knowledge.schemas import AccessLevel
@@ -195,7 +195,21 @@ async def test_approval_list_is_reviewer_only_and_exposes_immutable_binding() ->
         )
         assert approval is not None
         await session.commit()
+    statements: list[str] = []
+
+    def capture_statement(
+        connection: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        if "approval_requests" in statement:
+            statements.append(statement)
+
     try:
+        event.listen(engine.sync_engine, "before_cursor_execute", capture_statement)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
@@ -212,7 +226,9 @@ async def test_approval_list_is_reviewer_only_and_exposes_immutable_binding() ->
             assert row["arguments_hash"] == operation.arguments_hash
             assert row["operation_version"] == operation.version
             assert row["operation_status"] == "WAITING_APPROVAL"
+            assert any("JOIN agent_runs" in statement for statement in statements)
     finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture_statement)
         app.dependency_overrides.clear()
         await _cleanup([owner, reviewer])
 
@@ -224,6 +240,7 @@ async def test_run_detail_contains_owned_operation_and_attempt_timeline() -> Non
     async with async_session_factory() as session:
         run = await create_agent_run(session, _principal(owner))
         operation = await create_refund_operation(session, run.id, "ORD-DETAIL", 50)
+        operation.provider_reference_id = "Bearer provider-secret customer@example.com 13812345678"
         attempt = OperationAttempt(
             operation_id=operation.id,
             attempt_number=1,
@@ -231,6 +248,7 @@ async def test_run_detail_contains_owned_operation_and_attempt_timeline() -> Non
             status="SUCCEEDED",
             request_payload={"order_number": "ORD-DETAIL"},
             response_payload={"provider_reference": "demo-ref"},
+            error=("Bearer attempt-secret customer@example.com 13812345678 " + "x" * 940),
             completed_at=datetime.now(UTC),
         )
         session.add(attempt)
@@ -248,16 +266,25 @@ async def test_run_detail_contains_owned_operation_and_attempt_timeline() -> Non
                 row for row in body["operations"] if row["id"] == str(operation.id)
             )
             assert operation_row["status"] == "READY"
+            provider_reference = operation_row["provider_reference_id"]
+            assert "provider-secret" not in provider_reference
+            assert "customer@example.com" not in provider_reference
+            assert "13812345678" not in provider_reference
             assert operation_row["attempts"] == [
                 {
                     "id": str(attempt.id),
                     "attempt_number": 1,
                     "kind": "EXECUTION",
                     "status": "SUCCEEDED",
-                    "error": None,
+                    "error": operation_row["attempts"][0]["error"],
                     "completed_at": attempt.completed_at.isoformat(),
                 }
             ]
+            safe_error = operation_row["attempts"][0]["error"]
+            assert "attempt-secret" not in safe_error
+            assert "customer@example.com" not in safe_error
+            assert "13812345678" not in safe_error
+            assert len(safe_error) <= 1000
 
             app.dependency_overrides[get_current_principal] = lambda: _principal(other)
             assert (await client.get(f"/api/v1/runs/{run.id}")).status_code == 404

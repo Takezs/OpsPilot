@@ -14,6 +14,12 @@ class OperationJobKind(StrEnum):
     RECONCILE = "RECONCILE"
 
 
+class RunJobStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+
+
 class RunJobOutbox(Base):
     __tablename__ = "run_job_outbox"
     __table_args__ = (Index("ix_run_job_pending", "delivered_at", "available_at"),)
@@ -28,6 +34,13 @@ class RunJobOutbox(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default=RunJobStatus.PENDING)
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )

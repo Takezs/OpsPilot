@@ -492,6 +492,8 @@ async def recover_expired(
             "to_status": target.value,
         },
     )
+    if target is OperationStatus.OUTCOME_UNKNOWN:
+        enqueue_operation_job(session, operation_id, operation.version, "RECONCILE")
     recovered = await _load_or_raise(session, operation_id)
     await session.refresh(recovered)
     return recovered

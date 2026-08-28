@@ -270,6 +270,7 @@ async def recover_expired_reconciliation(
         "operation_reconciliation_lease_expired",
         {"operation_id": str(operation_id)},
     )
+    enqueue_operation_job(session, operation_id, operation.version, "RECONCILE")
     recovered = await _load(session, operation_id)
     await session.refresh(recovered)
     return recovered

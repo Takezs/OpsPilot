@@ -32,6 +32,13 @@ from opspilot.runs.sse import RedisSSEStream, validate_last_event_id
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
+def _safe_diagnostic(value: str | None) -> str | None:
+    if value is None:
+        return None
+    sanitized = sanitize_payload({"value": value})["value"]
+    return sanitized if isinstance(sanitized, str) else None
+
+
 @router.post("", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_run(
     principal: Annotated[Principal, Depends(get_current_principal)],
@@ -130,14 +137,14 @@ async def get_run(
                     status=operation.status.value,
                     version=operation.version,
                     policy_decision=operation.policy_decision,
-                    provider_reference_id=operation.provider_reference_id,
+                    provider_reference_id=_safe_diagnostic(operation.provider_reference_id),
                     attempts=[
                         AttemptResponse(
                             id=attempt.id,
                             attempt_number=attempt.attempt_number,
                             kind=attempt.kind,
                             status=attempt.status,
-                            error=attempt.error,
+                            error=_safe_diagnostic(attempt.error),
                             completed_at=attempt.completed_at,
                         )
                         for attempt in attempts
