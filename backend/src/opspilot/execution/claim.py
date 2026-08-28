@@ -35,6 +35,7 @@ from opspilot.execution.service import OperationError, OperationNotFoundError
 from opspilot.execution.state_machine import CLAIMABLE_STATUSES, assert_transition
 from opspilot.jobs.service import enqueue_operation_job
 from opspilot.runs.journal import append_event
+from opspilot.runs.status import recompute_run_status
 from opspilot.tools.types import ToolEffect
 
 
@@ -153,6 +154,7 @@ async def claim_operation(
             "lease_expires_at": expires_at.isoformat(),
         },
     )
+    await recompute_run_status(session, operation.run_id)
     claimed = await _load_or_raise(session, operation_id)
     await session.refresh(claimed)
     return claimed
@@ -258,6 +260,7 @@ async def mark_succeeded(
             "provider_reference_id": provider_reference_id,
         },
     )
+    await recompute_run_status(session, operation.run_id)
     succeeded = await _load_or_raise(session, operation_id)
     await session.refresh(succeeded)
     return succeeded
@@ -308,6 +311,7 @@ async def mark_failed(
             "error": error,
         },
     )
+    await recompute_run_status(session, operation.run_id)
     failed = await _load_or_raise(session, operation_id)
     await session.refresh(failed)
     return failed
@@ -366,6 +370,7 @@ async def mark_unknown(
         },
     )
     enqueue_operation_job(session, operation_id, expected_version + 1, "RECONCILE")
+    await recompute_run_status(session, operation.run_id)
     unknown = await _load_or_raise(session, operation_id)
     await session.refresh(unknown)
     return unknown
@@ -414,6 +419,7 @@ async def mark_retrying(
         "operation_retry_scheduled",
         {"operation_id": str(operation_id), "version": expected_version + 1, "error": error},
     )
+    await recompute_run_status(session, operation.run_id)
     retrying = await _load_or_raise(session, operation_id)
     await session.refresh(retrying)
     return retrying
@@ -494,6 +500,7 @@ async def recover_expired(
     )
     if target is OperationStatus.OUTCOME_UNKNOWN:
         enqueue_operation_job(session, operation_id, operation.version, "RECONCILE")
+    await recompute_run_status(session, operation.run_id)
     recovered = await _load_or_raise(session, operation_id)
     await session.refresh(recovered)
     return recovered

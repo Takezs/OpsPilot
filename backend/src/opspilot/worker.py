@@ -7,6 +7,7 @@ from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.execution.executor import drain_detached_provider_tasks
 from opspilot.execution.service import build_refund_operation_handler
+from opspilot.jobs.run_executor import drain_detached_run_processor_tasks
 from opspilot.jobs.tasks import RunMessageResult, process_operation_job, process_run_message
 from opspilot.knowledge.tasks import (
     DOCUMENT_INDEX_JOB_TIMEOUT,
@@ -29,6 +30,7 @@ from opspilot.tools.types import ToolResult
 async def shutdown_worker(ctx: dict[str, object]) -> None:
     """Collect cancellation-resistant provider tasks before ARQ exits."""
     await drain_detached_provider_tasks()
+    await drain_detached_run_processor_tasks()
     for name in ("order_client", "payment_client", "email_client"):
         client = ctx.get(name)
         if isinstance(client, httpx.AsyncClient):

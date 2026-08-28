@@ -36,6 +36,7 @@ from opspilot.execution.service import (
 )
 from opspilot.jobs.service import enqueue_operation_job
 from opspilot.runs.journal import append_event
+from opspilot.runs.status import recompute_run_status
 
 
 class ApprovalError(Exception):
@@ -140,6 +141,7 @@ async def decide_approval(
     )
     if approved:
         enqueue_operation_job(session, operation.id, operation.version, "EXECUTE")
+    await recompute_run_status(session, operation.run_id)
     return ApprovalDecisionResult(
         already_processed=False, transitioned=True, approval=approval, operation=operation
     )

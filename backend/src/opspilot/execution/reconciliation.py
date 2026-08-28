@@ -16,6 +16,7 @@ from opspilot.execution.models import Operation, OperationAttempt, OperationStat
 from opspilot.jobs.service import enqueue_operation_job
 from opspilot.runs.journal import append_event
 from opspilot.runs.sanitize import sanitize_payload
+from opspilot.runs.status import recompute_run_status
 from opspilot.tools.types import ToolResult
 
 SessionFactory = Callable[[], AsyncSession]
@@ -98,6 +99,7 @@ async def _begin_reconciliation(
         "operation_reconciliation_started",
         {"operation_id": str(operation.id), "attempt_number": attempt.attempt_number},
     )
+    await recompute_run_status(session, operation.run_id)
     return operation, attempt, lookup
 
 
@@ -176,6 +178,7 @@ async def _finish_reconciliation(
     )
     if target is OperationStatus.RETRYING:
         enqueue_operation_job(session, operation_id, expected_version + 1, "EXECUTE")
+    await recompute_run_status(session, operation.run_id)
     await session.refresh(operation)
     return operation
 
@@ -271,6 +274,7 @@ async def recover_expired_reconciliation(
         {"operation_id": str(operation_id)},
     )
     enqueue_operation_job(session, operation_id, operation.version, "RECONCILE")
+    await recompute_run_status(session, operation.run_id)
     recovered = await _load(session, operation_id)
     await session.refresh(recovered)
     return recovered

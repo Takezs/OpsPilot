@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createRunEventFactSynchronizer,
   createRunEventSequencer,
+  consumeRunEventStream,
   parseSseStream,
+  runEventConnectionLoop,
   streamRunEvents,
   type RunEventFrame,
 } from '../src/composables/useRunEvents'
@@ -32,6 +34,129 @@ function byteStream(parts: Uint8Array[]): ReadableStream<Uint8Array> {
 }
 
 describe('Task 15 reliable run event client', () => {
+  it('observes a hint history failure and aborts the current stream for reconnect', async () => {
+    const historyError = new Error('history unavailable')
+    let emit!: (frame: RunEventFrame) => void
+    const stream = vi.fn(async (signal: AbortSignal, onFrame: (frame: RunEventFrame) => void) => {
+      emit = onFrame
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+    })
+    const hint = vi.fn().mockRejectedValue(historyError)
+    const pending = consumeRunEventStream({
+      signal: new AbortController().signal,
+      stream,
+      hint,
+      onSynchronized: vi.fn(),
+    })
+
+    emit(event(1))
+
+    await expect(pending).rejects.toBe(historyError)
+    expect(stream.mock.calls[0]?.[0].aborted).toBe(true)
+    expect(hint).toHaveBeenCalledOnce()
+  })
+
+  it('propagates a history 401 once so the caller can stop reconnecting', async () => {
+    const unauthorized = Object.assign(new Error('unauthorized'), { response: { status: 401 } })
+    let emit!: (frame: RunEventFrame) => void
+    const stream = async (signal: AbortSignal, onFrame: (frame: RunEventFrame) => void) => {
+      emit = onFrame
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+    }
+    const hint = vi.fn().mockRejectedValue(unauthorized)
+    const pending = consumeRunEventStream({
+      signal: new AbortController().signal,
+      stream,
+      hint,
+      onSynchronized: vi.fn(),
+    })
+
+    emit(event(1))
+
+    await expect(pending).rejects.toBe(unauthorized)
+    expect(hint).toHaveBeenCalledOnce()
+  })
+
+  it('does not update connected state when unmounted while history sync is pending', async () => {
+    const controller = new AbortController()
+    let emit!: (frame: RunEventFrame) => void
+    let release!: () => void
+    const history = new Promise<void>((resolve) => { release = resolve })
+    const onSynchronized = vi.fn()
+    const pending = consumeRunEventStream({
+      signal: controller.signal,
+      stream: async (signal, onFrame) => {
+        emit = onFrame
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+      },
+      hint: vi.fn(() => history),
+      onSynchronized,
+    })
+
+    emit(event(1))
+    controller.abort()
+    release()
+    await pending
+
+    expect(onSynchronized).not.toHaveBeenCalled()
+  })
+
+  it('moves to reconnecting when hint history fails, then recovers exactly once', async () => {
+    const controller = new AbortController()
+    const states: string[] = []
+    const synchronizer = {
+      lastSentId: 0,
+      syncAll: vi.fn().mockResolvedValue(undefined),
+      hint: vi.fn()
+        .mockRejectedValueOnce(new Error('history network failure'))
+        .mockResolvedValueOnce(undefined),
+    }
+    const openStream = vi.fn(async (signal: AbortSignal, onFrame: (frame: RunEventFrame) => void) => {
+      onFrame(event(1))
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+    })
+
+    await runEventConnectionLoop({
+      signal: controller.signal,
+      synchronizer,
+      openStream,
+      wait: vi.fn().mockResolvedValue(undefined),
+      onConnection: (state) => {
+        states.push(state)
+        if (state === 'CONNECTED') controller.abort()
+      },
+    })
+
+    expect(states).toEqual(['RECONNECTING', 'CONNECTED'])
+    expect(openStream).toHaveBeenCalledTimes(2)
+    expect(synchronizer.hint).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops after a history 401 without entering a reconnect loop', async () => {
+    const unauthorized = Object.assign(new Error('unauthorized'), { response: { status: 401 } })
+    const synchronizer = {
+      lastSentId: 0,
+      syncAll: vi.fn().mockRejectedValue(unauthorized),
+      hint: vi.fn(),
+    }
+    const openStream = vi.fn()
+    const onConnection = vi.fn()
+    const wait = vi.fn()
+
+    await runEventConnectionLoop({
+      signal: new AbortController().signal,
+      synchronizer,
+      openStream,
+      onConnection,
+      wait,
+    })
+
+    expect(synchronizer.syncAll).toHaveBeenCalledOnce()
+    expect(openStream).not.toHaveBeenCalled()
+    expect(onConnection).not.toHaveBeenCalled()
+    expect(wait).not.toHaveBeenCalled()
+  })
+
   it('retains an early seq 3 hint while PostgreSQL history returns seq 1 and 2 first', async () => {
     const pages = [[fact(1), fact(2)], [fact(3, '2026-08-29T03:03:03Z')]]
     const fetchPage = vi.fn(async () => pages.shift() ?? [])

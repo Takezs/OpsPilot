@@ -218,3 +218,23 @@ async def test_recovery_scanner_rolls_back_when_job_intent_insert_fails(
             await connection.close()
     finally:
         await _cleanup([run_id])
+
+
+async def test_recovery_scanner_does_not_hot_loop_one_conflicting_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opspilot.execution.claim import LeaseConflictError
+
+    run_id, operation_id = await _create_expired_operation(OperationStatus.EXECUTING)
+    calls: list[uuid.UUID] = []
+
+    async def conflict(*args: object, **kwargs: object) -> None:
+        calls.append(operation_id)
+        raise LeaseConflictError("injected race")
+
+    monkeypatch.setattr("opspilot.jobs.recovery.recover_expired", conflict)
+    try:
+        assert await _scan_once(batch_size=20) == 0
+        assert calls == [operation_id]
+    finally:
+        await _cleanup([run_id])

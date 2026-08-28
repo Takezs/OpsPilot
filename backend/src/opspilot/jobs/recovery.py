@@ -1,5 +1,7 @@
 """Bounded production recovery for expired operation and run-job leases."""
 
+import uuid
+
 from sqlalchemy import func, or_, select, update
 
 from opspilot.db import async_session_factory
@@ -13,21 +15,24 @@ from opspilot.tools.types import ToolEffect
 async def recover_expired_operations(batch_size: int = 50) -> int:
     """Recover expired leases without ever invoking an external Provider."""
     recovered = 0
+    attempted_ids: set[uuid.UUID] = set()
     for _ in range(batch_size):
         async with async_session_factory() as session:
+            query = select(Operation).where(
+                Operation.status.in_((OperationStatus.EXECUTING, OperationStatus.RECONCILING)),
+                Operation.lease_expires_at.is_not(None),
+                Operation.lease_expires_at < func.clock_timestamp(),
+            )
+            if attempted_ids:
+                query = query.where(Operation.id.not_in(attempted_ids))
             operation = await session.scalar(
-                select(Operation)
-                .where(
-                    Operation.status.in_((OperationStatus.EXECUTING, OperationStatus.RECONCILING)),
-                    Operation.lease_expires_at.is_not(None),
-                    Operation.lease_expires_at < func.clock_timestamp(),
-                )
-                .order_by(Operation.lease_expires_at, Operation.id)
+                query.order_by(Operation.lease_expires_at, Operation.id)
                 .with_for_update(skip_locked=True)
                 .limit(1)
             )
             if operation is None:
                 break
+            attempted_ids.add(operation.id)
             try:
                 if operation.status is OperationStatus.RECONCILING:
                     await recover_expired_reconciliation(session, operation.id)
@@ -47,21 +52,24 @@ async def recover_expired_operations(batch_size: int = 50) -> int:
 async def recover_expired_run_jobs(batch_size: int = 50) -> int:
     """Make expired message claims publishable again for idempotent redelivery."""
     recovered = 0
+    attempted_ids: set[uuid.UUID] = set()
     for _ in range(batch_size):
         async with async_session_factory() as session:
+            query = select(RunJobOutbox).where(
+                RunJobOutbox.status == RunJobStatus.RUNNING,
+                RunJobOutbox.lease_expires_at.is_not(None),
+                RunJobOutbox.lease_expires_at < func.clock_timestamp(),
+            )
+            if attempted_ids:
+                query = query.where(RunJobOutbox.id.not_in(attempted_ids))
             row = await session.scalar(
-                select(RunJobOutbox)
-                .where(
-                    RunJobOutbox.status == RunJobStatus.RUNNING,
-                    RunJobOutbox.lease_expires_at.is_not(None),
-                    RunJobOutbox.lease_expires_at < func.clock_timestamp(),
-                )
-                .order_by(RunJobOutbox.lease_expires_at, RunJobOutbox.id)
+                query.order_by(RunJobOutbox.lease_expires_at, RunJobOutbox.id)
                 .with_for_update(skip_locked=True)
                 .limit(1)
             )
             if row is None:
                 break
+            attempted_ids.add(row.id)
             changed = await session.execute(
                 update(RunJobOutbox)
                 .where(

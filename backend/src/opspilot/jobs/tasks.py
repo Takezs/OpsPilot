@@ -14,8 +14,10 @@ from opspilot.execution.executor import execute_operation
 from opspilot.execution.models import Operation, OperationStatus
 from opspilot.execution.reconciliation import ReconciliationLookup, reconcile_operation
 from opspilot.jobs.models import RunJobOutbox, RunJobStatus
+from opspilot.jobs.run_executor import run_processor_under_lease
 from opspilot.runs.journal import append_event
-from opspilot.runs.models import Run, RunMessage, RunStatus
+from opspilot.runs.models import RunMessage
+from opspilot.runs.status import recompute_run_status
 from opspilot.tools.adapters.python import get_refund_status_adapter, refund_order_adapter
 from opspilot.tools.schemas import GetRefundStatusArgs, RefundOrderArgs
 from opspilot.tools.types import ToolEffect, ToolResult
@@ -87,7 +89,14 @@ async def process_run_message(ctx: dict[str, Any], message_id: str) -> None:
             )
             await session.commit()
             return
-    result = await processor(message)
+    result = await run_processor_under_lease(
+        async_session_factory,
+        parsed_id,
+        owner=owner,
+        token=token,
+        lease_seconds=lease_seconds,
+        invoke=lambda: processor(message),
+    )
     async with async_session_factory() as session:
         job = await session.scalar(
             select(RunJobOutbox)
@@ -125,29 +134,7 @@ async def process_run_message(ctx: dict[str, Any], message_id: str) -> None:
         )
         session.add(reply)
         await session.flush()
-        run = await session.get(Run, message.run_id)
-        if run is not None:
-            nonterminal_operation = await session.scalar(
-                select(Operation.id)
-                .where(
-                    Operation.run_id == message.run_id,
-                    Operation.status.in_(
-                        (
-                            OperationStatus.CREATED,
-                            OperationStatus.WAITING_APPROVAL,
-                            OperationStatus.READY,
-                            OperationStatus.EXECUTING,
-                            OperationStatus.RETRYING,
-                            OperationStatus.OUTCOME_UNKNOWN,
-                            OperationStatus.RECONCILING,
-                        )
-                    ),
-                )
-                .limit(1)
-            )
-            run.status = (
-                RunStatus.RUNNING if nonterminal_operation is not None else RunStatus.COMPLETED
-            )
+        await recompute_run_status(session, message.run_id)
         await append_event(
             session,
             message.run_id,

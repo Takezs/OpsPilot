@@ -95,6 +95,9 @@ async def test_real_http_timeout_after_effect_reconciles_once() -> None:
             succeeded = await session.get(Operation, operation_id)
             assert succeeded is not None
             assert succeeded.status is OperationStatus.SUCCEEDED
+            completed_run = await session.get(Run, run_id)
+            assert completed_run is not None
+            assert completed_run.status is RunStatus.COMPLETED
             events = list(
                 await session.scalars(
                     select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.seq)
