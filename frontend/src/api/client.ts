@@ -6,12 +6,16 @@ import { useAuthStore } from '../stores/auth'
 export const api = axios.create({ baseURL: '/api/v1', timeout: 15000 })
 
 let unauthorizedRedirecting = false
+let configuredPinia: Pinia | null = null
+let configuredRouter: Router | null = null
 
 export function resetUnauthorizedRedirect(): void {
   unauthorizedRedirecting = false
 }
 
 export function configureApi(pinia: Pinia, router: Router): void {
+  configuredPinia = pinia
+  configuredRouter = router
   api.interceptors.request.use((config) => {
     const auth = useAuthStore(pinia)
     if (auth.token) config.headers.Authorization = `Bearer ${auth.token}`
@@ -32,4 +36,20 @@ export function configureApi(pinia: Pinia, router: Router): void {
       return Promise.reject(error)
     },
   )
+}
+
+export async function authorizedStreamFetch(path: string, init: RequestInit): Promise<Response> {
+  if (!configuredPinia) throw new Error('API client is not configured')
+  const auth = useAuthStore(configuredPinia)
+  const headers = new Headers(init.headers)
+  if (auth.token) headers.set('Authorization', `Bearer ${auth.token}`)
+  const response = await fetch(`/api/v1${path}`, { ...init, headers })
+  if (response.status === 401) {
+    auth.clearSession()
+    if (!unauthorizedRedirecting && configuredRouter) {
+      unauthorizedRedirecting = true
+      await configuredRouter.replace({ name: 'login', query: { returnUrl: configuredRouter.currentRoute.value.fullPath } })
+    }
+  }
+  return response
 }
