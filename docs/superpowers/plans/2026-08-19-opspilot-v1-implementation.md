@@ -619,7 +619,7 @@ git add frontend backend/tests/e2e
 git commit -m "feat: deliver auditable approval refund workflow"
 ```
 
-**状态：实现完成，等待督导复审（2026-08-28）。** 后端提交 `778c192`，前端提交 `e69181c`。新增0018 durable messages/job outbox、授权Run/审批读取、ARQ编排、集中式授权SSE客户端与真实HTTP timeout-after-effect退款E2E。Red为后端两组各5 failed及前端1 failed suite；Green为Task15后端11 passed、完整328 passed，frontend unit10、Playwright7、typecheck/build通过。不得开始Task16。
+**状态：复审可靠性修复完成，等待再次复审（2026-08-29）。** 原实现提交 `778c192`、`e69181c`；本轮新增0019 Run job claim lease、生产Operation/Reconciliation恢复cron、原子version-bound intent、PG时钟outbox退避、读取边界加固与PG事实SSE串行分页drain。Task15/10/11定向89 passed、完整后端337 passed、frontend unit13、Playwright UI mock回归5、typecheck/build通过；0019往返及0001→head全链通过。当前未配置真实DeepSeek，故真实引用链及公开API→ARQ→Provider核心E2E明确阻塞，未以Fake或浏览器mock替代验收。不得开始Task16。
 
 ### 任务 16：v1.0 评测数据集与确定性指标
 

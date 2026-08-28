@@ -173,7 +173,10 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 前端提交 `e69181c`：工作台、审批中心、Run时间线和集中式授权SSE客户端；USER路由权限沿用Task13，批准文案不等同退款成功。
 - Red→Green：后端 `5 failed + 5 failed → 11 passed`；前端 `1 failed suite → 5 passed`。完整后端328 passed；前端unit10、E2E7、typecheck/build通过。
 - 0018已验证upgrade/downgrade/upgrade；PG/Redis healthy；Payment独立Uvicorn进程有界清理且ORD-002退款严格1。
-- 明确遗留：部署环境必须配置DeepSeek与完整Generation/Retrieval processor才能生成真实引用快照；当前operation worker search工具fail-closed。等待督导复审，不得进入Task16。
+- 2026-08-29 复审修复完成，等待再次复审：0019为Run message job增加数据库claim/lease与可恢复执行；生产cron恢复过期Operation/Reconciliation并原子产生下一version intent；outbox使用PG时钟有界退避；Run读取再次脱敏；SSE改为PG history事实单通道串行分页drain。
+- Red证据：recovery intent实际v8却写v9；重复job会并发进入processor；outbox故障同row热循环100次；SSE先3后history 1/2会丢3；Run detail泄露敏感诊断。修复后相关可靠执行组合89 passed，完整后端337 passed，前端unit13 passed、Playwright mock回归5 passed。
+- 迁移：0019 head↔0018↔head及独立scratch 0001→0019均通过；PostgreSQL/Redis健康。
+- 明确阻塞：本机无DeepSeek凭据（仅BGE endpoint已配置），worker真实引用链仍不能验收；未使用Fake Provider，也未把现有直接handler后端测试或Playwright mock称为核心完整E2E。等待督导，不得进入Task16。
 
 ## 需要维护的文档
 
