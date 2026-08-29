@@ -619,7 +619,7 @@ git add frontend backend/tests/e2e
 git commit -m "feat: deliver auditable approval refund workflow"
 ```
 
-**状态：第二轮复审可靠性修复完成，等待再次复审（2026-08-29）。** 在0019 claim上增加独立PG时钟run-job heartbeat、fencing、bounded detached监督与shutdown drain；Run状态在Operation事务内统一收敛；SSE history同步失败纳入stream可观察重连生命周期，401/卸载fail-closed；scanner同轮跳过冲突候选。后端相关34 passed、完整350 passed，frontend unit18、Playwright UI mock回归5、typecheck/build通过。当前未配置真实DeepSeek，真实引用链及公开API→ARQ→Provider核心E2E仍明确阻塞，未以Fake或浏览器mock替代验收。不得开始Task16。
+**状态：第三轮复审durable边界修复完成，等待再次复审（2026-08-29）。** 新增0020三态回填/CHECK、delivered未claim watchdog，以及与Operation创建同事务锁定验证的RunJobFence，失权detached Agent不能写Operation/Event/job；新owner仍幂等收敛。第三轮定向24 passed、完整后端357 passed，frontend unit18、Playwright UI mock回归5、typecheck/build通过；0020往返、脏历史/原子失败与0001→head全链通过。真实DeepSeek/引用核心E2E阻塞不变。不得开始Task16。
 
 ### 任务 16：v1.0 评测数据集与确定性指标
 

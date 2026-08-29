@@ -179,6 +179,8 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 明确阻塞：本机无DeepSeek凭据（仅BGE endpoint已配置），worker真实引用链仍不能验收；未使用Fake Provider，也未把现有直接handler后端测试或Playwright mock称为核心完整E2E。等待督导，不得进入Task16。
 - 第二轮复审修复：Run job heartbeat使用独立PG事务、约lease/3续租与token/owner fencing；FIRST_COMPLETED失权优先，取消不响应processor由受控detached集合和shutdown hook回收。Run状态统一从durable Operation/message事实在原事务重算，MANUAL_REVIEW/不确定态保持RUNNING，最终退款SUCCEEDED后Run收敛COMPLETED。SSE history失败不再产生未处理Promise，改为中止stream、进入RECONNECTING；401停止重连，卸载后无陈旧写。
 - 本轮Red：heartbeat缺失3 failed、scanner冲突候选单轮20次、真实退款后Run仍RUNNING、SSE生命周期3 failed。Green：后端相关34 passed、完整350 passed；frontend unit18、Playwright mock回归5、typecheck/build；Ruff/Mypy通过。真实Provider阻塞不变。
+- 第三轮复审修复：delivery watchdog以PG锁和ack grace恢复delivered但未claim的Run/Operation intent；reply存在则Run job收敛COMPLETED，Operation状态/version已前进则intent固定标记stale。0020回填0019脏历史并新增三态字段组合CHECK，真实PG负向SQL、事务失败回滚、往返和全链通过。
+- Agent生产composition现显式接收`RunJobFence`；退款Operation创建前在同一事务锁定并验证claim，消除跨session TOCTOU。失权detached旧worker测试为0 Operation/Event/job，新owner恢复后幂等收敛为1。第三轮定向24、完整357、frontend unit18/E2E mock5；真实Provider阻塞不变。
 
 ## 需要维护的文档
 
