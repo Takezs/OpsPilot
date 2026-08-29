@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-29
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M1–M4 / 任务 1–14 已通过督导复审；任务 15 生产 grounded composition 已接线，等待真实 Provider E2E
+> 当前阶段：M1–M4 / 任务 1–14 已通过督导复审；任务 15 最终真实 Provider E2E 已完成，等待督导最终复审
 
 ## 总体进度
 
@@ -11,7 +11,7 @@
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
 | M3 可靠 Agent | 8–12 | 已完成并批准 | 任务 8–12 已通过督导复审 |
-| M4 产品界面 | 13–15 | 任务15验收阻塞 | UI与durable runtime完成；真实Provider引用退款E2E待环境 |
+| M4 产品界面 | 13–15 | 等待任务15最终复审 | UI、durable runtime与真实Provider引用退款E2E已完成 |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
 
@@ -38,6 +38,8 @@
 - 本轮Red：grounded contract因类型缺失collection error；renderer模块缺失collection error；公共enrichment与Run composition模块缺失collection error；DeepSeek两个客户端关闭测试为2 failed/2 passed。Green：grounding/Task5/6/14定向60 passed，完整后端374 passed；frontend unit18、Playwright真实HTTP契约mock回归7、typecheck/build通过；Ruff check、源码/测试format、Mypy96、Alembic0020 head、PG/Redis健康。Playwright全目录最初误收Vitest文件失败，配置明确忽略unit suites后全命令通过。
 - 本地 Provider 进展（2026-08-29）：Xinference GPU 服务已配置，真实 BGE-M3 embedding 返回 1024 维向量，bge-reranker-v2-m3 真实重排通过；项目客户端兼容 Xinference `relevance_score` 并支持独立 `BGE_RERANKER_MODEL`。DeepSeek 与公开API→ARQ→真实Provider→引用→审批→Payment全链仍待验收，未使用 Fake 冒充通过。
 - DeepSeek 网络修复（2026-08-30）：Clash Verge 的本地 mixed proxy 为 `127.0.0.1:7897`，系统代理未被 Worker/Codex 进程继承；新增显式 `DEEPSEEK_PROXY_URL` 配置并由 decision/generation 两个生产 Provider 注入专用 HTTP client。真实 `/models` 与最小 chat 请求均返回 200；完整公开 API→ARQ→Provider E2E 仍需继续执行后才能宣布任务 15 通过。
+- 最终真实全链验收（2026-08-30）：显式opt-in live E2E从公开登录、Run/message API开始，经真实Run job outbox publisher、Redis/ARQ worker、DeepSeek决策/生成、Xinference BGE embedding/reranker与PG scope retrieval生成固定document/version/chunk引用；第二条durable message创建ORD-002=350退款Operation，经Reviewer审批HTTP、operation outbox、Payment一次性timeout-after-effect、OUTCOME_UNKNOWN与reconciliation最终SUCCEEDED。公开history与PG run_events seq均从1连续，Payment测试控制面确认退款count=1，所有独立进程和测试数据有界清理。
+- 最终Red→Green：BGE容器重启后模型为空曾导致embedding 404（环境恢复）；真实链随后发现DeepSeek在成功检索后可能用普通answer导致引用为空。Runner现在拒绝该不安全终止并以本次server-issued ID给出精确grounded_answer纠正契约；每次测试唯一的PG政策标记证明引用确实来自检索而非模型先验。Live E2E最终1 passed in 149.59s；完整后端378 passed/1 live opt-in skipped，frontend unit18、Playwright7、typecheck/build、Ruff/Mypy、Alembic0020、PG/Redis/BGE健康。
 - 演示 Order/Payment 增加 ORD-002=350；仅显式 E2E 环境启用一次 timeout-after-effect。真实独立 Uvicorn HTTP进程测试证明 OUTCOME_UNKNOWN→RECONCILING→SUCCEEDED、PG seq连续、退款记录严格为1，并有界清理子进程。
 - Red：后端 Workspace API 5 failed、durable outbox 5 failed；前端 SSE suite 1 failed（模块不存在）。Green：Task15后端定向11 passed，可靠执行组合81 passed，完整328 passed in 65.08s；frontend unit10、Playwright7、typecheck/build通过；Ruff、Mypy90、Alembic0018及0018↔0017往返、PG/Redis健康。
 - 偏离：Run message生产Processor使用既有 DeepSeek AgentRunner，但当前检索工具在operation worker中fail-closed，assistant citation snapshots的真实生成仍依赖部署的Generation组合；核心退款可靠性E2E不依赖Fake数据库/Redis/Payment，但前端交互Playwright使用已存在HTTP契约mock作视觉回归。

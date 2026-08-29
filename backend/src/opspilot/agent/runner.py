@@ -118,6 +118,21 @@ class AgentRunner:
             state.rounds += 1
             decision = await self._decision_provider.decide(state, self._registry.all())
             if decision.kind == "answer":
+                if grounded_contexts:
+                    valid_ids = ", ".join(sorted(grounded_contexts))
+                    state.messages.append(
+                        AgentMessage(
+                            role="tool",
+                            tool_name="search_knowledge",
+                            content=(
+                                "error: answer is forbidden after a successful knowledge search. "
+                                "Return exactly a grounded decision JSON object now: "
+                                '{"type":"grounded_answer","search_call_id":"<valid-id>"}. '
+                                f"Valid server-issued ids for this run: {valid_ids}"
+                            ),
+                        )
+                    )
+                    continue
                 return AgentOutcome(
                     final_answer=decision.answer,
                     rounds=state.rounds,

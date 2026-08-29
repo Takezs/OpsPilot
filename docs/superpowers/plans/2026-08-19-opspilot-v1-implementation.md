@@ -594,23 +594,23 @@ git commit -m "feat: visualize ingestion retrieval and citations"
 - 创建：`frontend/tests/refund-flow.spec.ts`
 - 创建：`backend/tests/e2e/test_refund_flow.py`
 
-- [ ] **步骤 1：编写 SSE reducer 单元测试**
+- [x] **步骤 1：编写 SSE reducer 单元测试**
 
 `useRunEvents` 维护 `expected_seq` 和 buffer：重复不渲染、乱序暂存、缺口 HTTP 补拉、连续后消费 buffer。输入 `[1,3,2,3,5,4]` 最终渲染 `[1,2,3,4,5]` 各一次。
 
-- [ ] **步骤 2：编写审批交互测试**
+- [x] **步骤 2：编写审批交互测试**
 
 USER 无按钮；REVIEWER/ADMIN 点击后立即禁用；409 显示已处理/过期/参数变化。批准只显示“允许执行”，不显示“退款成功”。
 
-- [ ] **步骤 3：实现可靠状态展示**
+- [x] **步骤 3：实现可靠状态展示**
 
 明确展示 EXECUTING、OUTCOME_UNKNOWN、RECONCILING、MANUAL_REVIEW；断线显示重连，不把 Run 标为失败。
 
-- [ ] **步骤 4：编写完整退款 E2E**
+- [x] **步骤 4：编写完整退款 E2E**
 
 ORD-002 → 引用 → 待审批 → 批准 → timeout-after-effect → RECONCILING → SUCCEEDED；断线、重复、乱序后客户端 seq 集合与 PG 完全一致，Payment Service 退款记录为 1。
 
-- [ ] **步骤 5：验证并提交**
+- [x] **步骤 5：验证并提交**
 
 运行：`make test-e2e`。预期所有核心流程 PASS。
 
@@ -619,7 +619,7 @@ git add frontend backend/tests/e2e
 git commit -m "feat: deliver auditable approval refund workflow"
 ```
 
-**状态：方案A生产grounded composition接线完成，真实Provider健康，等待完整E2E（2026-08-30）。** Runner服务端签发run-local `search_call_id`绑定精确BuiltContext，未知/跨run ID fail-closed；worker从Run owner数据库事实构造scope并复用Task5/6 Retrieval、SQL enrichment、reranker、Context Builder、Generation与Citation Validator。单条assistant回复由ValidatedAnswer及服务端Operation事实确定性组成，非SUCCEEDED不宣称退款成功；Provider由worker统一关闭。本地BGE embedding/reranker及经显式`DEEPSEEK_PROXY_URL`访问的DeepSeek models/chat均已真实健康验证；不得在完整API→ARQ→Provider E2E前宣称通过或开始Task16。
+**状态：最终真实Provider全链E2E完成，等待督导最终复审（2026-08-30）。** 公开Run/message API→Outbox→Redis/ARQ→真实DeepSeek+BGE/PG检索→固定版本引用→审批HTTP→Payment timeout-after-effect→OUTCOME_UNKNOWN/RECONCILING→SUCCEEDED已通过；PG Journal连续且退款count=1。成功检索后普通answer现由Runner fail-closed纠正为显式grounded_answer决策，不允许事实正文绕过引用快照。Live 1 passed，完整后端378 passed/1 opt-in skipped，frontend unit18/E2E7及全部门禁通过。尚未获督导批准，不得开始Task16。
 
 ### 任务 16：v1.0 评测数据集与确定性指标
 

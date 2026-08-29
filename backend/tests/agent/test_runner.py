@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from opspilot.agent.prompts import render_system_prompt
 from opspilot.agent.runner import (
     AgentDecision,
     AgentRunner,
@@ -299,6 +300,13 @@ def test_render_api_messages_labels_tool_output_as_untrusted() -> None:
     assert '{"status": "REFUNDED"}' in untrusted[0]
 
 
+def test_decision_prompt_requires_grounded_answer_after_successful_search() -> None:
+    prompt = render_system_prompt(())
+
+    assert "MUST use grounded_answer" in prompt
+    assert "MUST NOT use answer" in prompt
+
+
 def test_render_api_messages_preserves_regular_roles() -> None:
     state = AgentState(
         messages=[
@@ -420,14 +428,20 @@ async def test_grounded_answer_uses_runner_owned_id_and_exact_built_context() ->
 
     class CapturingDecider:
         call_id: str | None = None
+        attempted_plain_answer = False
 
         async def decide(self, state: AgentState, tools: tuple[Any, ...]) -> AgentDecision:
             if len(state.messages) == 1:
                 return _tool("search_knowledge", query="refund policy", top_k=5)
-            payload = json.loads(state.messages[-1].content)
-            self.call_id = payload["search_call_id"]
-            assert self.call_id not in {"", "provider-chosen-id"}
-            assert "Refunds require approval" not in state.messages[-1].content
+            if self.call_id is None:
+                payload = json.loads(state.messages[-1].content)
+                self.call_id = payload["search_call_id"]
+                assert self.call_id not in {"", "provider-chosen-id"}
+                assert "Refunds require approval" not in state.messages[-1].content
+                self.attempted_plain_answer = True
+                return _answer("uncited factual answer")
+            assert self.call_id in state.messages[-1].content
+            assert '"type":"grounded_answer"' in state.messages[-1].content
             return _grounded(self.call_id)
 
     runner = AgentRunner(
@@ -439,6 +453,7 @@ async def test_grounded_answer_uses_runner_owned_id_and_exact_built_context() ->
     outcome = await runner.run("What is the refund policy?")
 
     assert observed == [("What is the refund policy?", context)]
+    assert outcome.rounds == 3
     assert outcome.final_answer == "Approval is required [DOC:d1#c1]."
     assert outcome.citation_snapshots == (CitationSnapshot("d1", 3, "c1", ("Refunds",), 2),)
 
