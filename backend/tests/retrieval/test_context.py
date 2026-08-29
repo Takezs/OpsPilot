@@ -101,6 +101,38 @@ async def test_reranker_degrades_on_real_http_timeout() -> None:
     await client.aclose()
 
 
+async def test_reranker_accepts_xinference_relevance_scores() -> None:
+    def _xinference_response(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/rerank"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"index": 1, "relevance_score": 0.9},
+                    {"index": 0, "relevance_score": 0.2},
+                ]
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(_xinference_response))
+    reranker = BgeReranker(
+        base_url="http://reranker.local/v1",
+        api_key="test",
+        model="bge-reranker-v2-m3",
+        client=client,
+    )
+    items = [
+        RerankItem(candidate=candidate("a", 1), content="first"),
+        RerankItem(candidate=candidate("b", 2), content="second"),
+    ]
+
+    result = await reranker.rerank("query", items)
+
+    assert result.status is RerankStatus.OK
+    assert [item.chunk_id for item in result.candidates] == ["b", "a"]
+    await client.aclose()
+
+
 async def test_reranker_degrades_on_wall_clock_timeout() -> None:
     rrf_order = [candidate("b", 1), candidate("a", 2), candidate("c", 3)]
     items = [RerankItem(candidate=item, content=f"content-{item.chunk_id}") for item in rrf_order]

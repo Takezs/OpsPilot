@@ -110,7 +110,10 @@ class BgeReranker:
         scored: list[tuple[float, RerankItem]] = []
         for entry in data.get("results", []):
             item = items[entry["index"]]
-            scored.append((float(entry["score"]), item))
+            score = entry.get("relevance_score", entry.get("score"))
+            if score is None:
+                raise ValueError("reranker result is missing a score")
+            scored.append((float(score), item))
         scored.sort(key=lambda pair: (-pair[0], pair[1].candidate.chunk_id))
         return RerankedResult(
             status=RerankStatus.OK,

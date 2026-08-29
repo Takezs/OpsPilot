@@ -59,7 +59,11 @@ async def startup_worker(ctx: dict[str, object]) -> None:
     embedding_provider = BgeM3EmbeddingProvider(
         settings.bge_base_url, settings.bge_api_key, settings.bge_embedding_model
     )
-    reranker_provider = BgeReranker(settings.bge_base_url, settings.bge_api_key)
+    reranker_provider = BgeReranker(
+        settings.bge_base_url,
+        settings.bge_api_key,
+        settings.bge_reranker_model,
+    )
     generation_provider = DeepSeekGenerationProvider(
         settings.deepseek_api_key,
         base_url=settings.deepseek_base_url,

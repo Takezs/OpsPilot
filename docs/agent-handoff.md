@@ -182,7 +182,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 第三轮复审修复：delivery watchdog以PG锁和ack grace恢复delivered但未claim的Run/Operation intent；reply存在则Run job收敛COMPLETED，Operation状态/version已前进则intent固定标记stale。0020回填0019脏历史并新增三态字段组合CHECK，真实PG负向SQL、事务失败回滚、往返和全链通过。
 - Agent生产composition现显式接收`RunJobFence`；退款Operation创建前在同一事务锁定并验证claim，消除跨session TOCTOU。失权detached旧worker测试为0 Operation/Event/job，新owner恢复后幂等收敛为1。第三轮定向24、完整357、frontend unit18/E2E mock5；真实Provider阻塞不变。
 - 方案A grounded composition已接线：Runner服务端签发run-local不可预测`search_call_id`并私有绑定实际选择后的BuiltContext；只有`grounded_answer`调用Task6 GenerationService并传播ValidatedAnswer快照，普通answer/clarify引用为空。Task14 enrichment已提炼为公共SQL服务，worker按Run owner JOIN active User恢复数据库Principal，复用Task5/6检索、rerank fallback、token budget与引用校验；legacy NULL/missing/inactive owner fail-closed。
-- assistant单条回复由确定性renderer组合grounded正文和持久化Operation事实，非SUCCEEDED不宣称退款成功；四类BGE/DeepSeek provider在worker生命周期统一关闭。本轮grounding定向60、完整后端374、frontend unit18/E2E mock7、typecheck/build、Ruff/Mypy/Alembic/PG/Redis通过。真实外部状态为`deepseek_configured=False`、`bge_health=False`，Task15整体仍等待真实Provider全链验收，不得进入Task16。
+- assistant单条回复由确定性renderer组合grounded正文和持久化Operation事实，非SUCCEEDED不宣称退款成功；四类BGE/DeepSeek provider在worker生命周期统一关闭。本轮grounding定向60、完整后端374、frontend unit18/E2E mock7、typecheck/build、Ruff/Mypy/Alembic/PG/Redis通过。2026-08-29 已配置本地 Xinference GPU 服务并真实验证 BGE-M3（1024维）与 bge-reranker-v2-m3；客户端新增 Xinference `relevance_score` 兼容与独立 reranker model 配置。DeepSeek 与完整真实Provider全链仍待验收，Task15不得进入Task16。
 
 ## 需要维护的文档
 

@@ -69,7 +69,11 @@ async def get_embedding_provider() -> AsyncIterator[EmbeddingProvider]:
 
 async def get_reranker_provider() -> AsyncIterator[RerankerProvider]:
     settings = Settings()
-    provider = BgeReranker(settings.bge_base_url, settings.bge_api_key)
+    provider = BgeReranker(
+        settings.bge_base_url,
+        settings.bge_api_key,
+        settings.bge_reranker_model,
+    )
     try:
         yield provider
     finally:

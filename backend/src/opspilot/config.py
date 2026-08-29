@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     bge_base_url: str = "http://localhost:8080/v1"
     bge_api_key: str = "local"
     bge_embedding_model: str = "BAAI/bge-m3"
+    bge_reranker_model: str = "BAAI/bge-reranker-v2-m3"
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
