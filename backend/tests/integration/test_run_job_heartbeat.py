@@ -44,7 +44,7 @@ async def test_heartbeat_keeps_long_processor_claim_from_recovery_and_duplicate_
     release = asyncio.Event()
     calls = 0
 
-    async def processor(message: RunMessage) -> RunMessageResult:
+    async def processor(message: RunMessage, fence: object) -> RunMessageResult:
         nonlocal calls
         calls += 1
         entered.set()
@@ -79,7 +79,7 @@ async def test_heartbeat_loss_fences_late_processor_result() -> None:
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def processor(message: RunMessage) -> RunMessageResult:
+    async def processor(message: RunMessage, fence: object) -> RunMessageResult:
         entered.set()
         try:
             await release.wait()
@@ -128,7 +128,7 @@ async def test_cancelled_worker_collects_processor_and_heartbeat_tasks() -> None
     run_id, message_id = await _create_job()
     entered = asyncio.Event()
 
-    async def processor(message: RunMessage) -> RunMessageResult:
+    async def processor(message: RunMessage, fence: object) -> RunMessageResult:
         entered.set()
         await asyncio.Event().wait()
         raise AssertionError("unreachable")
@@ -162,7 +162,7 @@ async def test_lease_loss_supervises_processor_that_ignores_cancellation() -> No
     entered = asyncio.Event()
     teardown = asyncio.Event()
 
-    async def processor(message: RunMessage) -> RunMessageResult:
+    async def processor(message: RunMessage, fence: object) -> RunMessageResult:
         entered.set()
         while not teardown.is_set():
             try:
@@ -193,5 +193,131 @@ async def test_lease_loss_supervises_processor_that_ignores_cancellation() -> No
         teardown.set()
         await asyncio.wait_for(drain_detached_run_processor_tasks(), timeout=5)
         assert detached_run_processor_task_count() == 0
+        await asyncio.gather(task, return_exceptions=True)
+        await _cleanup(run_id)
+
+
+async def test_detached_old_worker_cannot_create_operation_after_lease_loss() -> None:
+    """The side-effect write guard must share the Operation transaction."""
+    from sqlalchemy import select
+
+    from opspilot.execution.models import Operation
+    from opspilot.execution.service import build_refund_operation_handler
+    from opspilot.jobs.run_executor import RunJobFence, drain_detached_run_processor_tasks
+    from opspilot.tools.schemas import RefundOrderArgs
+    from opspilot.tools.types import ToolDefinition, ToolEffect, ToolResult
+
+    run_id, message_id = await _create_job()
+    entered = asyncio.Event()
+    attempt_write = asyncio.Event()
+    teardown = asyncio.Event()
+
+    async def unavailable(_: RefundOrderArgs) -> ToolResult:
+        return ToolResult(ok=False, error="unused")
+
+    definition = ToolDefinition(
+        name="refund_order",
+        description="durable refund",
+        input_schema=RefundOrderArgs,
+        effect=ToolEffect.SIDE_EFFECT,
+        idempotency_capable=True,
+        supports_reconciliation=True,
+        invoke=unavailable,
+    )
+
+    async def processor(message: RunMessage, fence: RunJobFence) -> RunMessageResult:
+        entered.set()
+        try:
+            await attempt_write.wait()
+        except asyncio.CancelledError:
+            await attempt_write.wait()
+        handler = await build_refund_operation_handler(
+            async_session_factory, run_id, transaction_guard=fence.lock
+        )
+        await handler(definition, RefundOrderArgs(order_number="ORD-002", amount=350))
+        await teardown.wait()
+        return RunMessageResult(content="must-not-write", citation_snapshots=[])
+
+    task = asyncio.create_task(
+        process_run_message(
+            {"run_message_processor": processor, "run_job_lease_seconds": 3}, str(message_id)
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        connection = await _connect()
+        try:
+            await connection.execute(
+                "UPDATE run_job_outbox SET claim_token = 'stolen-token' WHERE message_id = $1",
+                message_id,
+            )
+        finally:
+            await connection.close()
+        await asyncio.sleep(2.2)
+        attempt_write.set()
+        await asyncio.sleep(0.2)
+        async with async_session_factory() as session:
+            assert (
+                await session.scalar(
+                    select(Operation.id).where(Operation.run_id == run_id).limit(1)
+                )
+                is None
+            )
+        connection = await _connect()
+        try:
+            assert (
+                await connection.fetchval(
+                    "SELECT count(*) FROM run_events WHERE run_id = $1", run_id
+                )
+                == 0
+            )
+            assert (
+                await connection.fetchval(
+                    "SELECT count(*) FROM operation_job_outbox o "
+                    "JOIN tool_operations p ON p.id=o.operation_id WHERE p.run_id=$1",
+                    run_id,
+                )
+                == 0
+            )
+        finally:
+            await connection.close()
+
+        teardown.set()
+        await drain_detached_run_processor_tasks()
+        await asyncio.gather(task, return_exceptions=True)
+        connection = await _connect()
+        try:
+            await connection.execute(
+                "UPDATE run_job_outbox SET lease_expires_at=clock_timestamp()-interval '1 second' "
+                "WHERE message_id=$1",
+                message_id,
+            )
+        finally:
+            await connection.close()
+        assert await recover_expired_run_jobs(batch_size=1) == 1
+
+        async def new_processor(message: RunMessage, fence: RunJobFence) -> RunMessageResult:
+            handler = await build_refund_operation_handler(
+                async_session_factory, run_id, transaction_guard=fence.lock
+            )
+            result = await handler(
+                definition,
+                RefundOrderArgs(order_number="ORD-002", amount=350),
+            )
+            assert result.ok is True
+            return RunMessageResult(content="approval requested", citation_snapshots=[])
+
+        await process_run_message(
+            {"run_message_processor": new_processor, "run_job_lease_seconds": 3}, str(message_id)
+        )
+        async with async_session_factory() as session:
+            operations = list(
+                await session.scalars(select(Operation).where(Operation.run_id == run_id))
+            )
+            assert len(operations) == 1
+    finally:
+        attempt_write.set()
+        teardown.set()
+        await drain_detached_run_processor_tasks()
         await asyncio.gather(task, return_exceptions=True)
         await _cleanup(run_id)

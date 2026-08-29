@@ -14,7 +14,7 @@ from opspilot.execution.executor import execute_operation
 from opspilot.execution.models import Operation, OperationStatus
 from opspilot.execution.reconciliation import ReconciliationLookup, reconcile_operation
 from opspilot.jobs.models import RunJobOutbox, RunJobStatus
-from opspilot.jobs.run_executor import run_processor_under_lease
+from opspilot.jobs.run_executor import RunJobFence, run_processor_under_lease
 from opspilot.runs.journal import append_event
 from opspilot.runs.models import RunMessage
 from opspilot.runs.status import recompute_run_status
@@ -29,7 +29,7 @@ class RunMessageResult:
     citation_snapshots: list[dict[str, object]]
 
 
-RunMessageProcessor = Callable[[RunMessage], Awaitable[RunMessageResult]]
+RunMessageProcessor = Callable[[RunMessage, RunJobFence], Awaitable[RunMessageResult]]
 
 
 async def process_run_message(ctx: dict[str, Any], message_id: str) -> None:
@@ -95,7 +95,7 @@ async def process_run_message(ctx: dict[str, Any], message_id: str) -> None:
         owner=owner,
         token=token,
         lease_seconds=lease_seconds,
-        invoke=lambda: processor(message),
+        invoke=lambda: processor(message, RunJobFence(parsed_id, owner, token)),
     )
     async with async_session_factory() as session:
         job = await session.scalar(

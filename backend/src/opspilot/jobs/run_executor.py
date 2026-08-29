@@ -3,10 +3,11 @@
 import asyncio
 import uuid
 from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import func, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from opspilot.jobs.models import RunJobOutbox, RunJobStatus
@@ -18,6 +19,32 @@ _DETACHED_RUN_PROCESSOR_TASKS: set[asyncio.Task[Any]] = set()
 
 class RunJobLeaseConflictError(RuntimeError):
     """The run-message worker no longer owns its durable claim."""
+
+
+@dataclass(frozen=True)
+class RunJobFence:
+    """Transaction-scoped capability for durable writes by an Agent job."""
+
+    message_id: uuid.UUID
+    owner: str
+    token: str
+
+    async def lock(self, session: AsyncSession) -> None:
+        owned = await session.scalar(
+            select(RunJobOutbox.id)
+            .where(
+                RunJobOutbox.message_id == self.message_id,
+                RunJobOutbox.status == RunJobStatus.RUNNING,
+                RunJobOutbox.claim_token == self.token,
+                RunJobOutbox.lease_owner == self.owner,
+                RunJobOutbox.lease_expires_at >= func.clock_timestamp(),
+            )
+            .with_for_update()
+        )
+        if owned is None:
+            raise RunJobLeaseConflictError(
+                f"run job durable write denied for message {self.message_id}"
+            )
 
 
 def _consume(task: asyncio.Task[Any]) -> None:

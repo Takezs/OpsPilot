@@ -10,7 +10,11 @@ from opspilot.jobs.outbox import (
     publish_pending_operation_jobs,
     publish_pending_run_jobs,
 )
-from opspilot.jobs.recovery import recover_expired_operations, recover_expired_run_jobs
+from opspilot.jobs.recovery import (
+    recover_expired_operations,
+    recover_expired_run_jobs,
+    recover_stale_delivered_jobs,
+)
 from opspilot.knowledge.outbox import (
     publish_pending_document_jobs,
     reconcile_expired_retry_attempts,
@@ -47,6 +51,10 @@ async def recover_run_job_leases(ctx: dict[str, Any]) -> int:
     return await recover_expired_run_jobs()
 
 
+async def recover_unclaimed_deliveries(ctx: dict[str, Any]) -> int:
+    return await recover_stale_delivered_jobs()
+
+
 class OutboxPublisherSettings:
     redis_settings = RedisSettings.from_dsn(Settings().redis_url)
     cron_jobs = [
@@ -61,4 +69,5 @@ class OutboxPublisherSettings:
         cron(publish_run_job_outbox, second={3, 8, 13, 18, 23, 28, 33, 38, 43, 48, 53, 58}),
         cron(recover_operation_leases, second={4, 14, 24, 34, 44, 54}, unique=True),
         cron(recover_run_job_leases, second={9, 19, 29, 39, 49, 59}, unique=True),
+        cron(recover_unclaimed_deliveries, second={7, 17, 27, 37, 47, 57}, unique=True),
     ]

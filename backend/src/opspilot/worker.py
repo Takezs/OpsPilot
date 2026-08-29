@@ -7,7 +7,7 @@ from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.execution.executor import drain_detached_provider_tasks
 from opspilot.execution.service import build_refund_operation_handler
-from opspilot.jobs.run_executor import drain_detached_run_processor_tasks
+from opspilot.jobs.run_executor import RunJobFence, drain_detached_run_processor_tasks
 from opspilot.jobs.tasks import RunMessageResult, process_operation_job, process_run_message
 from opspilot.knowledge.tasks import (
     DOCUMENT_INDEX_JOB_TIMEOUT,
@@ -63,12 +63,14 @@ async def startup_worker(ctx: dict[str, object]) -> None:
         model=settings.deepseek_model,
     )
 
-    async def process(message: RunMessage) -> RunMessageResult:
+    async def process(message: RunMessage, fence: RunJobFence) -> RunMessageResult:
         run_id = message.run_id
         runner = AgentRunner(
             registry,
             decider,
-            side_effect_handler=await build_refund_operation_handler(async_session_factory, run_id),
+            side_effect_handler=await build_refund_operation_handler(
+                async_session_factory, run_id, transaction_guard=fence.lock
+            ),
         )
         outcome = await runner.run(message.content)
         content = outcome.final_answer or outcome.clarification or "任务已进入受控处理流程。"

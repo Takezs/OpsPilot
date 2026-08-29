@@ -1,6 +1,7 @@
 """Bounded production recovery for expired operation and run-job leases."""
 
 import uuid
+from datetime import timedelta
 
 from sqlalchemy import func, or_, select, update
 
@@ -8,7 +9,8 @@ from opspilot.db import async_session_factory
 from opspilot.execution.claim import LeaseConflictError, recover_expired
 from opspilot.execution.models import Operation, OperationStatus
 from opspilot.execution.reconciliation import recover_expired_reconciliation
-from opspilot.jobs.models import RunJobOutbox, RunJobStatus
+from opspilot.jobs.models import OperationJobOutbox, RunJobOutbox, RunJobStatus
+from opspilot.runs.models import RunMessage
 from opspilot.tools.types import ToolEffect
 
 
@@ -95,4 +97,86 @@ async def recover_expired_run_jobs(batch_size: int = 50) -> int:
                 recovered += 1
             else:
                 await session.rollback()
+    return recovered
+
+
+async def recover_stale_delivered_jobs(batch_size: int = 50, *, grace_seconds: int = 60) -> int:
+    """Requeue broker-acknowledged intents that were never durably claimed."""
+    recovered = 0
+    attempted_run_ids: set[uuid.UUID] = set()
+    attempted_operation_ids: set[uuid.UUID] = set()
+    for _ in range(batch_size):
+        async with async_session_factory() as session:
+            run_query = select(RunJobOutbox).where(
+                RunJobOutbox.status == RunJobStatus.PENDING,
+                RunJobOutbox.delivered_at.is_not(None),
+                RunJobOutbox.delivered_at
+                < func.clock_timestamp() - timedelta(seconds=grace_seconds),
+            )
+            if attempted_run_ids:
+                run_query = run_query.where(RunJobOutbox.id.not_in(attempted_run_ids))
+            row = await session.scalar(
+                run_query.order_by(RunJobOutbox.delivered_at, RunJobOutbox.id)
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            if row is not None:
+                attempted_run_ids.add(row.id)
+                reply = await session.scalar(
+                    select(RunMessage.id)
+                    .where(RunMessage.in_reply_to_message_id == row.message_id)
+                    .limit(1)
+                )
+                if reply is not None:
+                    row.status = RunJobStatus.COMPLETED
+                    row.completed_at = await session.scalar(select(func.clock_timestamp()))
+                    row.claim_token = None
+                    row.lease_owner = None
+                    row.lease_expires_at = None
+                    row.last_error = None
+                else:
+                    row.delivered_at = None
+                    row.available_at = func.clock_timestamp() + timedelta(seconds=1)
+                    row.last_error = "delivery acknowledgement expired before claim"
+                await session.commit()
+                recovered += 1
+                continue
+
+        async with async_session_factory() as session:
+            operation_query = (
+                select(OperationJobOutbox, Operation)
+                .join(Operation, Operation.id == OperationJobOutbox.operation_id)
+                .where(
+                    OperationJobOutbox.delivered_at.is_not(None),
+                    OperationJobOutbox.delivered_at
+                    < func.clock_timestamp() - timedelta(seconds=grace_seconds),
+                    OperationJobOutbox.last_error.is_distinct_from("stale operation job intent"),
+                )
+            )
+            if attempted_operation_ids:
+                operation_query = operation_query.where(
+                    OperationJobOutbox.id.not_in(attempted_operation_ids)
+                )
+            pair = (
+                await session.execute(
+                    operation_query.order_by(OperationJobOutbox.delivered_at, OperationJobOutbox.id)
+                    .with_for_update(skip_locked=True)
+                    .limit(1)
+                )
+            ).first()
+            if pair is None:
+                break
+            job, operation = pair
+            attempted_operation_ids.add(job.id)
+            expected_status = (
+                OperationStatus.READY if job.kind == "EXECUTE" else OperationStatus.OUTCOME_UNKNOWN
+            )
+            if operation.version == job.expected_version and operation.status is expected_status:
+                job.delivered_at = None
+                job.available_at = func.clock_timestamp() + timedelta(seconds=1)
+                job.last_error = "delivery acknowledgement expired before claim"
+            else:
+                job.last_error = "stale operation job intent"
+            await session.commit()
+            recovered += 1
     return recovered

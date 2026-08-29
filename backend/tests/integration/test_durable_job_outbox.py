@@ -131,7 +131,7 @@ async def test_approval_ready_transition_creates_execute_intent_atomically(
                 arguments_hash="a" * 64,
                 operation_version=1,
                 status=ApprovalStatus.PENDING,
-                expires_at=_NOW + timedelta(days=1),
+                expires_at=_NOW + timedelta(days=365),
             )
         )
         await session.commit()
@@ -164,7 +164,7 @@ async def test_approval_ready_transition_creates_execute_intent_atomically(
                     arguments_hash="a" * 64,
                     operation_version=1,
                     status=ApprovalStatus.PENDING,
-                    expires_at=_NOW + timedelta(days=1),
+                    expires_at=_NOW + timedelta(days=365),
                 )
             )
             await session.commit()
@@ -345,7 +345,7 @@ async def test_duplicate_run_jobs_claim_before_calling_processor() -> None:
     release = asyncio.Event()
     calls = 0
 
-    async def processor(message: RunMessage) -> RunMessageResult:
+    async def processor(message: RunMessage, fence: object) -> RunMessageResult:
         nonlocal calls
         calls += 1
         entered.set()
@@ -410,7 +410,7 @@ async def test_run_stays_running_while_created_operation_is_not_terminal() -> No
         )
         await session.commit()
 
-    async def processor(message: RunMessage) -> RunMessageResult:
+    async def processor(message: RunMessage, fence: object) -> RunMessageResult:
         return RunMessageResult(content="approval requested", citation_snapshots=[])
 
     try:

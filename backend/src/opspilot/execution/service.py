@@ -346,6 +346,8 @@ async def _validate_retry(
 async def build_refund_operation_handler(
     session_factory: Callable[[], AsyncSession],
     run_id: uuid.UUID,
+    *,
+    transaction_guard: Callable[[AsyncSession], Awaitable[None]] | None = None,
 ) -> Callable[[ToolDefinition, RefundOrderArgs], Awaitable[ToolResult]]:
     """Wire a refund_order SIDE_EFFECT decision into the durable Operation flow.
 
@@ -363,6 +365,8 @@ async def build_refund_operation_handler(
             )
         try:
             async with session_factory() as session:
+                if transaction_guard is not None:
+                    await transaction_guard(session)
                 operation = await create_refund_operation(
                     session, run_id, arguments.order_number, arguments.amount
                 )

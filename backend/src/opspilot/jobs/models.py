@@ -2,7 +2,16 @@ import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,7 +31,18 @@ class RunJobStatus(StrEnum):
 
 class RunJobOutbox(Base):
     __tablename__ = "run_job_outbox"
-    __table_args__ = (Index("ix_run_job_pending", "delivered_at", "available_at"),)
+    __table_args__ = (
+        Index("ix_run_job_pending", "delivered_at", "available_at"),
+        CheckConstraint(
+            "(status = 'PENDING' AND claim_token IS NULL AND lease_owner IS NULL "
+            "AND lease_expires_at IS NULL AND completed_at IS NULL) OR "
+            "(status = 'RUNNING' AND claim_token IS NOT NULL AND lease_owner IS NOT NULL "
+            "AND lease_expires_at IS NOT NULL AND completed_at IS NULL) OR "
+            "(status = 'COMPLETED' AND claim_token IS NULL AND lease_owner IS NULL "
+            "AND lease_expires_at IS NULL AND completed_at IS NOT NULL)",
+            name="ck_run_job_lifecycle",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     message_id: Mapped[uuid.UUID] = mapped_column(
