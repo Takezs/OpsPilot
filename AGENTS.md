@@ -57,7 +57,7 @@
 - M3 / 任务 12 可靠 SSE 已通过督导复审（2026-08-26）。
 - M4 / 任务 13 Vue 应用壳、登录与 API 客户端已通过督导复审（2026-08-27），批准提交 `10b0d65`、`cb41271`。
 - M4 / 任务 14 知识库、检索调试器与引用抽屉已通过督导复审（2026-08-27），批准提交 `2b6dc34`、`6eab4a4`、`d6f98ed`；下一项是任务 15。
-- M4 / 任务 15 生产 grounded composition 接线已完成，等待真实 Provider 验收：方案A由Runner签发run-local `search_call_id`绑定精确BuiltContext，Task5/6检索、rerank、Generation与引用快照已接入worker；身份仅由Run owner数据库事实恢复，Provider由worker统一关闭。本地 Xinference BGE-M3 embedding 与 bge-reranker-v2-m3 已真实健康验证；DeepSeek 与完整 API→ARQ→Provider E2E 仍待验收，不得开始任务16。
+- M4 / 任务 15 生产 grounded composition 接线已完成，等待真实 Provider 验收：方案A由Runner签发run-local `search_call_id`绑定精确BuiltContext，Task5/6检索、rerank、Generation与引用快照已接入worker；身份仅由Run owner数据库事实恢复，Provider由worker统一关闭。本地 Xinference BGE-M3 embedding、bge-reranker-v2-m3 及经显式 Clash 代理访问的 DeepSeek models/chat 均已真实健康验证；完整 API→ARQ→Provider E2E 仍待验收，不得开始任务16。
 - `attempt=0` outbox lifecycle 是已记录的非阻塞技术债，不要顺带重构。
 
 ## 常用验证命令

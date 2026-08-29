@@ -10,8 +10,9 @@ from opspilot.retrieval.reranker import BgeReranker
 
 
 class _ClosableOpenAI:
-    def __init__(self, **_: Any) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         self.close_calls = 0
+        self.kwargs = kwargs
 
     async def close(self) -> None:
         self.close_calls += 1
@@ -69,6 +70,38 @@ async def test_bge_reranker_closes_injected_http_client() -> None:
     await reranker.aclose()
 
     assert client.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("module", "factory"),
+    [
+        (
+            generation_provider,
+            lambda: generation_provider.DeepSeekGenerationProvider(
+                api_key="configured",
+                proxy_url="http://127.0.0.1:7897",
+            ),
+        ),
+        (
+            agent_runner,
+            lambda: agent_runner.DeepSeekAgentDecider(
+                api_key="configured",
+                proxy_url="http://127.0.0.1:7897",
+            ),
+        ),
+    ],
+)
+async def test_deepseek_providers_use_explicit_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+    module: object,
+    factory: Any,
+) -> None:
+    monkeypatch.setattr(module, "AsyncOpenAI", _ClosableOpenAI)
+
+    provider = factory()
+
+    assert "http_client" in provider._client.kwargs
+    await provider.aclose()
 
 
 async def test_worker_shutdown_closes_grounding_providers_once(

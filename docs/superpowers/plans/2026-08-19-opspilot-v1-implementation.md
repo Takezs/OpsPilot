@@ -619,7 +619,7 @@ git add frontend backend/tests/e2e
 git commit -m "feat: deliver auditable approval refund workflow"
 ```
 
-**状态：方案A生产grounded composition接线完成，等待真实Provider E2E（2026-08-29）。** Runner服务端签发run-local `search_call_id`绑定精确BuiltContext，未知/跨run ID fail-closed；worker从Run owner数据库事实构造scope并复用Task5/6 Retrieval、SQL enrichment、reranker、Context Builder、Generation与Citation Validator。单条assistant回复由ValidatedAnswer及服务端Operation事实确定性组成，非SUCCEEDED不宣称退款成功；Provider由worker统一关闭。本轮grounding定向60 passed、完整后端374 passed，frontend unit18、Playwright mock回归7、typecheck/build、Ruff/Mypy/Alembic/PG/Redis通过。当前`deepseek_configured=False`、`bge_health=False`，不得宣称真实全链通过或开始Task16。
+**状态：方案A生产grounded composition接线完成，真实Provider健康，等待完整E2E（2026-08-30）。** Runner服务端签发run-local `search_call_id`绑定精确BuiltContext，未知/跨run ID fail-closed；worker从Run owner数据库事实构造scope并复用Task5/6 Retrieval、SQL enrichment、reranker、Context Builder、Generation与Citation Validator。单条assistant回复由ValidatedAnswer及服务端Operation事实确定性组成，非SUCCEEDED不宣称退款成功；Provider由worker统一关闭。本地BGE embedding/reranker及经显式`DEEPSEEK_PROXY_URL`访问的DeepSeek models/chat均已真实健康验证；不得在完整API→ARQ→Provider E2E前宣称通过或开始Task16。
 
 ### 任务 16：v1.0 评测数据集与确定性指标
 

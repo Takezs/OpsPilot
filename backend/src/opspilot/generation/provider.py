@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from typing import Protocol
 
+import httpx
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -34,9 +35,16 @@ class DeepSeekGenerationProvider:
         base_url: str = "https://api.deepseek.com",
         model: str = "deepseek-v4-flash",
         timeout_seconds: float = 60.0,
+        proxy_url: str | None = None,
     ) -> None:
         self.model = model
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout_seconds)
+        http_client = httpx.AsyncClient(proxy=proxy_url) if proxy_url else None
+        self._client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            timeout=timeout_seconds,
+            http_client=http_client,
+        )
 
     async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
         response = await self._client.chat.completions.create(

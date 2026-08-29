@@ -68,12 +68,14 @@ async def startup_worker(ctx: dict[str, object]) -> None:
         settings.deepseek_api_key,
         base_url=settings.deepseek_base_url,
         model=settings.deepseek_model,
+        proxy_url=settings.deepseek_proxy_url,
     )
     generation_service = GenerationService(generation_provider)
     decider = DeepSeekAgentDecider(
         settings.deepseek_api_key,
         base_url=settings.deepseek_base_url,
         model=settings.deepseek_model,
+        proxy_url=settings.deepseek_proxy_url,
     )
     ctx.update(
         embedding_provider=embedding_provider,
