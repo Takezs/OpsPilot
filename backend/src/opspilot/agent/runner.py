@@ -12,6 +12,7 @@ contract.
 """
 
 import json
+import secrets
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
@@ -21,10 +22,12 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from opspilot.agent.prompts import render_system_prompt, render_untrusted_tool_output
 from opspilot.agent.state import AgentMessage, AgentState
+from opspilot.generation.citations import ValidatedAnswer
+from opspilot.retrieval.context_builder import BuiltContext, CitationSnapshot
 from opspilot.tools.registry import ToolRegistry, validate_arguments
 from opspilot.tools.types import ToolDefinition, ToolEffect, ToolResult
 
-DecisionKind = Literal["answer", "clarify", "tool_call"]
+DecisionKind = Literal["answer", "clarify", "tool_call", "grounded_answer"]
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,24 @@ class AgentDecision:
     question: str | None = None
     tool: str | None = None
     arguments: dict[str, Any] | None = None
+    search_call_id: str | None = None
+
+
+@dataclass(frozen=True)
+class GroundedSearchResult:
+    """Server-owned search result; only ``summary`` is exposed to the decider."""
+
+    summary: ToolResult
+    context: BuiltContext
+
+
+@dataclass(frozen=True)
+class WorkflowFact:
+    """Durable server fact returned by a SIDE_EFFECT operation handler."""
+
+    operation_id: str
+    tool: str
+    status: str
 
 
 @dataclass(frozen=True)
@@ -45,6 +66,9 @@ class AgentOutcome:
     rounds: int = 0
     tool_calls: int = 0
     bounded: bool = False
+    citation_snapshots: tuple[CitationSnapshot, ...] = ()
+    workflow_facts: tuple[WorkflowFact, ...] = ()
+    grounded: bool = False
 
 
 class DecisionProvider(Protocol):
@@ -54,6 +78,8 @@ class DecisionProvider(Protocol):
 
 
 SideEffectHandler = Callable[[ToolDefinition, Any], Awaitable[ToolResult]]
+KnowledgeSearchHandler = Callable[[Any], Awaitable[GroundedSearchResult]]
+GroundedAnswerHandler = Callable[[str, BuiltContext], Awaitable[ValidatedAnswer]]
 
 
 class AgentRunner:
@@ -65,18 +91,29 @@ class AgentRunner:
         max_rounds: int = 8,
         max_tool_calls: int = 6,
         side_effect_handler: SideEffectHandler | None = None,
+        knowledge_search_handler: KnowledgeSearchHandler | None = None,
+        grounded_answer_handler: GroundedAnswerHandler | None = None,
     ) -> None:
         self._registry = registry
         self._decision_provider = decision_provider
         self._max_rounds = max_rounds
         self._max_tool_calls = max_tool_calls
         self._side_effect_handler = side_effect_handler
+        self._knowledge_search_handler = knowledge_search_handler
+        self._grounded_answer_handler = grounded_answer_handler
 
     async def run(self, user_message: str) -> AgentOutcome:
         state = AgentState(messages=[AgentMessage(role="user", content=user_message)])
+        grounded_contexts: dict[str, BuiltContext] = {}
+        workflow_facts: list[WorkflowFact] = []
         while True:
             if state.rounds >= self._max_rounds:
-                return AgentOutcome(rounds=state.rounds, tool_calls=state.tool_calls, bounded=True)
+                return AgentOutcome(
+                    rounds=state.rounds,
+                    tool_calls=state.tool_calls,
+                    bounded=True,
+                    workflow_facts=tuple(workflow_facts),
+                )
             state.rounds += 1
             decision = await self._decision_provider.decide(state, self._registry.all())
             if decision.kind == "answer":
@@ -84,15 +121,38 @@ class AgentRunner:
                     final_answer=decision.answer,
                     rounds=state.rounds,
                     tool_calls=state.tool_calls,
+                    workflow_facts=tuple(workflow_facts),
                 )
             if decision.kind == "clarify":
                 return AgentOutcome(
                     clarification=decision.question,
                     rounds=state.rounds,
                     tool_calls=state.tool_calls,
+                    workflow_facts=tuple(workflow_facts),
+                )
+            if decision.kind == "grounded_answer":
+                call_id = decision.search_call_id
+                context = grounded_contexts.get(call_id or "")
+                if context is None:
+                    raise DecisionError("grounded_answer references an unknown or expired search")
+                if self._grounded_answer_handler is None:
+                    raise DecisionError("grounded answer generation is not configured")
+                validated = await self._grounded_answer_handler(user_message, context)
+                return AgentOutcome(
+                    final_answer=validated.answer,
+                    rounds=state.rounds,
+                    tool_calls=state.tool_calls,
+                    citation_snapshots=validated.snapshots,
+                    workflow_facts=tuple(workflow_facts),
+                    grounded=True,
                 )
             if state.tool_calls >= self._max_tool_calls:
-                return AgentOutcome(rounds=state.rounds, tool_calls=state.tool_calls, bounded=True)
+                return AgentOutcome(
+                    rounds=state.rounds,
+                    tool_calls=state.tool_calls,
+                    bounded=True,
+                    workflow_facts=tuple(workflow_facts),
+                )
             if decision.kind != "tool_call":
                 raise DecisionError(
                     f"decision provider returned unsupported decision kind: {decision.kind!r}"
@@ -103,7 +163,26 @@ class AgentRunner:
             definition = self._registry.get(tool_name)
             arguments = validate_arguments(definition, decision.arguments or {})
             state.tool_calls += 1
-            if definition.effect is ToolEffect.SIDE_EFFECT:
+            if definition.name == "search_knowledge" and self._knowledge_search_handler:
+                grounded = await self._knowledge_search_handler(arguments)
+                summary = dict(grounded.summary.data or {})
+                summary.pop("search_call_id", None)
+                if grounded.summary.ok:
+                    call_id = secrets.token_urlsafe(24)
+                    while call_id in grounded_contexts:
+                        call_id = secrets.token_urlsafe(24)
+                    if len(grounded_contexts) >= self._max_rounds:
+                        raise DecisionError("grounded search context limit exceeded")
+                    grounded_contexts[call_id] = grounded.context
+                    summary["search_call_id"] = call_id
+                result = ToolResult(
+                    ok=grounded.summary.ok,
+                    data=summary,
+                    error=grounded.summary.error,
+                    provider_not_called=grounded.summary.provider_not_called,
+                    failure_kind=grounded.summary.failure_kind,
+                )
+            elif definition.effect is ToolEffect.SIDE_EFFECT:
                 # The runner never executes a SIDE_EFFECT adapter directly: the
                 # decision is handed to the durable-operation handler, or fails
                 # closed when none is wired. Only READ_ONLY tools keep the Task 8
@@ -118,6 +197,9 @@ class AgentRunner:
                     )
                 else:
                     result = await self._side_effect_handler(definition, arguments)
+                    fact = _workflow_fact(definition, result)
+                    if fact is not None:
+                        workflow_facts.append(fact)
             else:
                 result = await definition.invoke(arguments)
             state.messages.append(
@@ -128,6 +210,31 @@ class AgentRunner:
                     tool_arguments=decision.arguments,
                 )
             )
+
+
+def _workflow_fact(definition: ToolDefinition, result: ToolResult) -> WorkflowFact | None:
+    """Read only the server-produced durable Operation shape, never model text."""
+    if not result.ok or result.data is None:
+        return None
+    operation_id = result.data.get("operation_id")
+    status = result.data.get("status")
+    if not isinstance(operation_id, str) or not operation_id:
+        return None
+    allowed_statuses = {
+        "WAITING_APPROVAL",
+        "READY",
+        "EXECUTING",
+        "OUTCOME_UNKNOWN",
+        "RECONCILING",
+        "MANUAL_REVIEW",
+        "DENIED",
+        "REJECTED",
+        "FAILED",
+        "SUCCEEDED",
+    }
+    if not isinstance(status, str) or status not in allowed_statuses:
+        return None
+    return WorkflowFact(operation_id=operation_id, tool=definition.name, status=status)
 
 
 class DecisionError(RuntimeError):
@@ -157,6 +264,10 @@ class DeepSeekAgentDecider:
         if content is None:
             raise DecisionError("decider returned an empty response")
         return _parse_decision(content)
+
+    async def aclose(self) -> None:
+        """Close the owned OpenAI-compatible HTTP client."""
+        await self._client.close()
 
 
 def _render_api_messages(
@@ -222,4 +333,11 @@ def _parse_decision(content: str) -> AgentDecision:
         if not isinstance(arguments, dict):
             raise DecisionError("decider tool_call decision 'arguments' must be a JSON object")
         return AgentDecision(kind="tool_call", tool=tool, arguments=arguments)
+    if kind == "grounded_answer":
+        call_id = payload.get("search_call_id")
+        if not isinstance(call_id, str) or not call_id.strip():
+            raise DecisionError(
+                "decider grounded_answer decision needs a non-empty 'search_call_id' string"
+            )
+        return AgentDecision(kind="grounded_answer", search_call_id=call_id)
     raise DecisionError(f"decider returned unknown decision type: {kind!r}")

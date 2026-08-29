@@ -23,10 +23,13 @@ from opspilot.agent.runner import (
     AgentDecision,
     AgentRunner,
     DecisionError,
+    GroundedSearchResult,
     _parse_decision,
     _render_api_messages,
 )
 from opspilot.agent.state import AgentMessage, AgentState
+from opspilot.generation.citations import ValidatedAnswer
+from opspilot.retrieval.context_builder import BuiltContext, CitationSnapshot, ContextFragment
 from opspilot.tools.registry import (
     ToolArgumentError,
     ToolDependencies,
@@ -98,6 +101,10 @@ def _clarify(question: str) -> AgentDecision:
 
 def _tool(name: str, **arguments: Any) -> AgentDecision:
     return AgentDecision(kind="tool_call", tool=name, arguments=arguments)
+
+
+def _grounded(search_call_id: str) -> AgentDecision:
+    return AgentDecision(kind="grounded_answer", search_call_id=search_call_id)
 
 
 class ScriptedDecisionProvider:
@@ -348,6 +355,9 @@ async def test_refund_order_decisions_never_invoke_payment_adapter() -> None:
     assert [name for name, _ in received] == ["refund_order"] * len(amounts)
     assert outcome.final_answer == "created operations"
     assert outcome.tool_calls == len(amounts)
+    assert len(outcome.workflow_facts) == len(amounts)
+    assert all(fact.tool == "refund_order" for fact in outcome.workflow_facts)
+    assert all(fact.status == "WAITING_APPROVAL" for fact in outcome.workflow_facts)
 
 
 async def test_side_effect_without_handler_is_fail_closed() -> None:
@@ -367,3 +377,122 @@ async def test_side_effect_without_handler_is_fail_closed() -> None:
 
     assert all(name != "refund_order" for name, _ in fake.calls)
     assert outcome.final_answer == "blocked"
+
+
+async def test_grounded_answer_uses_runner_owned_id_and_exact_built_context() -> None:
+    fake = FakeTools()
+    fragment = ContextFragment(
+        document_id="d1",
+        chunk_id="c1",
+        title="Policy",
+        document_version=3,
+        section_path=("Refunds",),
+        effective_at=__import__("datetime").datetime(2026, 1, 1),
+        page=2,
+        content="Refunds require approval.",
+        token_count=5,
+    )
+    context = BuiltContext((fragment,), token_budget=100, total_tokens=21, truncated=False)
+    observed: list[tuple[str, BuiltContext]] = []
+
+    async def search(_: Any) -> GroundedSearchResult:
+        return GroundedSearchResult(
+            summary=ToolResult(
+                ok=True,
+                data={"result_count": 1, "search_call_id": "provider-chosen-id"},
+            ),
+            context=context,
+        )
+
+    async def generate(query: str, exact: BuiltContext) -> ValidatedAnswer:
+        observed.append((query, exact))
+        return ValidatedAnswer(
+            answer="Approval is required [DOC:d1#c1].",
+            citations=("[DOC:d1#c1]",),
+            snapshots=(CitationSnapshot("d1", 3, "c1", ("Refunds",), 2),),
+            insufficient_evidence=False,
+            follow_up_question=None,
+        )
+
+    async def capture_search(arguments: Any) -> GroundedSearchResult:
+        result = await search(arguments)
+        return result
+
+    class CapturingDecider:
+        call_id: str | None = None
+
+        async def decide(self, state: AgentState, tools: tuple[Any, ...]) -> AgentDecision:
+            if len(state.messages) == 1:
+                return _tool("search_knowledge", query="refund policy", top_k=5)
+            payload = json.loads(state.messages[-1].content)
+            self.call_id = payload["search_call_id"]
+            assert self.call_id not in {"", "provider-chosen-id"}
+            assert "Refunds require approval" not in state.messages[-1].content
+            return _grounded(self.call_id)
+
+    runner = AgentRunner(
+        _registry(fake),
+        CapturingDecider(),
+        knowledge_search_handler=capture_search,
+        grounded_answer_handler=generate,
+    )
+    outcome = await runner.run("What is the refund policy?")
+
+    assert observed == [("What is the refund policy?", context)]
+    assert outcome.final_answer == "Approval is required [DOC:d1#c1]."
+    assert outcome.citation_snapshots == (CitationSnapshot("d1", 3, "c1", ("Refunds",), 2),)
+
+
+async def test_grounded_answer_rejects_unknown_or_cross_run_search_id() -> None:
+    fake = FakeTools()
+    runner = AgentRunner(_registry(fake), ScriptedDecisionProvider([_grounded("another-run-id")]))
+
+    with pytest.raises(DecisionError, match="unknown or expired"):
+        await runner.run("question")
+
+
+async def test_failed_search_does_not_issue_a_grounded_call_id() -> None:
+    fake = FakeTools()
+
+    async def failed(_: Any) -> GroundedSearchResult:
+        return GroundedSearchResult(
+            summary=ToolResult(
+                ok=False,
+                data={"search_call_id": "provider-chosen-id"},
+                error="search unavailable",
+            ),
+            context=BuiltContext((), token_budget=100, total_tokens=0, truncated=False),
+        )
+
+    provider = ScriptedDecisionProvider(
+        [_tool("search_knowledge", query="refund", top_k=5), _answer("fallback")]
+    )
+    outcome = await AgentRunner(_registry(fake), provider, knowledge_search_handler=failed).run(
+        "question"
+    )
+
+    assert outcome.final_answer == "fallback"
+    assert "search_call_id" not in provider.tool_results_seen[0]
+
+
+async def test_plain_answer_and_clarification_never_have_citations() -> None:
+    fake = FakeTools()
+    answer = await AgentRunner(
+        _registry(fake), ScriptedDecisionProvider([_answer("unverified")])
+    ).run("question")
+    clarification = await AgentRunner(
+        _registry(fake), ScriptedDecisionProvider([_clarify("which policy?")])
+    ).run("question")
+
+    assert answer.citation_snapshots == ()
+    assert clarification.citation_snapshots == ()
+
+
+def test_parse_grounded_answer_requires_non_empty_search_call_id() -> None:
+    decision = _parse_decision(
+        json.dumps({"type": "grounded_answer", "search_call_id": "server-id"})
+    )
+    assert decision == AgentDecision(kind="grounded_answer", search_call_id="server-id")
+    for value in (None, "", "   ", 3):
+        with pytest.raises(DecisionError):
+            _parse_decision(json.dumps({"type": "grounded_answer", "search_call_id": value}))

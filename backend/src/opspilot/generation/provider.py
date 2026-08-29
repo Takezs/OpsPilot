@@ -52,6 +52,10 @@ class DeepSeekGenerationProvider:
             raise GenerationProviderError("Chat provider returned an empty response")
         return GroundedAnswer.model_validate_json(content)
 
+    async def aclose(self) -> None:
+        """Close the owned OpenAI-compatible HTTP client."""
+        await self._client.close()
+
 
 class DeterministicGenerationProvider:
     """Canned answers for unit tests; never calls an external service."""

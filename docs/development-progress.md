@@ -1,8 +1,8 @@
 # OpsPilot 开发进度
 
-> 最后更新：2026-08-27
+> 最后更新：2026-08-29
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M1–M4 / 任务 1–14 已通过督导复审；任务 15 可靠性修复完成，等待再次复审（真实 Provider 阻塞项除外）
+> 当前阶段：M1–M4 / 任务 1–14 已通过督导复审；任务 15 生产 grounded composition 已接线，等待真实 Provider E2E
 
 ## 总体进度
 
@@ -11,7 +11,7 @@
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
 | M3 可靠 Agent | 8–12 | 已完成并批准 | 任务 8–12 已通过督导复审 |
-| M4 产品界面 | 13–15 | 待开发 | 五个主页面、引用抽屉、退款 E2E |
+| M4 产品界面 | 13–15 | 任务15验收阻塞 | UI与durable runtime完成；真实Provider引用退款E2E待环境 |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
 
@@ -32,6 +32,11 @@
 - 2026-08-29 第三轮复审修复：新增delivery watchdog。Run PENDING和Operation READY/OUTCOME_UNKNOWN的过期broker ack在PG锁下重置并退避重投；已有reply收敛COMPLETED，已前进Operation intent标记stale且不重复扫描。0020将0019历史delivered jobs按reply事实确定性回填，并用CHECK封闭PENDING/RUNNING/COMPLETED的token/owner/lease/completed_at组合。
 - `RunJobFence`显式传入生产Agent processor；`build_refund_operation_handler`在创建Operation的同一session/事务锁定并验证status/token/owner/live lease。失权detached Agent后续side-effect尝试产生0 Operation、0 Event、0 job intent；新owner恢复后只创建1个幂等Operation。
 - 第三轮Red：watchdog API缺失4 failed、RunJobFence缺失1 failed、0020迁移缺失；Green第三轮定向24 passed，完整后端357 passed；frontend unit18、Playwright UI mock回归5、typecheck/build通过；0020↔0019往返、脏历史/原子失败及scratch 0001→0020全链通过。
+- 2026-08-29 方案A生产接线：AgentRunner新增服务端签发、单次run私有且有界的`search_call_id -> BuiltContext`映射；未知/跨run ID fail-closed。只有`grounded_answer`会把原始用户问题和精确BuiltContext交给Task6 GenerationService，普通answer/clarify/error引用恒空。ValidatedAnswer快照与单条assistant reply在既有fenced事务持久化。
+- Task14 metadata enrichment已提炼为Retrieval公共服务，单条SQL重复执行Chunk→Document→KB、READY、KnowledgeScope与可选KB过滤；worker每次消息通过Run JOIN active User恢复数据库当前Principal，复用Task5 Retrieval、RRF、reranker fallback、Task6 Context Builder及持久化Chunk.token_count。Tool摘要只含有界数量、降级状态和citation IDs，不暴露正文。
+- 单条回复由确定性renderer组合grounded正文与持久化Operation事实；LLM不能提供Operation摘要，WAITING_APPROVAL/READY/EXECUTING/OUTCOME_UNKNOWN/RECONCILING/MANUAL_REVIEW均不宣称退款成功。BGE embedding/reranker与DeepSeek decision/generation在worker startup创建、shutdown统一`aclose`。
+- 本轮Red：grounded contract因类型缺失collection error；renderer模块缺失collection error；公共enrichment与Run composition模块缺失collection error；DeepSeek两个客户端关闭测试为2 failed/2 passed。Green：grounding/Task5/6/14定向60 passed，完整后端374 passed；frontend unit18、Playwright真实HTTP契约mock回归7、typecheck/build通过；Ruff check、源码/测试format、Mypy96、Alembic0020 head、PG/Redis健康。Playwright全目录最初误收Vitest文件失败，配置明确忽略unit suites后全命令通过。
+- 外部阻塞仍准确：`deepseek_configured=False`、`bge_health=False`。未使用Fake完成权限SQL或真实验收，未宣称公开API→ARQ→真实Provider→引用→审批→Payment全链通过。
 - 演示 Order/Payment 增加 ORD-002=350；仅显式 E2E 环境启用一次 timeout-after-effect。真实独立 Uvicorn HTTP进程测试证明 OUTCOME_UNKNOWN→RECONCILING→SUCCEEDED、PG seq连续、退款记录严格为1，并有界清理子进程。
 - Red：后端 Workspace API 5 failed、durable outbox 5 failed；前端 SSE suite 1 failed（模块不存在）。Green：Task15后端定向11 passed，可靠执行组合81 passed，完整328 passed in 65.08s；frontend unit10、Playwright7、typecheck/build通过；Ruff、Mypy90、Alembic0018及0018↔0017往返、PG/Redis健康。
 - 偏离：Run message生产Processor使用既有 DeepSeek AgentRunner，但当前检索工具在operation worker中fail-closed，assistant citation snapshots的真实生成仍依赖部署的Generation组合；核心退款可靠性E2E不依赖Fake数据库/Redis/Payment，但前端交互Playwright使用已存在HTTP契约mock作视觉回归。
@@ -272,7 +277,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 任务 12：可靠 SSE（✅ 已通过督导复审；批准 `9a68056`、`d8b391d`；迁移 `0017`）。
 - 任务 13：Vue 应用壳、登录与 API 客户端（✅ 已通过督导复审（2026-08-27），批准 `10b0d65`、`cb41271`）。
 - 任务 14：知识库、检索调试器与引用抽屉（✅ 已通过督导复审（2026-08-27），批准 `2b6dc34`、`6eab4a4`、`d6f98ed`）。
-- 任务 15：工作台、审批、Run时间线与核心退款 E2E（未开始）。
+- 任务 15：工作台、审批、Run时间线与核心退款 E2E（生产接线完成；真实Provider E2E阻塞，等待复审）。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。
 - 任务 18：可观测性、脱敏、容器部署、文档与 v1.0 发布。
 

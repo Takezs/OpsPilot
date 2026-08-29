@@ -12,7 +12,8 @@ from opspilot.auth.schemas import Principal
 from opspilot.config import Settings
 from opspilot.db import get_session
 from opspilot.knowledge.embedding import BgeM3EmbeddingProvider, EmbeddingProvider
-from opspilot.knowledge.models import Chunk, Document, DocumentStatus, KnowledgeBase
+from opspilot.knowledge.models import KnowledgeBase
+from opspilot.retrieval.enrichment import CandidateMetadata, load_candidate_metadata
 from opspilot.retrieval.reranker import (
     BgeReranker,
     RerankerProvider,
@@ -75,32 +76,9 @@ async def get_reranker_provider() -> AsyncIterator[RerankerProvider]:
         await provider.aclose()
 
 
-async def _metadata(
-    session: AsyncSession,
-    candidates: list[RetrievalCandidate],
-    principal: Principal,
-    knowledge_base_id: uuid.UUID | None,
-) -> dict[str, tuple[Chunk, Document]]:
-    ids = [uuid.UUID(candidate.chunk_id) for candidate in candidates]
-    if not ids:
-        return {}
-    statement = (
-        select(Chunk, Document)
-        .join(Document, Chunk.document_id == Document.id)
-        .join(KnowledgeBase, Document.knowledge_base_id == KnowledgeBase.id)
-        .where(Chunk.id.in_(ids), Document.status == DocumentStatus.READY)
-        .where(scope_conditions(principal.knowledge_scope))
-    )
-    if knowledge_base_id is not None:
-        statement = statement.where(Document.knowledge_base_id == knowledge_base_id)
-    return {
-        str(chunk.id): (chunk, document) for chunk, document in await session.execute(statement)
-    }
-
-
 def _stage(
     candidates: list[RetrievalCandidate],
-    metadata: dict[str, tuple[Chunk, Document]],
+    metadata: dict[str, CandidateMetadata],
     source: Literal["dense", "fts", "rrf", "reranker"],
     reindex: bool = False,
 ) -> list[RetrievalStageItem]:
@@ -109,17 +87,16 @@ def _stage(
         item = metadata.get(candidate.chunk_id)
         if item is None:
             continue
-        chunk, document = item
-        safe_content = sanitize_value(chunk.content)
+        safe_content = sanitize_value(item.content)
         excerpt = safe_content if isinstance(safe_content, str) else ""
         result.append(
             RetrievalStageItem(
-                chunk_id=chunk.id,
-                document_id=document.id,
-                document_version=document.version,
-                document_title=document.title,
-                section_path=list(chunk.section_path),
-                page=chunk.page,
+                chunk_id=item.chunk_id,
+                document_id=item.document_id,
+                document_version=item.document_version,
+                document_title=item.document_title,
+                section_path=list(item.section_path),
+                page=item.page,
                 rank=len(result) + 1 if reindex else candidate.rank,
                 score=candidate.score,
                 source=source,
@@ -154,9 +131,11 @@ async def retrieval_debug(
         knowledge_base_id=request.knowledge_base_id,
     )
     all_candidates = [*result.dense, *result.fts, *result.rrf]
-    metadata = await _metadata(session, all_candidates, principal, request.knowledge_base_id)
+    metadata = await load_candidate_metadata(
+        session, all_candidates, principal.knowledge_scope, request.knowledge_base_id
+    )
     rerank_items = [
-        RerankItem(candidate=candidate, content=metadata[candidate.chunk_id][0].content)
+        RerankItem(candidate=candidate, content=metadata[candidate.chunk_id].content)
         for candidate in result.rrf
         if candidate.chunk_id in metadata
     ]

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
+    generation_context_token_budget: int = 4000
+    retrieval_reranker_timeout_seconds: float = 5.0
     # Task 9: default time-to-decide for a pending approval request.
     approval_ttl_seconds: int = 86400
     order_service_url: str = "http://127.0.0.1:8101"

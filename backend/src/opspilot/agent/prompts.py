@@ -9,6 +9,7 @@ _DECISION_CONTRACT = (
     "these shapes:\n"
     '{"type": "answer", "answer": "..."}\n'
     '{"type": "clarify", "question": "..."}\n'
+    '{"type": "grounded_answer", "search_call_id": "<server-issued-id>"}\n'
     '{"type": "tool_call", "tool": "<name>", "arguments": {...}}'
 )
 
