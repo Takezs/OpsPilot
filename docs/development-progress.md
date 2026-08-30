@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-29
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M1–M4 / 任务 1–15 已通过督导复审；任务 16 UUID身份与Agent操作期望修复已完成，等待再次复审
+> 当前阶段：M1–M5 / 任务 1–16 已通过督导复审；下一项为任务 17 异步实验Runner、故障矩阵与评测看板
 
 ## 总体进度
 
@@ -268,7 +268,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - **Task 14 复审修复（2026-08-27，已批准）**：文档轮询 fetch 契约现接收并传递 AbortSignal 至 Axios GET，响应返回后、`onUpdate` 前再次检查 signal，覆盖响应/abort同轮竞态；卸载可取消飞行中请求且不再陈旧写入。CitationDrawer 使用 AbortController + 单调 generation，关闭、切换snapshot、卸载均取消；旧/已关闭响应不能更新detail/loading/error，Axios cancellation不显示错误。严格Red：轮询 abort 后错误解析READY（`1 failed, 1 passed`），citation loader缺失（suite failed）；Green frontend unit `5 passed`。最终Task14后端相关`19 passed`、完整`317 passed in 44.68s`，Task14 E2E `2 passed`、login `4 passed`、其余门禁通过。
 - **督导最终批准（2026-08-27）**：批准 `2b6dc34`（scope知识读取/检索调试/精确版本引用API）、`6eab4a4`（知识入库、四阶段检索与引用抽屉UI）、`d6f98ed`（异步取消与generation防陈旧回写）。独立 frontend unit `5 passed`、typecheck、Task14 E2E `2 passed`；后端scope/retrieval独立定向 `8 passed`。
 
-## 任务 16：v1.0评测数据集与确定性指标（等待再次复审）
+## 任务 16：v1.0评测数据集与确定性指标（已通过督导复审，2026-08-30）
 
 - 新增确定性生成器和版本化语料：dev 60、冻结test 140、agent任务60、独立攻击集40；生成器、计数与覆盖由机器复核，六个产物必须逐字节可复现，未手改报告数字。
 - P1复审修复后，Document/Chunk身份由固定namespace的UUIDv5确定性生成，可直接映射生产PostgreSQL UUID模型；不存在Task17运行时临时改写。`test.jsonl`重新冻结SHA-256为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`。
@@ -276,7 +276,8 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 实现手算可验证的Recall@5、Precision@5、MRR、nDCG@5、工具Precision/Recall/F1、未经审批执行率、重复副作用率，并精确核验引用ID、订单、金额、幂等键、审批与最终数据库状态。LLM Judge失败不阻断确定性结果。
 - 新增`0021_evaluation_tables`，真实PostgreSQL验证0001→head、约束负例与0021↔0020往返；复审修复定向20 passed，完整后端409 passed/3 skipped，Mypy 103 source files通过。Ruff在不可读ACL目录上会panic，明确Task16文件集format/check通过；PostgreSQL/Redis健康。
 - P2门禁修复：督导范围首次真实Red为根目录生成器I001；仅排序`ApprovalExpectation` import，并由确定性生成流程更新manifest中的generator SHA。冻结test内容与SHA保持`e0a5eb5a…bf8c`不变。`ruff check src tests alembic ../evaluation/generate_datasets.py`通过，Task16全部13个Python文件format check通过；全历史目录format check另暴露已批准0019的一处旧格式差异，未越权夹带修改。
-- 严格停在任务16，等待督导复审；不得开始任务17 Runner、实验配置或看板。
+- 督导最终批准提交`bbeea2f`（主实现）、`34fcba9`（UUID身份与条件Operation事实）、`c43332d`（根生成器Ruff范围）；Bugbot无finding。独立门禁：定向20 passed、13个Task16 Python文件format check、扩大范围Ruff check、Mypy103、Alembic0021、PG/Redis均通过。
+- 下一项任务17；冻结test仍为`final_test_executed=false`，执行前必须先建立参数冻结与不可重复执行的审计契约。
 
 ## 后续开发计划
 

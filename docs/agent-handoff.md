@@ -188,7 +188,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 2026-08-30 BGE恢复后的最终Green：真实Provider诊断定位文本citation缺末尾`]`，未采用容错补字符；DeepSeek改为明确输出结构化document/chunk身份，适配器仅规范化格式，现有BuiltContext校验仍拒绝不存在/错配引用。单轮live先通过1 passed/39.18s，随后正式连续3轮3 passed/111.15s；每轮唯一marker精确命中document/version/chunk，公开history与PG Journal连续，Payment退款严格1。完整后端389 passed/3 skipped，frontend unit18、Playwright7、typecheck/build、Ruff/Mypy/Alembic0020及PG/Redis/BGE健康均通过。
 - 督导最终批准（2026-08-30）：批准`d910b8e`与`39c75b8`及此前Task15实现/可靠性提交链。独立关键定向54 passed，Ruff check、Mypy 96、Alembic0020、PostgreSQL/Redis均通过。Task15已闭环；下一项仅为Task16，不得提前进入Task17。
 
-## 任务 16（复审修复完成，等待再次复审）
+## 任务 16（已通过督导复审，2026-08-30）
 
 - 严格Red→Green：evaluation包/Schema/指标初始导入产生2个collection error；补契约后缺`AgentEvaluationCase`/citation指标产生2个collection error；0021迁移模型缺失产生1个collection error；语料文件缺失产生1 failed；业务结果精确核验缺`ActualAgentOutcome`产生1个collection error。实现后定向16 passed。
 - 冻结语料：dev60、test140、agent60、独立攻击集40；复审修复后`test.jsonl` SHA-256为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，manifest明确`final_test_executed=false`。生成脚本和机器复核记录已提交，复现测试逐字节比较所有六个生成产物。
@@ -197,7 +197,8 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 首次复审P1修复：固定namespace UUIDv5替代`doc-test-*`/`chunk-test-*`，schema和冻结语料均验证canonical UUID并可构造生产Document/Chunk UUID模型；Task17无需猜测映射。Agent case新增`operation_expected`，非操作用例四项业务事实必须全为NULL且不参与评分，操作用例则四项必须全部存在并继续严格评分。
 - 本轮Red真实为3 failed：旧Chunk ID不能构造UUID，clarification与answer-only各因四个强制字段ValidationError失败；Green复审修复定向20 passed，完整后端409 passed、3 skipped；Mypy 103 source files、Ruff、0021全链/往返、PG/Redis通过。
 - P2门禁修复Red：从backend执行`ruff check src tests alembic ../evaluation/generate_datasets.py`在根生成器报I001（`ApprovalExpectation`顺序）。仅排序该import；重生成只改变manifest的generator SHA，test文件零diff且冻结SHA不变。Green为定向20 passed、全范围Ruff check通过、Task16 13个Python文件format check通过、Mypy103与0021 head通过。全历史format check另发现已批准0019的一处旧格式差异，遵守最小范围未修改。
-- 未实现Task17 runner、公开API、实验矩阵或看板；等待Task16督导复审。
+- 督导最终批准`bbeea2f`、`34fcba9`、`c43332d`，Bugbot无finding；独立定向20 passed，Task16 13文件format check、扩大范围Ruff check、Mypy103、0021 head及PG/Redis全部通过。冻结test SHA为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，生成器SHA与manifest一致，`final_test_executed=false`。
+- 下一项任务17。开始实现前必须裁决冻结test从“未执行”到“一次性已执行”的持久化审计状态机，不得静默绕过Task16 manifest保护。
 
 ## 需要维护的文档
 

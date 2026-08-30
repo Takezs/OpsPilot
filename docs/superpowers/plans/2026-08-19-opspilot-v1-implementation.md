@@ -623,7 +623,7 @@ git commit -m "feat: deliver auditable approval refund workflow"
 
 ### 任务 16：v1.0 评测数据集与确定性指标
 
-**状态：复审修复完成，等待再次复审（2026-08-30）。** 固定namespace UUIDv5保证冻结Document/Chunk身份兼容生产UUID；`operation_expected`使纯知识/追问无需伪造业务事实，同时Operation用例继续严格核验。重新冻结test SHA-256为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`且未执行最终test评分；生成器I001已修复并纳入根目录Ruff门禁，迁移仍为`0021_evaluation_tables`。定向20 passed，完整后端409 passed/3 skipped，Mypy 103、Task16 Ruff文件集、PG/Redis通过。未开始任务17。
+**状态：已通过督导复审（2026-08-30）。** 批准`bbeea2f`（主实现）、`34fcba9`（UUID身份与条件Operation事实P1修复）、`c43332d`（根生成器Ruff范围P2修复）；Bugbot无finding。督导独立定向20 passed、Task16 13文件format check、扩大范围Ruff check、Mypy103、Alembic0021及PG/Redis通过。冻结test SHA-256为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，生成器SHA与manifest一致，`final_test_executed=false`。
 
 **文件：**
 - 创建：`evaluation/datasets/dev.jsonl`、`test.jsonl`、`agent_tasks.jsonl`、`attacks.jsonl`
