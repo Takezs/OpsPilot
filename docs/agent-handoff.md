@@ -188,6 +188,15 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 2026-08-30 BGE恢复后的最终Green：真实Provider诊断定位文本citation缺末尾`]`，未采用容错补字符；DeepSeek改为明确输出结构化document/chunk身份，适配器仅规范化格式，现有BuiltContext校验仍拒绝不存在/错配引用。单轮live先通过1 passed/39.18s，随后正式连续3轮3 passed/111.15s；每轮唯一marker精确命中document/version/chunk，公开history与PG Journal连续，Payment退款严格1。完整后端389 passed/3 skipped，frontend unit18、Playwright7、typecheck/build、Ruff/Mypy/Alembic0020及PG/Redis/BGE健康均通过。
 - 督导最终批准（2026-08-30）：批准`d910b8e`与`39c75b8`及此前Task15实现/可靠性提交链。独立关键定向54 passed，Ruff check、Mypy 96、Alembic0020、PostgreSQL/Redis均通过。Task15已闭环；下一项仅为Task16，不得提前进入Task17。
 
+## 任务 16（完成，等待督导复审）
+
+- 严格Red→Green：evaluation包/Schema/指标初始导入产生2个collection error；补契约后缺`AgentEvaluationCase`/citation指标产生2个collection error；0021迁移模型缺失产生1个collection error；语料文件缺失产生1 failed；业务结果精确核验缺`ActualAgentOutcome`产生1个collection error。实现后定向16 passed。
+- 冻结语料：dev60、test140、agent60、独立攻击集40；`test.jsonl` SHA-256为`3db1b431a1af6714c1ee4c8d88c297aee36e38dd2c01071c0936a4976010ba19`，manifest明确`final_test_executed=false`。生成脚本和机器复核记录已提交，复现测试逐字节比较所有六个生成产物。
+- 确定性指标包含Recall@5、Precision@5、MRR、nDCG@5、工具P/R/F1、未经审批执行率、重复副作用率；另精确核验citation ID、订单号、金额、幂等键、审批状态、工具参数及最终状态。LLM Judge仅补充且异常不影响确定性分数。
+- 迁移`0021_evaluation_tables`基于0020，真实PG验证0001→0021、top_k/lifecycle/latency/唯一约束负例及0021→0020→0021；主库current为0021 head。
+- 门禁：Task16定向16 passed；完整后端405 passed、3 skipped；Mypy 103 source files通过。Ruff全仓format因既有不可读`backend/JavaProjectsOpsPilot.pytest-temp-agent/`触发工具panic，Task16明确文件集format/check通过。PG accepting、Redis PONG。
+- 未实现Task17 runner、公开API、实验矩阵或看板；等待Task16督导复审。
+
 ## 需要维护的文档
 
 任务完成后更新：

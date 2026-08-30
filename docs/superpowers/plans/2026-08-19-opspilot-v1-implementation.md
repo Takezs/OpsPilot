@@ -623,29 +623,31 @@ git commit -m "feat: deliver auditable approval refund workflow"
 
 ### 任务 16：v1.0 评测数据集与确定性指标
 
+**状态：已完成，等待督导复审（2026-08-30）。** 冻结语料dev60/test140/agent60/攻击40，test SHA-256为`3db1b431a1af6714c1ee4c8d88c297aee36e38dd2c01071c0936a4976010ba19`且未执行最终test评分；迁移为`0021_evaluation_tables`。定向16 passed，完整后端405 passed/3 skipped，Mypy 103、Task16 Ruff文件集、PG/Redis通过。未开始任务17。
+
 **文件：**
 - 创建：`evaluation/datasets/dev.jsonl`、`test.jsonl`、`agent_tasks.jsonl`、`attacks.jsonl`
 - 创建：`backend/src/opspilot/evaluation/models.py`、`schemas.py`、`retrieval_metrics.py`、`answer_metrics.py`、`agent_metrics.py`、`reliability_metrics.py`
 - 创建：`backend/alembic/versions/` 下基于当前 head 生成的新 revision（禁止使用固定名称 `0006_evaluation.py`）
 - 创建：`backend/tests/evaluation/test_schema.py`、`test_metrics.py`
 
-- [ ] **步骤 1：编写数据集 Schema 测试**
+- [x] **步骤 1：编写数据集 Schema 测试**
 
 用例必须包含版本、相关 Chunk、必要/禁止事实、预期/禁止工具、追问、审批和最终业务状态；冻结 test 集前记录 SHA-256。
 
-- [ ] **步骤 2：编写手算指标测试**
+- [x] **步骤 2：编写手算指标测试**
 
 固定小排名验证 Recall@5、Precision@5、MRR、nDCG@5；固定工具集合验证 Precision/Recall/F1；断言未经审批执行率与重复副作用率。
 
-- [ ] **步骤 3：实现模型与指标**
+- [x] **步骤 3：实现模型与指标**
 
 确定性验证引用 ID、订单号、金额、工具名/参数、审批状态和最终数据库事实。LLM Judge 只能补充 Correctness/Faithfulness，失败不能阻止确定性指标。
 
-- [ ] **步骤 4：生成并复核 200+ 合成用例**
+- [x] **步骤 4：生成并复核 200+ 合成用例**
 
 dev 60、test 140，攻击集独立；最终 test 集在参数冻结前禁止运行。提交生成脚本和复核记录，不能手改报告数字。
 
-- [ ] **步骤 5：验证并提交**
+- [x] **步骤 5：验证并提交**
 
 运行：`cd backend && pytest tests/evaluation/test_schema.py tests/evaluation/test_metrics.py -q`。预期 PASS。
 
