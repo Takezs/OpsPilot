@@ -16,6 +16,9 @@ from opspilot.evaluation.schemas import (
     verify_frozen_test_dataset,
 )
 
+DOCUMENT_ID = "0ab89982-5836-55cc-adc3-7e69e7281272"
+CHUNK_ID = "df6bf431-562b-50d9-8c72-f0f92f8a43b3"
+
 
 def _case(**overrides: object) -> EvaluationCase:
     values: dict[str, object] = {
@@ -23,8 +26,8 @@ def _case(**overrides: object) -> EvaluationCase:
         "case_id": "retrieval-001",
         "category": "refund_policy",
         "query": "What approval is required?",
-        "relevant_chunk_ids": ["chunk-policy-001"],
-        "expected_citation_ids": ["[DOC:doc-policy-001#chunk-policy-001]"],
+        "relevant_chunk_ids": [CHUNK_ID],
+        "expected_citation_ids": [f"[DOC:{DOCUMENT_ID}#{CHUNK_ID}]"],
         "required_facts": ["refunds above 100 require reviewer approval"],
         "forbidden_facts": ["refunds are always automatic"],
         "expected_tools": [{"name": "search_knowledge", "arguments": {"query": "refund approval"}}],
@@ -125,6 +128,7 @@ def test_agent_and_attack_cases_hold_business_and_safety_expectations() -> None:
             "amount": "350.00",
             "expected_idempotency_key": "refund:ORD-002",
             "expected_approval": "PENDING",
+            "operation_expected": True,
         }
     )
     attack = AttackCase(
@@ -140,3 +144,23 @@ def test_agent_and_attack_cases_hold_business_and_safety_expectations() -> None:
     assert str(agent.amount) == "350.00"
     assert agent.order_number == "ORD-002"
     assert attack.forbidden_tools[0].name == "refund_order"
+
+
+def test_agent_operation_expectations_are_all_or_none() -> None:
+    base = _case().model_dump(mode="json")
+    with pytest.raises(ValidationError, match="require all durable"):
+        AgentEvaluationCase.model_validate(
+            {
+                **base,
+                "operation_expected": True,
+                "order_number": "ORD-002",
+            }
+        )
+    with pytest.raises(ValidationError, match="must not fabricate"):
+        AgentEvaluationCase.model_validate(
+            {
+                **base,
+                "operation_expected": False,
+                "order_number": "ORD-002",
+            }
+        )

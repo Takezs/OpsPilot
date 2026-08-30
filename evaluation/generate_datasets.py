@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import uuid
 from collections import Counter
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -20,10 +21,11 @@ from opspilot.evaluation.schemas import (
 )
 
 SCHEMA_VERSION = "1.0.0"
-CORPUS_VERSION = "2026-08-30.1"
+CORPUS_VERSION = "2026-08-30.2"
 GENERATION_SEED = 160830
 FROZEN_AT = datetime(2026, 8, 30, tzinfo=UTC)
 ROOT = Path(__file__).resolve().parents[1]
+IDENTITY_NAMESPACE = uuid.UUID("a5e57775-fbad-5d63-b7d1-c1bf5a07f1c2")
 
 
 def _tool(name: str, **arguments: object) -> dict[str, object]:
@@ -34,8 +36,8 @@ def _regular_case(split: str, index: int) -> EvaluationCase:
     number = index + 1
     category_index = index % 7
     order_number = f"ORD-{1000 + number}"
-    document_id = f"doc-{split}-{number:03d}"
-    chunk_id = f"chunk-{split}-{number:03d}"
+    document_id = str(uuid.uuid5(IDENTITY_NAMESPACE, f"{split}:document:{number}"))
+    chunk_id = str(uuid.uuid5(IDENTITY_NAMESPACE, f"{split}:chunk:{number}"))
     base: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "case_id": f"{split}-{number:03d}",
@@ -126,23 +128,29 @@ def _regular_case(split: str, index: int) -> EvaluationCase:
 def _agent_case(index: int) -> AgentEvaluationCase:
     regular = _regular_case("agent", index)
     order_number = f"ORD-{2000 + index + 1}"
-    amount = Decimal("350.00") if regular.approval_required else Decimal("50.00")
+    operation_expected = regular.category not in {
+        "refund_policy",
+        "missing_order_clarification",
+    }
     payload = regular.model_dump(mode="json")
     payload["query"] = payload["query"].replace(f"ORD-{1000 + index + 1}", order_number)
-    payload.update(
-        order_number=order_number,
-        amount=str(amount),
-        expected_idempotency_key=f"refund:{order_number}",
-        expected_approval=(
-            ApprovalExpectation.NOT_REQUIRED
-            if not regular.approval_required
-            else ApprovalExpectation.PENDING
-            if regular.expected_final_state.value == "WAITING_APPROVAL"
-            else ApprovalExpectation.REJECTED
-            if regular.expected_final_state.value in {"REJECTED", "DENIED"}
-            else ApprovalExpectation.APPROVED
-        ),
-    )
+    payload["operation_expected"] = operation_expected
+    if operation_expected:
+        amount = Decimal("350.00") if regular.approval_required else Decimal("50.00")
+        payload.update(
+            order_number=order_number,
+            amount=str(amount),
+            expected_idempotency_key=f"refund:{order_number}",
+            expected_approval=(
+                ApprovalExpectation.NOT_REQUIRED
+                if not regular.approval_required
+                else ApprovalExpectation.PENDING
+                if regular.expected_final_state.value == "WAITING_APPROVAL"
+                else ApprovalExpectation.REJECTED
+                if regular.expected_final_state.value in {"REJECTED", "DENIED"}
+                else ApprovalExpectation.APPROVED
+            ),
+        )
     # Keep exact tool arguments aligned with the explicit business identity.
     payload["expected_tools"] = [
         {
@@ -233,6 +241,15 @@ def generate(output_dir: Path) -> None:
             "test": len(test),
             "agent_tasks": len(agents),
             "attacks": len(attacks),
+        },
+        "identity_strategy": {
+            "algorithm": "UUIDv5",
+            "namespace": str(IDENTITY_NAMESPACE),
+            "runtime_remap_required": False,
+        },
+        "agent_operation_counts": {
+            "operation": sum(case.operation_expected for case in agents),
+            "non_operation": sum(not case.operation_expected for case in agents),
         },
         "category_counts": dict(sorted(Counter(case.category for case in regular).items())),
         "coverage": {

@@ -6,6 +6,8 @@
 
 - `dev.jsonl` 与 `test.jsonl` 使用独立 case ID；`agent_tasks.jsonl` 与 `attacks.jsonl` 也有独立命名空间。
 - Schema 覆盖相关 Chunk、精确 citation ID、必要/禁止事实、预期/禁止工具、追问、审批、订单号、金额、业务幂等键和最终状态。
+- Document/Chunk identity由固定namespace的UUIDv5生成，直接兼容生产PostgreSQL UUID主键；Task17不需要也不允许临时重映射。
+- Agent用例以`operation_expected`显式区分：纯知识与追问不携带Operation业务身份，退款/核对用例才要求订单、金额、幂等键与审批的全量精确校验。
 - 攻击集与 dev/test 分离，覆盖提示注入、工具输出注入、越权检索、审批绕过和重复副作用请求。
 - `test.jsonl` 的 SHA-256 在 `manifest.json` 中冻结；Task 16 仅验证 Schema、覆盖与哈希，没有运行最终 test 评分。
 - 生成器复现测试要求六个机器生成文件逐字节一致，防止手改用例或复核数字。

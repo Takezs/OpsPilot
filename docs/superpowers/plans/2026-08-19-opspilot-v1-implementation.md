@@ -623,7 +623,7 @@ git commit -m "feat: deliver auditable approval refund workflow"
 
 ### 任务 16：v1.0 评测数据集与确定性指标
 
-**状态：已完成，等待督导复审（2026-08-30）。** 冻结语料dev60/test140/agent60/攻击40，test SHA-256为`3db1b431a1af6714c1ee4c8d88c297aee36e38dd2c01071c0936a4976010ba19`且未执行最终test评分；迁移为`0021_evaluation_tables`。定向16 passed，完整后端405 passed/3 skipped，Mypy 103、Task16 Ruff文件集、PG/Redis通过。未开始任务17。
+**状态：复审修复完成，等待再次复审（2026-08-30）。** 固定namespace UUIDv5保证冻结Document/Chunk身份兼容生产UUID；`operation_expected`使纯知识/追问无需伪造业务事实，同时Operation用例继续严格核验。重新冻结test SHA-256为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`且未执行最终test评分；迁移仍为`0021_evaluation_tables`。定向20 passed，完整后端409 passed/3 skipped，Mypy 103、Task16 Ruff文件集、PG/Redis通过。未开始任务17。
 
 **文件：**
 - 创建：`evaluation/datasets/dev.jsonl`、`test.jsonl`、`agent_tasks.jsonl`、`attacks.jsonl`

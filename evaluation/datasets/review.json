@@ -1,4 +1,8 @@
 {
+  "agent_operation_counts": {
+    "non_operation": 18,
+    "operation": 42
+  },
   "category_counts": {
     "approval_rejected": 36,
     "approval_required": 38,
@@ -8,7 +12,7 @@
     "refund_policy": 38,
     "unknown_outcome": 36
   },
-  "corpus_version": "2026-08-30.1",
+  "corpus_version": "2026-08-30.2",
   "counts": {
     "agent_tasks": 60,
     "attacks": 40,
@@ -26,6 +30,11 @@
     "required_facts": true
   },
   "final_test_executed": false,
+  "identity_strategy": {
+    "algorithm": "UUIDv5",
+    "namespace": "a5e57775-fbad-5d63-b7d1-c1bf5a07f1c2",
+    "runtime_remap_required": false
+  },
   "schema_version": "1.0.0",
-  "test_sha256": "3db1b431a1af6714c1ee4c8d88c297aee36e38dd2c01071c0936a4976010ba19"
+  "test_sha256": "e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c"
 }

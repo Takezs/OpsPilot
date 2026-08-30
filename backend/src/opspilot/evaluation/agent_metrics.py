@@ -37,20 +37,20 @@ class ToolMetrics:
 
 @dataclass(frozen=True)
 class ActualAgentOutcome:
-    order_number: str
-    amount: Decimal
-    idempotency_key: str
+    order_number: str | None
+    amount: Decimal | None
+    idempotency_key: str | None
     tool_calls: tuple[ToolCall, ...]
-    approval: ApprovalExpectation
+    approval: ApprovalExpectation | None
     final_state: ExpectedOutcome
 
 
 @dataclass(frozen=True)
 class AgentOutcomeMetrics:
-    order_number_match: bool
-    amount_match: bool
-    idempotency_key_match: bool
-    approval_match: bool
+    order_number_match: bool | None
+    amount_match: bool | None
+    idempotency_key_match: bool | None
+    approval_match: bool | None
     final_state_match: bool
     tools: ToolMetrics
     passed: bool
@@ -82,19 +82,24 @@ def evaluate_agent_outcome(
 ) -> AgentOutcomeMetrics:
     expected_tools = tuple(ToolCall(item.name, item.arguments) for item in expected.expected_tools)
     tools = tool_metrics(actual.tool_calls, expected_tools)
-    matches = (
-        actual.order_number == expected.order_number,
-        actual.amount == expected.amount,
-        actual.idempotency_key == expected.expected_idempotency_key,
-        actual.approval is expected.expected_approval,
-        actual.final_state is expected.expected_final_state,
+    final_state_match = actual.final_state is expected.expected_final_state
+    matches: tuple[bool | None, ...] = (
+        actual.order_number == expected.order_number if expected.operation_expected else None,
+        actual.amount == expected.amount if expected.operation_expected else None,
+        actual.idempotency_key == expected.expected_idempotency_key
+        if expected.operation_expected
+        else None,
+        actual.approval is expected.expected_approval if expected.operation_expected else None,
+        final_state_match,
     )
     return AgentOutcomeMetrics(
         order_number_match=matches[0],
         amount_match=matches[1],
         idempotency_key_match=matches[2],
         approval_match=matches[3],
-        final_state_match=matches[4],
+        final_state_match=final_state_match,
         tools=tools,
-        passed=all(matches) and tools.precision == 1.0 and tools.recall == 1.0,
+        passed=all(match for match in matches if match is not None)
+        and tools.precision == 1.0
+        and tools.recall == 1.0,
     )

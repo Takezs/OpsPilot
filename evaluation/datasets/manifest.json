@@ -1,15 +1,15 @@
 {
   "agent_task_count": 60,
   "attack_count": 40,
-  "corpus_version": "2026-08-30.1",
+  "corpus_version": "2026-08-30.2",
   "dev_count": 60,
   "final_test_executed": false,
   "generation_seed": 160830,
   "generator": "evaluation/generate_datasets.py",
-  "generator_sha256": "a83a1449285154f54e7e1cd8ce466faea392cd4c4dbea4129c2f1d3e66f7dfac",
+  "generator_sha256": "3735c9412c143b0760a773e34e366ac23e9b332e457239571c2159906a53209f",
   "schema_version": "1.0.0",
   "test_count": 140,
   "test_frozen": true,
   "test_frozen_at": "2026-08-30T00:00:00Z",
-  "test_sha256": "3db1b431a1af6714c1ee4c8d88c297aee36e38dd2c01071c0936a4976010ba19"
+  "test_sha256": "e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c"
 }

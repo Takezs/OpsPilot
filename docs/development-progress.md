@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-29
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M1–M4 / 任务 1–15 已通过督导复审；任务 16 v1.0评测数据集与确定性指标已完成，等待督导复审
+> 当前阶段：M1–M4 / 任务 1–15 已通过督导复审；任务 16 UUID身份与Agent操作期望修复已完成，等待再次复审
 
 ## 总体进度
 
@@ -268,12 +268,13 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - **Task 14 复审修复（2026-08-27，已批准）**：文档轮询 fetch 契约现接收并传递 AbortSignal 至 Axios GET，响应返回后、`onUpdate` 前再次检查 signal，覆盖响应/abort同轮竞态；卸载可取消飞行中请求且不再陈旧写入。CitationDrawer 使用 AbortController + 单调 generation，关闭、切换snapshot、卸载均取消；旧/已关闭响应不能更新detail/loading/error，Axios cancellation不显示错误。严格Red：轮询 abort 后错误解析READY（`1 failed, 1 passed`），citation loader缺失（suite failed）；Green frontend unit `5 passed`。最终Task14后端相关`19 passed`、完整`317 passed in 44.68s`，Task14 E2E `2 passed`、login `4 passed`、其余门禁通过。
 - **督导最终批准（2026-08-27）**：批准 `2b6dc34`（scope知识读取/检索调试/精确版本引用API）、`6eab4a4`（知识入库、四阶段检索与引用抽屉UI）、`d6f98ed`（异步取消与generation防陈旧回写）。独立 frontend unit `5 passed`、typecheck、Task14 E2E `2 passed`；后端scope/retrieval独立定向 `8 passed`。
 
-## 任务 16：v1.0评测数据集与确定性指标（等待督导复审）
+## 任务 16：v1.0评测数据集与确定性指标（等待再次复审）
 
 - 新增确定性生成器和版本化语料：dev 60、冻结test 140、agent任务60、独立攻击集40；生成器、计数与覆盖由机器复核，六个产物必须逐字节可复现，未手改报告数字。
-- `test.jsonl` 冻结SHA-256为`3db1b431a1af6714c1ee4c8d88c297aee36e38dd2c01071c0936a4976010ba19`；Task16只验证Schema、覆盖、生成复现与哈希，`final_test_executed=false`，未提前运行最终test评分。
+- P1复审修复后，Document/Chunk身份由固定namespace的UUIDv5确定性生成，可直接映射生产PostgreSQL UUID模型；不存在Task17运行时临时改写。`test.jsonl`重新冻结SHA-256为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`。
+- Agent语料新增显式`operation_expected`：纯知识与缺订单追问不再携带或评分订单、金额、幂等键、审批；退款Operation用例仍要求四项全部存在并精确评分。`final_test_executed=false`，未提前运行最终test评分。
 - 实现手算可验证的Recall@5、Precision@5、MRR、nDCG@5、工具Precision/Recall/F1、未经审批执行率、重复副作用率，并精确核验引用ID、订单、金额、幂等键、审批与最终数据库状态。LLM Judge失败不阻断确定性结果。
-- 新增`0021_evaluation_tables`，真实PostgreSQL验证0001→head、约束负例与0021↔0020往返；任务16定向16 passed，完整后端405 passed/3 skipped，Mypy 103 source files通过。Ruff在不可读ACL目录上会panic，明确Task16文件集format/check通过；PostgreSQL/Redis健康。
+- 新增`0021_evaluation_tables`，真实PostgreSQL验证0001→head、约束负例与0021↔0020往返；复审修复定向20 passed，完整后端409 passed/3 skipped，Mypy 103 source files通过。Ruff在不可读ACL目录上会panic，明确Task16文件集format/check通过；PostgreSQL/Redis健康。
 - 严格停在任务16，等待督导复审；不得开始任务17 Runner、实验配置或看板。
 
 ## 后续开发计划

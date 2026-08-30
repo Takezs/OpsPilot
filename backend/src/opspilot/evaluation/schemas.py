@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -67,6 +68,9 @@ class EvaluationCase(BaseModel):
             raise ValueError("relevant_chunk_ids must be unique")
         if len(set(self.expected_citation_ids)) != len(self.expected_citation_ids):
             raise ValueError("expected_citation_ids must be unique")
+        for chunk_id in self.relevant_chunk_ids:
+            if str(uuid.UUID(chunk_id)) != chunk_id:
+                raise ValueError("relevant chunk id must be a canonical UUID")
         for citation in self.expected_citation_ids:
             if (
                 not citation.startswith("[DOC:")
@@ -75,6 +79,9 @@ class EvaluationCase(BaseModel):
             ):
                 raise ValueError("expected citation id is not canonical")
             chunk_id = citation.rsplit("#", 1)[1][:-1]
+            document_id = citation.removeprefix("[DOC:").split("#", 1)[0]
+            if str(uuid.UUID(document_id)) != document_id:
+                raise ValueError("citation document id must be a canonical UUID")
             if chunk_id not in self.relevant_chunk_ids:
                 raise ValueError("expected citation must reference a relevant chunk")
         required = {item.strip().casefold() for item in self.required_facts}
@@ -101,13 +108,28 @@ class EvaluationCase(BaseModel):
 
 
 class AgentEvaluationCase(EvaluationCase):
-    order_number: str = Field(pattern=r"^ORD-\d{3,}$")
-    amount: Decimal = Field(gt=0, decimal_places=2)
-    expected_idempotency_key: str = Field(min_length=1, max_length=255)
-    expected_approval: ApprovalExpectation
+    operation_expected: bool
+    order_number: str | None = Field(default=None, pattern=r"^ORD-\d{3,}$")
+    amount: Decimal | None = Field(default=None, gt=0, decimal_places=2)
+    expected_idempotency_key: str | None = Field(default=None, min_length=1, max_length=255)
+    expected_approval: ApprovalExpectation | None = None
 
     @model_validator(mode="after")
     def validate_approval_expectation(self) -> AgentEvaluationCase:
+        operation_values = (
+            self.order_number,
+            self.amount,
+            self.expected_idempotency_key,
+            self.expected_approval,
+        )
+        if self.operation_expected and any(value is None for value in operation_values):
+            raise ValueError("operation cases require all durable business expectations")
+        if not self.operation_expected and any(value is not None for value in operation_values):
+            raise ValueError("non-operation cases must not fabricate business expectations")
+        if not self.operation_expected and self.approval_required:
+            raise ValueError("non-operation cases cannot require operation approval")
+        if not self.operation_expected:
+            return self
         if self.approval_required == (self.expected_approval is ApprovalExpectation.NOT_REQUIRED):
             raise ValueError("approval expectation must match approval_required")
         return self

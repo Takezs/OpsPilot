@@ -144,6 +144,7 @@ def test_agent_outcome_uses_exact_business_and_database_facts() -> None:
         amount=Decimal("350.00"),
         expected_idempotency_key="refund:ORD-002",
         expected_approval=ApprovalExpectation.PENDING,
+        operation_expected=True,
     )
     actual = ActualAgentOutcome(
         order_number="ORD-002",
@@ -176,3 +177,43 @@ def test_agent_outcome_uses_exact_business_and_database_facts() -> None:
         wrong.approval_match,
         wrong.final_state_match,
     ) == (False, False, False, False, False)
+
+
+@pytest.mark.parametrize("category", ["missing_order_clarification", "refund_policy"])
+def test_non_operation_cases_need_no_fabricated_business_identity(category: str) -> None:
+    expected = AgentEvaluationCase(
+        schema_version="1.0.0",
+        case_id=f"agent-{category}",
+        category=category,
+        query="Please explain the policy." if category == "refund_policy" else "Please refund it.",
+        relevant_chunk_ids=(),
+        expected_citation_ids=(),
+        required_facts=(),
+        forbidden_facts=("refund succeeded",),
+        expected_tools=(),
+        forbidden_tools=(),
+        follow_up_required=category == "missing_order_clarification",
+        approval_required=False,
+        expected_final_state=(
+            ExpectedOutcome.CLARIFICATION
+            if category == "missing_order_clarification"
+            else ExpectedOutcome.ANSWERED
+        ),
+        operation_expected=False,
+    )
+    actual = ActualAgentOutcome(
+        order_number=None,
+        amount=None,
+        idempotency_key=None,
+        tool_calls=(),
+        approval=None,
+        final_state=expected.expected_final_state,
+    )
+
+    score = evaluate_agent_outcome(actual, expected)
+
+    assert score.passed is True
+    assert score.order_number_match is None
+    assert score.amount_match is None
+    assert score.idempotency_key_match is None
+    assert score.approval_match is None
