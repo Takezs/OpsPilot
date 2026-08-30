@@ -619,7 +619,7 @@ git add frontend backend/tests/e2e
 git commit -m "feat: deliver auditable approval refund workflow"
 ```
 
-**状态：引用链复审加固完成，等待连续真实Provider全链再次验收（2026-08-30）。** 空BuiltContext不再视为成功检索；Runner签发ID与untrusted工具数据分离，成功检索后的模型plain answer不能直接持久化，只能由精确BuiltContext经严格ValidatedAnswer产生正文和快照。引用生成重试有界且不伪造citation；Run job外层watchdog覆盖有界Agent预算，lease仍由heartbeat/fencing保护。完整后端387 passed/3 live opt-in skipped；当前Docker重启后Xinference模型未加载，须恢复BGE后连续3轮live通过方可提交最终复审。不得开始Task16。
+**状态：引用链复审加固及连续真实Provider全链验收完成，等待督导最终复审（2026-08-30）。** 空BuiltContext不视为成功检索；Runner签发ID与untrusted数据分离，成功检索后的plain answer不能直接持久化，只能由精确BuiltContext经严格ValidatedAnswer产生正文与快照。DeepSeek明确返回结构化document/chunk身份，适配器规范化后仍由上下文严格验证，不补写或猜测引用。正式连续3轮live均通过，逐轮证明唯一marker引用精确匹配、public/PG seq连续和退款count=1；完整后端389 passed/3 skipped，frontend unit18/E2E7及全部门禁通过。尚未获督导批准，不得开始Task16。
 
 ### 任务 16：v1.0 评测数据集与确定性指标
 

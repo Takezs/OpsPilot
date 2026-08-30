@@ -4,11 +4,16 @@ from opspilot.retrieval.context_builder import BuiltContext, ContextFragment
 
 SYSTEM_PROMPT = (
     "You answer enterprise questions strictly from the provided context blocks. "
-    "Every factual claim must cite the exact [DOC:<document_id>#<chunk_id>] ids "
-    "present in the context. If the context has no evidence for a factual answer, "
+    "Every factual claim must cite identities present at the start of the context blocks. "
+    "Return citations as JSON objects with exactly document_id and chunk_id fields copied "
+    "character-for-character from those block ids; never invent or alter either field. "
+    "When a context block directly answers "
+    "the query, citations must contain its id and insufficient_evidence must be false. "
+    "If the context has no evidence for a factual answer, "
     "set insufficient_evidence to true. If you need to ask for clarification, set "
     "follow_up_question instead. Respond with a single JSON object with keys "
-    '"answer", "citations", "insufficient_evidence", "follow_up_question".'
+    '"answer", "citations", "insufficient_evidence", "follow_up_question". '
+    'Example citations shape: [{"document_id":"...","chunk_id":"..."}].'
 )
 
 REWRITE_SYSTEM_PROMPT = (

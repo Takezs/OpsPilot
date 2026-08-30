@@ -16,6 +16,8 @@ from opspilot.auth.models import Role, User
 from opspilot.auth.service import AuthService
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
+from opspilot.generation.citations import validate_citations
+from opspilot.generation.provider import DeepSeekGenerationProvider
 from opspilot.knowledge.embedding import BgeM3EmbeddingProvider
 from opspilot.knowledge.models import Chunk, Document, DocumentStatus, KnowledgeBase
 from opspilot.retrieval.reranker import BgeReranker
@@ -227,15 +229,34 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
             assert grounded.summary.data["result_count"] >= 1
             assert any(item.chunk_id == str(chunk.id) for item in grounded.context.fragments)
 
+            generation_provider = DeepSeekGenerationProvider(
+                settings.deepseek_api_key,
+                base_url=settings.deepseek_base_url,
+                model=settings.deepseek_model,
+                proxy_url=settings.deepseek_proxy_url,
+            )
+            try:
+                diagnostic_query = (
+                    f"According to our knowledge base, what exactly does policy marker "
+                    f"{marker} say? Include its supporting evidence."
+                )
+                raw_grounded = await generation_provider.answer(
+                    query=diagnostic_query, context=grounded.context
+                )
+                validated_grounded = validate_citations(raw_grounded, grounded.context)
+                assert validated_grounded.snapshots, {
+                    "citations": raw_grounded.citations,
+                    "insufficient_evidence": raw_grounded.insufficient_evidence,
+                    "has_follow_up": raw_grounded.follow_up_question is not None,
+                    "available_ids": list(grounded.context.citation_ids),
+                }
+            finally:
+                await generation_provider.aclose()
+
             response = await client.post(
                 f"/api/v1/runs/{run_id}/messages",
                 headers=owner_headers,
-                json={
-                    "content": (
-                        f"According to our knowledge base, what exactly does policy marker "
-                        f"{marker} say? Include its supporting evidence."
-                    )
-                },
+                json={"content": (diagnostic_query)},
             )
             response.raise_for_status()
             history = await _poll_history(

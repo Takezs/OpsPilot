@@ -185,6 +185,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - assistant单条回复由确定性renderer组合grounded正文和持久化Operation事实，非SUCCEEDED不宣称退款成功；四类BGE/DeepSeek provider在worker生命周期统一关闭。2026-08-30最终live验收从公开Run/message经真实outbox、Redis/ARQ、DeepSeek+BGE/PG检索与Generation、不可变引用、审批HTTP、Payment timeout-after-effect和reconciliation收敛SUCCEEDED；PG/public history seq连续且退款count=1。Runner会拒绝成功检索后的普通answer并用有效server-issued ID要求显式grounded_answer。Live 1 passed，完整后端378 passed/1 skipped，frontend unit18/E2E7及全部门禁通过。Task15等待督导最终复审，尚未获批，不得进入Task16。
 - 2026-08-30 DeepSeek 连通性修复：Clash Verge mixed proxy 定位为 `127.0.0.1:7897`；新增 `DEEPSEEK_PROXY_URL`，由 Worker 显式传入 DeepSeek decision/generation Provider 的 HTTP client，不依赖父进程继承系统代理。真实 models/chat 健康请求均为 200；仍须完成 Task15 全链 E2E，禁止提前进入 Task16。
 - 2026-08-30 再复审状态：引用加固相关真实PG/单元52 passed，完整后端387 passed/3 live opt-in skipped，Ruff check、Mypy、Alembic0020通过。修复后的live连续运行曾为2 passed/1因旧120秒ARQ watchdog无reply；watchdog修复后Docker重启使Xinference在线模型消失，三轮均在embedding前置阶段404。当前PG/Redis healthy、Xinference HTTP可达但embedding_healthy=False；等待管理员重新launch bge-m3与bge-reranker-v2-m3后必须重新连续3轮，尚不得宣称Task15最终通过。
+- 2026-08-30 BGE恢复后的最终Green：真实Provider诊断定位文本citation缺末尾`]`，未采用容错补字符；DeepSeek改为明确输出结构化document/chunk身份，适配器仅规范化格式，现有BuiltContext校验仍拒绝不存在/错配引用。单轮live先通过1 passed/39.18s，随后正式连续3轮3 passed/111.15s；每轮唯一marker精确命中document/version/chunk，公开history与PG Journal连续，Payment退款严格1。完整后端389 passed/3 skipped，frontend unit18、Playwright7、typecheck/build、Ruff/Mypy/Alembic0020及PG/Redis/BGE健康均通过。Task15等待督导最终复审，不得进入Task16。
 
 ## 需要维护的文档
 

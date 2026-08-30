@@ -5,15 +5,27 @@ from typing import Protocol
 
 import httpx
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from opspilot.generation.prompts import SYSTEM_PROMPT, render_user_prompt
-from opspilot.retrieval.context_builder import BuiltContext
+from opspilot.retrieval.context_builder import BuiltContext, citation_id
 
 
 class GroundedAnswer(BaseModel):
     answer: str
     citations: list[str]
+    insufficient_evidence: bool
+    follow_up_question: str | None = None
+
+
+class _ProviderCitation(BaseModel):
+    document_id: str = Field(min_length=1)
+    chunk_id: str = Field(min_length=1)
+
+
+class _ProviderGroundedAnswer(BaseModel):
+    answer: str
+    citations: list[_ProviderCitation]
     insufficient_evidence: bool
     follow_up_question: str | None = None
 
@@ -54,11 +66,18 @@ class DeepSeekGenerationProvider:
                 {"role": "user", "content": render_user_prompt(query, context)},
             ],
             response_format={"type": "json_object"},
+            temperature=0,
         )
         content = response.choices[0].message.content
         if content is None:
             raise GenerationProviderError("Chat provider returned an empty response")
-        return GroundedAnswer.model_validate_json(content)
+        raw = _ProviderGroundedAnswer.model_validate_json(content)
+        return GroundedAnswer(
+            answer=raw.answer,
+            citations=[citation_id(item.document_id, item.chunk_id) for item in raw.citations],
+            insufficient_evidence=raw.insufficient_evidence,
+            follow_up_question=raw.follow_up_question,
+        )
 
     async def aclose(self) -> None:
         """Close the owned OpenAI-compatible HTTP client."""

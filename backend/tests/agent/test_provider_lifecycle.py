@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -6,6 +7,7 @@ from opspilot import worker
 from opspilot.agent import runner as agent_runner
 from opspilot.generation import provider as generation_provider
 from opspilot.knowledge import embedding
+from opspilot.retrieval.context_builder import BuiltContext
 from opspilot.retrieval.reranker import BgeReranker
 
 
@@ -126,3 +128,75 @@ async def test_worker_shutdown_closes_grounding_providers_once(
     await worker.shutdown_worker(dict(providers))
 
     assert all(provider.close_calls == 1 for provider in providers.values())
+
+
+async def test_deepseek_generation_uses_deterministic_sampling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class Completions:
+        async def create(self, **kwargs: Any) -> object:
+            calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=(
+                                '{"answer":"","citations":[],"insufficient_evidence":true,'
+                                '"follow_up_question":null}'
+                            )
+                        )
+                    )
+                ]
+            )
+
+    class Client(_ClosableOpenAI):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.chat = SimpleNamespace(completions=Completions())
+
+    monkeypatch.setattr(generation_provider, "AsyncOpenAI", Client)
+    provider = generation_provider.DeepSeekGenerationProvider(api_key="configured")
+
+    await provider.answer(
+        query="question",
+        context=BuiltContext((), token_budget=10, total_tokens=0, truncated=False),
+    )
+
+    assert calls[0]["temperature"] == 0
+
+
+async def test_deepseek_generation_maps_explicit_citation_identity_to_canonical_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Completions:
+        async def create(self, **kwargs: Any) -> object:
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=(
+                                '{"answer":"verified","citations":['
+                                '{"document_id":"doc-1","chunk_id":"chunk-1"}],'
+                                '"insufficient_evidence":false,"follow_up_question":null}'
+                            )
+                        )
+                    )
+                ]
+            )
+
+    class Client(_ClosableOpenAI):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.chat = SimpleNamespace(completions=Completions())
+
+    monkeypatch.setattr(generation_provider, "AsyncOpenAI", Client)
+    provider = generation_provider.DeepSeekGenerationProvider(api_key="configured")
+
+    result = await provider.answer(
+        query="question",
+        context=BuiltContext((), token_budget=10, total_tokens=0, truncated=False),
+    )
+
+    assert result.citations == ["[DOC:doc-1#chunk-1]"]
