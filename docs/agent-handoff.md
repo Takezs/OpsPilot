@@ -167,7 +167,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 不声称通过未实际运行的命令。
 - 不提交 `.env`、API Key、Authorization、PII、临时目录或本地文件。
 
-## 任务 15（实现完成，等待督导复审，2026-08-28）
+## 任务 15（已通过督导复审，2026-08-30）
 
 - 后端提交 `778c192`：0018 `run_messages`、Run/Operation两个独立job outbox、公开Run/History/Approval/Timeline读取、ARQ编排及真实HTTP demo退款E2E。
 - 前端提交 `e69181c`：工作台、审批中心、Run时间线和集中式授权SSE客户端；USER路由权限沿用Task13，批准文案不等同退款成功。
@@ -182,10 +182,11 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 第三轮复审修复：delivery watchdog以PG锁和ack grace恢复delivered但未claim的Run/Operation intent；reply存在则Run job收敛COMPLETED，Operation状态/version已前进则intent固定标记stale。0020回填0019脏历史并新增三态字段组合CHECK，真实PG负向SQL、事务失败回滚、往返和全链通过。
 - Agent生产composition现显式接收`RunJobFence`；退款Operation创建前在同一事务锁定并验证claim，消除跨session TOCTOU。失权detached旧worker测试为0 Operation/Event/job，新owner恢复后幂等收敛为1。第三轮定向24、完整357、frontend unit18/E2E mock5；真实Provider阻塞不变。
 - 方案A grounded composition已接线并完成引用复审加固：空BuiltContext不是成功检索且不签发ID；Runner自签`search_call_id`通过可信control消息与untrusted工具摘要分离。单一成功上下文后的plain answer模型正文被丢弃并进入同一严格Generation/ValidatedAnswer路径；缺/错ID、多上下文、无/错citation均fail-closed，不自动伪造引用。Task14 enrichment公共SQL服务继续按Run owner数据库Principal执行scope+READY过滤。
-- assistant单条回复由确定性renderer组合grounded正文和持久化Operation事实，非SUCCEEDED不宣称退款成功；四类BGE/DeepSeek provider在worker生命周期统一关闭。2026-08-30最终live验收从公开Run/message经真实outbox、Redis/ARQ、DeepSeek+BGE/PG检索与Generation、不可变引用、审批HTTP、Payment timeout-after-effect和reconciliation收敛SUCCEEDED；PG/public history seq连续且退款count=1。Runner会拒绝成功检索后的普通answer并用有效server-issued ID要求显式grounded_answer。Live 1 passed，完整后端378 passed/1 skipped，frontend unit18/E2E7及全部门禁通过。Task15等待督导最终复审，尚未获批，不得进入Task16。
+- assistant单条回复由确定性renderer组合grounded正文和持久化Operation事实，非SUCCEEDED不宣称退款成功；四类BGE/DeepSeek provider在worker生命周期统一关闭。2026-08-30最终live验收从公开Run/message经真实outbox、Redis/ARQ、DeepSeek+BGE/PG检索与Generation、不可变引用、审批HTTP、Payment timeout-after-effect和reconciliation收敛SUCCEEDED；后续结构化引用加固与连续三轮证据见下方最终Green及批准记录。
 - 2026-08-30 DeepSeek 连通性修复：Clash Verge mixed proxy 定位为 `127.0.0.1:7897`；新增 `DEEPSEEK_PROXY_URL`，由 Worker 显式传入 DeepSeek decision/generation Provider 的 HTTP client，不依赖父进程继承系统代理。真实 models/chat 健康请求均为 200；仍须完成 Task15 全链 E2E，禁止提前进入 Task16。
 - 2026-08-30 再复审状态：引用加固相关真实PG/单元52 passed，完整后端387 passed/3 live opt-in skipped，Ruff check、Mypy、Alembic0020通过。修复后的live连续运行曾为2 passed/1因旧120秒ARQ watchdog无reply；watchdog修复后Docker重启使Xinference在线模型消失，三轮均在embedding前置阶段404。当前PG/Redis healthy、Xinference HTTP可达但embedding_healthy=False；等待管理员重新launch bge-m3与bge-reranker-v2-m3后必须重新连续3轮，尚不得宣称Task15最终通过。
-- 2026-08-30 BGE恢复后的最终Green：真实Provider诊断定位文本citation缺末尾`]`，未采用容错补字符；DeepSeek改为明确输出结构化document/chunk身份，适配器仅规范化格式，现有BuiltContext校验仍拒绝不存在/错配引用。单轮live先通过1 passed/39.18s，随后正式连续3轮3 passed/111.15s；每轮唯一marker精确命中document/version/chunk，公开history与PG Journal连续，Payment退款严格1。完整后端389 passed/3 skipped，frontend unit18、Playwright7、typecheck/build、Ruff/Mypy/Alembic0020及PG/Redis/BGE健康均通过。Task15等待督导最终复审，不得进入Task16。
+- 2026-08-30 BGE恢复后的最终Green：真实Provider诊断定位文本citation缺末尾`]`，未采用容错补字符；DeepSeek改为明确输出结构化document/chunk身份，适配器仅规范化格式，现有BuiltContext校验仍拒绝不存在/错配引用。单轮live先通过1 passed/39.18s，随后正式连续3轮3 passed/111.15s；每轮唯一marker精确命中document/version/chunk，公开history与PG Journal连续，Payment退款严格1。完整后端389 passed/3 skipped，frontend unit18、Playwright7、typecheck/build、Ruff/Mypy/Alembic0020及PG/Redis/BGE健康均通过。
+- 督导最终批准（2026-08-30）：批准`d910b8e`与`39c75b8`及此前Task15实现/可靠性提交链。独立关键定向54 passed，Ruff check、Mypy 96、Alembic0020、PostgreSQL/Redis均通过。Task15已闭环；下一项仅为Task16，不得提前进入Task17。
 
 ## 需要维护的文档
 

@@ -2,7 +2,7 @@
 
 > 最后更新：2026-08-29
 > 当前分支：`plan/opspilot-core-mvp`  
-> 当前阶段：M1–M4 / 任务 1–14 已通过督导复审；任务 15 引用链加固及连续三轮真实 Provider E2E已完成，等待督导最终复审
+> 当前阶段：M1–M4 / 任务 1–15 已通过督导复审；下一项为任务 16 v1.0评测数据集与确定性指标
 
 ## 总体进度
 
@@ -11,13 +11,13 @@
 | M1 基础与知识入库 | 1–4 | 已完成并批准 | 登录、权限上传、可靠异步入库、Chunk、Vector、PostgreSQL FTS |
 | M2 可解释 RAG | 5–7 | 已完成 | 任务 5–7 已通过督导复审 |
 | M3 可靠 Agent | 8–12 | 已完成并批准 | 任务 8–12 已通过督导复审 |
-| M4 产品界面 | 13–15 | 等待任务15最终复审 | UI、durable runtime与连续三轮真实Provider引用退款E2E完成 |
+| M4 产品界面 | 13–15 | 已完成并批准 | UI、durable runtime与连续三轮真实Provider引用退款E2E通过督导复审 |
 | M5 v1.0 必做评测 | 16–17 | 待开发 | 数据集、实验 Runner、指标与看板 |
 | M6 发布 | 18 | 待开发 | 可观测性、隐私、部署和发布验收 |
 
 ## 已完成内容
 
-### 任务 15：工作台、审批、时间线与核心退款 E2E（等待督导复审）
+### 任务 15：工作台、审批、时间线与核心退款 E2E（已通过督导复审，2026-08-30）
 
 - `778c192` 新增 `run_messages`、独立 `run_job_outbox`/`operation_job_outbox` 与 0018 迁移；Run create/message/detail/history、审批读取均按既有身份边界 fail-closed。审批 READY、OUTCOME_UNKNOWN 和安全 RETRYING 在原状态事务写 version-bound job intent，ARQ handler只编排既有 Task10/11 executor/reconciliation。
 - `e69181c` 实现 AgentWorkspace、ApprovalCenter、RunDetail、ToolCallCard、RunTimeline；集中式 authorized fetch 解析跨 chunk/CRLF/UTF-8 SSE，Last-Event-ID、Abort、401、乱序去重和有界 buffer 均有单元测试。
@@ -42,6 +42,7 @@
 - 最终Red→Green：BGE容器重启后模型为空曾导致embedding 404（环境恢复）；真实链随后发现DeepSeek在成功检索后可能用普通answer导致引用为空。Runner现在拒绝该不安全终止并以本次server-issued ID给出精确grounded_answer纠正契约；每次测试唯一的PG政策标记证明引用确实来自检索而非模型先验。Live E2E最终1 passed in 149.59s；完整后端378 passed/1 live opt-in skipped，frontend unit18、Playwright7、typecheck/build、Ruff/Mypy、Alembic0020、PG/Redis/BGE健康。
 - 2026-08-30 引用复审加固：真实复跑暴露空BuiltContext仍被标记成功、Runner自签ID混入untrusted ToolResult、以及Provider重试预算超过ARQ 120秒watchdog。现以非空fragment定义可引用成功；Runner ID走独立可信control消息，单一成功上下文后的plain answer原文被丢弃并强制进入严格Generation/ValidatedAnswer；无/错citation最多3次有界重生成，耗尽只落固定无证据回复。Run message ARQ watchdog为600秒，数据库claim lease仍由heartbeat续租和fencing保护。确定性相关52 passed，完整后端387 passed/3 opt-in skipped，Ruff check/Mypy/Alembic0020通过。连续live曾取得2/3，但Docker重启后Xinference模型丢失，当前embedding_healthy=False；不得将其写成最终通过。
 - 2026-08-30 最终引用协议修复与验收：真实诊断证明DeepSeek返回的文本citation稳定缺少末尾`]`；没有宽松补字符或猜测引用，而是让Provider明确返回结构化`document_id + chunk_id`，适配器规范化为Task6 citation ID后仍由BuiltContext逐项严格验证。不存在、错配或无证据引用继续整条fail-closed。连续3轮公开API→Outbox→Redis/ARQ→真实DeepSeek+BGE→固定版本引用→审批HTTP→Payment timeout-after-effect→reconciliation均通过（3 passed in 111.15s），每轮唯一marker、精确document/version/chunk、公开history与PG Journal seq连续、退款count=1。完整后端389 passed/3 opt-in skipped；frontend unit18/E2E7、typecheck/build、Ruff/Mypy、Alembic0020、PG/Redis/BGE均通过/健康。
+- 督导最终复审通过（2026-08-30）：批准引用加固提交`d910b8e`（enforce grounded replies）与`39c75b8`（structured grounded citations），并认可此前Task15实现/可靠性提交链。督导独立关键定向54 passed；Ruff check通过；Mypy 96 source files通过；Alembic `0020_run_job_lifecycle (head)`；PostgreSQL healthy/accepting、Redis healthy/PONG。静态复核确认结构化document/chunk仅规范化后再由精确BuiltContext校验，空上下文/无证据/错ID均fail-closed，600秒仅为ARQ外层watchdog且未放宽数据库lease、heartbeat或fencing。
 - 演示 Order/Payment 增加 ORD-002=350；仅显式 E2E 环境启用一次 timeout-after-effect。真实独立 Uvicorn HTTP进程测试证明 OUTCOME_UNKNOWN→RECONCILING→SUCCEEDED、PG seq连续、退款记录严格为1，并有界清理子进程。
 - Red：后端 Workspace API 5 failed、durable outbox 5 failed；前端 SSE suite 1 failed（模块不存在）。Green：Task15后端定向11 passed，可靠执行组合81 passed，完整328 passed in 65.08s；frontend unit10、Playwright7、typecheck/build通过；Ruff、Mypy90、Alembic0018及0018↔0017往返、PG/Redis健康。
 - 偏离：Run message生产Processor使用既有 DeepSeek AgentRunner，但当前检索工具在operation worker中fail-closed，assistant citation snapshots的真实生成仍依赖部署的Generation组合；核心退款可靠性E2E不依赖Fake数据库/Redis/Payment，但前端交互Playwright使用已存在HTTP契约mock作视觉回归。
@@ -267,9 +268,9 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - **Task 14 复审修复（2026-08-27，已批准）**：文档轮询 fetch 契约现接收并传递 AbortSignal 至 Axios GET，响应返回后、`onUpdate` 前再次检查 signal，覆盖响应/abort同轮竞态；卸载可取消飞行中请求且不再陈旧写入。CitationDrawer 使用 AbortController + 单调 generation，关闭、切换snapshot、卸载均取消；旧/已关闭响应不能更新detail/loading/error，Axios cancellation不显示错误。严格Red：轮询 abort 后错误解析READY（`1 failed, 1 passed`），citation loader缺失（suite failed）；Green frontend unit `5 passed`。最终Task14后端相关`19 passed`、完整`317 passed in 44.68s`，Task14 E2E `2 passed`、login `4 passed`、其余门禁通过。
 - **督导最终批准（2026-08-27）**：批准 `2b6dc34`（scope知识读取/检索调试/精确版本引用API）、`6eab4a4`（知识入库、四阶段检索与引用抽屉UI）、`d6f98ed`（异步取消与generation防陈旧回写）。独立 frontend unit `5 passed`、typecheck、Task14 E2E `2 passed`；后端scope/retrieval独立定向 `8 passed`。
 
-## 下一步：任务 15 工作台、审批、Run 时间线与核心退款 E2E
+## 下一步：任务 16 v1.0评测数据集与确定性指标
 
-先审计生产 Run/Agent、审批、History/SSE、Operation/Attempt、Payment/Reconciliation 公开契约，缺失则停止报告。
+先冻结版本化数据集Schema与确定性指标定义，严格区分dev/test/攻击集并在最终test冻结前记录SHA-256；不得提前实现任务17 Runner与看板。
 
 ## 后续开发计划
 
@@ -282,7 +283,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 任务 12：可靠 SSE（✅ 已通过督导复审；批准 `9a68056`、`d8b391d`；迁移 `0017`）。
 - 任务 13：Vue 应用壳、登录与 API 客户端（✅ 已通过督导复审（2026-08-27），批准 `10b0d65`、`cb41271`）。
 - 任务 14：知识库、检索调试器与引用抽屉（✅ 已通过督导复审（2026-08-27），批准 `2b6dc34`、`6eab4a4`、`d6f98ed`）。
-- 任务 15：工作台、审批、Run时间线与核心退款 E2E（生产接线完成；真实Provider E2E阻塞，等待复审）。
+- 任务 15：工作台、审批、Run时间线与核心退款 E2E（✅ 已通过督导复审（2026-08-30），最终引用加固批准`d910b8e`、`39c75b8`）。
 - 任务 16–17：v1.0/简历验收前必须完成 Evaluation 数据集、异步 Runner、故障矩阵和量化报告。
 - 任务 18：可观测性、脱敏、容器部署、文档与 v1.0 发布。
 

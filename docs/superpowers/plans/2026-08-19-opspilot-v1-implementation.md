@@ -619,7 +619,7 @@ git add frontend backend/tests/e2e
 git commit -m "feat: deliver auditable approval refund workflow"
 ```
 
-**状态：引用链复审加固及连续真实Provider全链验收完成，等待督导最终复审（2026-08-30）。** 空BuiltContext不视为成功检索；Runner签发ID与untrusted数据分离，成功检索后的plain answer不能直接持久化，只能由精确BuiltContext经严格ValidatedAnswer产生正文与快照。DeepSeek明确返回结构化document/chunk身份，适配器规范化后仍由上下文严格验证，不补写或猜测引用。正式连续3轮live均通过，逐轮证明唯一marker引用精确匹配、public/PG seq连续和退款count=1；完整后端389 passed/3 skipped，frontend unit18/E2E7及全部门禁通过。尚未获督导批准，不得开始Task16。
+**状态：已通过督导复审（2026-08-30）。** 最终引用加固批准提交`d910b8e`与`39c75b8`；督导独立关键定向54 passed，Ruff check、Mypy 96、Alembic `0020_run_job_lifecycle (head)`、PostgreSQL/Redis均通过。结构化document/chunk只规范化为标准citation ID，最终仍由精确BuiltContext严格校验；空上下文、无证据与错ID均fail-closed。600秒仅为ARQ外层watchdog，数据库claim lease、heartbeat与fencing未放宽。
 
 ### 任务 16：v1.0 评测数据集与确定性指标
 
