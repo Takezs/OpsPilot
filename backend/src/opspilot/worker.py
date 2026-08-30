@@ -34,6 +34,8 @@ from opspilot.tools.registry import ToolDependencies, build_tool_registry
 from opspilot.tools.schemas import SearchKnowledgeArgs
 from opspilot.tools.types import ToolResult
 
+RUN_MESSAGE_JOB_TIMEOUT = 600
+
 
 async def shutdown_worker(ctx: dict[str, object]) -> None:
     """Collect cancellation-resistant provider tasks before ARQ exits."""
@@ -147,7 +149,7 @@ class WorkerSettings:
             timeout=DOCUMENT_INDEX_JOB_TIMEOUT,
         ),
         func(process_operation_job, max_tries=3, timeout=120),
-        func(process_run_message, max_tries=3, timeout=120),
+        func(process_run_message, max_tries=3, timeout=RUN_MESSAGE_JOB_TIMEOUT),
     ]
     on_shutdown = shutdown_worker
     on_startup = startup_worker

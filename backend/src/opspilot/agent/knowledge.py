@@ -122,14 +122,16 @@ def build_grounded_search_result(
     """Bind selected evidence to context while exposing only a bounded summary."""
     fragments = context_fragments(list(candidates), metadata)
     context = build_context(fragments, token_budget)
+    has_evidence = bool(context.fragments)
     return GroundedSearchResult(
         summary=ToolResult(
-            ok=True,
+            ok=has_evidence,
             data={
                 "result_count": len(context.fragments),
                 "reranker_status": reranker_status.value,
                 "citation_ids": list(context.citation_ids),
             },
+            error=None if has_evidence else "search returned no usable evidence",
         ),
         context=context,
     )

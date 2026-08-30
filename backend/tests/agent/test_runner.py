@@ -320,6 +320,29 @@ def test_render_api_messages_preserves_regular_roles() -> None:
     assert [message["role"] for message in messages] == ["system", "user", "assistant"]
 
 
+def test_render_api_messages_keeps_runner_control_separate_from_untrusted_tool_data() -> None:
+    state = AgentState(
+        messages=[
+            AgentMessage(role="tool", content='{"result_count":1}', tool_name="search_knowledge"),
+            AgentMessage(
+                role="control",
+                content="verified search_call_id: server-only-id",
+                tool_name="search_knowledge",
+            ),
+        ]
+    )
+
+    messages = _render_api_messages(state, ())
+
+    assert messages[1]["role"] == "user"
+    assert "UNTRUSTED TOOL OUTPUT" in messages[1]["content"]
+    assert "server-only-id" not in messages[1]["content"]
+    assert messages[2] == {
+        "role": "system",
+        "content": "verified search_call_id: server-only-id",
+    }
+
+
 async def test_runner_raises_decision_error_for_tool_call_without_tool_name() -> None:
     fake = FakeTools()
     runner = AgentRunner(
@@ -434,14 +457,16 @@ async def test_grounded_answer_uses_runner_owned_id_and_exact_built_context() ->
             if len(state.messages) == 1:
                 return _tool("search_knowledge", query="refund policy", top_k=5)
             if self.call_id is None:
-                payload = json.loads(state.messages[-1].content)
-                self.call_id = payload["search_call_id"]
+                tool_message = next(message for message in state.messages if message.role == "tool")
+                control = next(message for message in state.messages if message.role == "control")
+                payload = json.loads(tool_message.content)
+                assert "search_call_id" not in payload
+                self.call_id = control.content.rsplit(": ", 1)[1]
                 assert self.call_id not in {"", "provider-chosen-id"}
-                assert "Refunds require approval" not in state.messages[-1].content
+                assert "Refunds require approval" not in tool_message.content
                 self.attempted_plain_answer = True
                 return _answer("uncited factual answer")
             assert self.call_id in state.messages[-1].content
-            assert '"type":"grounded_answer"' in state.messages[-1].content
             return _grounded(self.call_id)
 
     runner = AgentRunner(
@@ -453,17 +478,25 @@ async def test_grounded_answer_uses_runner_owned_id_and_exact_built_context() ->
     outcome = await runner.run("What is the refund policy?")
 
     assert observed == [("What is the refund policy?", context)]
-    assert outcome.rounds == 3
+    # The model's uncited plain answer is discarded; with one unambiguous
+    # server-owned context the runner immediately performs validated generation.
+    assert outcome.rounds == 2
     assert outcome.final_answer == "Approval is required [DOC:d1#c1]."
     assert outcome.citation_snapshots == (CitationSnapshot("d1", 3, "c1", ("Refunds",), 2),)
 
 
-async def test_grounded_answer_rejects_unknown_or_cross_run_search_id() -> None:
+async def test_grounded_answer_rejects_unknown_or_cross_run_search_id_fail_closed() -> None:
     fake = FakeTools()
-    runner = AgentRunner(_registry(fake), ScriptedDecisionProvider([_grounded("another-run-id")]))
+    runner = AgentRunner(
+        _registry(fake),
+        ScriptedDecisionProvider([_grounded("another-run-id")]),
+        max_rounds=1,
+    )
 
-    with pytest.raises(DecisionError, match="unknown or expired"):
-        await runner.run("question")
+    outcome = await runner.run("question")
+
+    assert outcome.final_answer == "Unable to answer from verified knowledge evidence."
+    assert outcome.citation_snapshots == ()
 
 
 async def test_failed_search_does_not_issue_a_grounded_call_id() -> None:
@@ -480,14 +513,131 @@ async def test_failed_search_does_not_issue_a_grounded_call_id() -> None:
         )
 
     provider = ScriptedDecisionProvider(
-        [_tool("search_knowledge", query="refund", top_k=5), _answer("fallback")]
+        [
+            _tool("search_knowledge", query="refund", top_k=5),
+            _answer("uncited policy fact"),
+            _answer("another uncited policy fact"),
+        ]
     )
-    outcome = await AgentRunner(_registry(fake), provider, knowledge_search_handler=failed).run(
-        "question"
-    )
+    outcome = await AgentRunner(
+        _registry(fake),
+        provider,
+        knowledge_search_handler=failed,
+        max_rounds=3,
+    ).run("question")
 
-    assert outcome.final_answer == "fallback"
+    assert outcome.final_answer == "Unable to answer from verified knowledge evidence."
+    assert "policy fact" not in outcome.final_answer
+    assert outcome.citation_snapshots == ()
     assert "search_call_id" not in provider.tool_results_seen[0]
+
+
+async def test_empty_context_is_not_a_successful_grounded_search() -> None:
+    fake = FakeTools()
+
+    async def empty(_: Any) -> GroundedSearchResult:
+        return GroundedSearchResult(
+            summary=ToolResult(ok=True, data={"result_count": 0}),
+            context=BuiltContext((), token_budget=100, total_tokens=0, truncated=False),
+        )
+
+    provider = ScriptedDecisionProvider(
+        [
+            _tool("search_knowledge", query="missing marker", top_k=5),
+            _answer("invented policy fact"),
+        ]
+    )
+    outcome = await AgentRunner(
+        _registry(fake), provider, knowledge_search_handler=empty, max_rounds=2
+    ).run("question")
+
+    assert "search_call_id" not in provider.tool_results_seen[0]
+    assert outcome.final_answer == "Unable to answer from verified knowledge evidence."
+    assert outcome.citation_snapshots == ()
+
+
+async def test_wrong_grounded_id_cannot_escape_to_plain_uncited_answer() -> None:
+    fake = FakeTools()
+    fragment = ContextFragment(
+        document_id="d1",
+        chunk_id="c1",
+        title="Policy",
+        document_version=1,
+        section_path=("Refunds",),
+        effective_at=__import__("datetime").datetime(2026, 1, 1),
+        page=1,
+        content="Verified policy fact.",
+        token_count=4,
+    )
+    context = BuiltContext((fragment,), token_budget=100, total_tokens=20, truncated=False)
+
+    async def search(_: Any) -> GroundedSearchResult:
+        return GroundedSearchResult(summary=ToolResult(ok=True), context=context)
+
+    class WrongThenPlain:
+        async def decide(self, state: AgentState, tools: tuple[Any, ...]) -> AgentDecision:
+            if len(state.messages) == 1:
+                return _tool("search_knowledge", query="policy", top_k=5)
+            if len(state.messages) == 2:
+                return _grounded("wrong-id")
+            return _answer("uncited policy fact")
+
+    outcome = await AgentRunner(
+        _registry(fake),
+        WrongThenPlain(),
+        knowledge_search_handler=search,
+        max_rounds=3,
+    ).run("question")
+
+    assert outcome.final_answer == "Unable to answer from verified knowledge evidence."
+    assert "uncited policy fact" not in outcome.final_answer
+    assert outcome.citation_snapshots == ()
+
+
+async def test_insufficient_validated_answer_cannot_persist_provider_factual_text() -> None:
+    fake = FakeTools()
+    fragment = ContextFragment(
+        document_id="d1",
+        chunk_id="c1",
+        title="Policy",
+        document_version=1,
+        section_path=("Refunds",),
+        effective_at=__import__("datetime").datetime(2026, 1, 1),
+        page=1,
+        content="Verified policy fact.",
+        token_count=4,
+    )
+    context = BuiltContext((fragment,), token_budget=100, total_tokens=20, truncated=False)
+
+    async def search(_: Any) -> GroundedSearchResult:
+        return GroundedSearchResult(summary=ToolResult(ok=True), context=context)
+
+    async def insufficient(_: str, __: BuiltContext) -> ValidatedAnswer:
+        return ValidatedAnswer(
+            answer="provider supplied uncited policy fact",
+            citations=(),
+            snapshots=(),
+            insufficient_evidence=True,
+            follow_up_question=None,
+        )
+
+    class GroundedDecider:
+        async def decide(self, state: AgentState, tools: tuple[Any, ...]) -> AgentDecision:
+            if len(state.messages) == 1:
+                return _tool("search_knowledge", query="policy", top_k=5)
+            control = next(message for message in state.messages if message.role == "control")
+            return _grounded(control.content.rsplit(": ", 1)[1])
+
+    outcome = await AgentRunner(
+        _registry(fake),
+        GroundedDecider(),
+        knowledge_search_handler=search,
+        grounded_answer_handler=insufficient,
+    ).run("question")
+
+    assert outcome.final_answer == "Unable to answer from verified knowledge evidence."
+    assert "provider supplied" not in outcome.final_answer
+    assert outcome.citation_snapshots == ()
 
 
 async def test_plain_answer_and_clarification_never_have_citations() -> None:

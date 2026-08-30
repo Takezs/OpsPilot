@@ -5,6 +5,7 @@ instead of silently dropping the invalid references. Valid citations keep a
 snapshot that locates the generation-time document version, section and page.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -158,3 +159,82 @@ async def test_generation_service_validates_provider_answer() -> None:
 
     assert validated.citations == (target,)
     assert validated.insufficient_evidence is False
+
+
+async def test_generation_service_retries_invalid_citations_without_fabricating_them() -> None:
+    doc_id = str(uuid.uuid4())
+    target = citation_id(doc_id, "chunk-1")
+    ctx = context_for(fragment("chunk-1", doc_id))
+
+    class SequencedProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
+            self.calls += 1
+            if self.calls == 1:
+                return grounded(answer="uncited fact", citations=[])
+            if self.calls == 2:
+                return grounded(answer="wrong citation", citations=["[DOC:fake#missing]"])
+            return grounded(answer="verified fact", citations=[target])
+
+    provider = SequencedProvider()
+    validated = await GenerationService(provider=provider, max_validation_attempts=3).answer(
+        query="refund window", context=ctx
+    )
+
+    assert provider.calls == 3
+    assert validated.answer == "verified fact"
+    assert validated.citations == (target,)
+    assert validated.snapshots[0].chunk_id == "chunk-1"
+
+
+async def test_generation_service_exhaustion_stays_insufficient_without_citation() -> None:
+    doc_id = str(uuid.uuid4())
+    ctx = context_for(fragment("chunk-1", doc_id))
+
+    class AlwaysUncited:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
+            self.calls += 1
+            return grounded(answer=f"uncited fact {self.calls}", citations=[])
+
+    provider = AlwaysUncited()
+    validated = await GenerationService(provider=provider, max_validation_attempts=3).answer(
+        query="refund window", context=ctx
+    )
+
+    assert provider.calls == 3
+    assert validated.insufficient_evidence is True
+    assert validated.citations == ()
+    assert validated.snapshots == ()
+
+
+async def test_generation_service_retries_are_bounded_below_worker_timeout() -> None:
+    doc_id = str(uuid.uuid4())
+    ctx = context_for(fragment("chunk-1", doc_id))
+
+    class HangingProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
+            self.calls += 1
+            await asyncio.sleep(10)
+            raise AssertionError("unreachable")
+
+    provider = HangingProvider()
+    service = GenerationService(
+        provider=provider,
+        max_validation_attempts=3,
+        attempt_timeout_seconds=0.01,
+    )
+
+    async with asyncio.timeout(0.2):
+        validated = await service.answer(query="refund window", context=ctx)
+
+    assert provider.calls == 3
+    assert validated.insufficient_evidence is True
+    assert validated.snapshots == ()

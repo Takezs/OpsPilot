@@ -181,9 +181,10 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 本轮Red：heartbeat缺失3 failed、scanner冲突候选单轮20次、真实退款后Run仍RUNNING、SSE生命周期3 failed。Green：后端相关34 passed、完整350 passed；frontend unit18、Playwright mock回归5、typecheck/build；Ruff/Mypy通过。真实Provider阻塞不变。
 - 第三轮复审修复：delivery watchdog以PG锁和ack grace恢复delivered但未claim的Run/Operation intent；reply存在则Run job收敛COMPLETED，Operation状态/version已前进则intent固定标记stale。0020回填0019脏历史并新增三态字段组合CHECK，真实PG负向SQL、事务失败回滚、往返和全链通过。
 - Agent生产composition现显式接收`RunJobFence`；退款Operation创建前在同一事务锁定并验证claim，消除跨session TOCTOU。失权detached旧worker测试为0 Operation/Event/job，新owner恢复后幂等收敛为1。第三轮定向24、完整357、frontend unit18/E2E mock5；真实Provider阻塞不变。
-- 方案A grounded composition已接线：Runner服务端签发run-local不可预测`search_call_id`并私有绑定实际选择后的BuiltContext；只有`grounded_answer`调用Task6 GenerationService并传播ValidatedAnswer快照，普通answer/clarify引用为空。Task14 enrichment已提炼为公共SQL服务，worker按Run owner JOIN active User恢复数据库Principal，复用Task5/6检索、rerank fallback、token budget与引用校验；legacy NULL/missing/inactive owner fail-closed。
+- 方案A grounded composition已接线并完成引用复审加固：空BuiltContext不是成功检索且不签发ID；Runner自签`search_call_id`通过可信control消息与untrusted工具摘要分离。单一成功上下文后的plain answer模型正文被丢弃并进入同一严格Generation/ValidatedAnswer路径；缺/错ID、多上下文、无/错citation均fail-closed，不自动伪造引用。Task14 enrichment公共SQL服务继续按Run owner数据库Principal执行scope+READY过滤。
 - assistant单条回复由确定性renderer组合grounded正文和持久化Operation事实，非SUCCEEDED不宣称退款成功；四类BGE/DeepSeek provider在worker生命周期统一关闭。2026-08-30最终live验收从公开Run/message经真实outbox、Redis/ARQ、DeepSeek+BGE/PG检索与Generation、不可变引用、审批HTTP、Payment timeout-after-effect和reconciliation收敛SUCCEEDED；PG/public history seq连续且退款count=1。Runner会拒绝成功检索后的普通answer并用有效server-issued ID要求显式grounded_answer。Live 1 passed，完整后端378 passed/1 skipped，frontend unit18/E2E7及全部门禁通过。Task15等待督导最终复审，尚未获批，不得进入Task16。
 - 2026-08-30 DeepSeek 连通性修复：Clash Verge mixed proxy 定位为 `127.0.0.1:7897`；新增 `DEEPSEEK_PROXY_URL`，由 Worker 显式传入 DeepSeek decision/generation Provider 的 HTTP client，不依赖父进程继承系统代理。真实 models/chat 健康请求均为 200；仍须完成 Task15 全链 E2E，禁止提前进入 Task16。
+- 2026-08-30 再复审状态：引用加固相关真实PG/单元52 passed，完整后端387 passed/3 live opt-in skipped，Ruff check、Mypy、Alembic0020通过。修复后的live连续运行曾为2 passed/1因旧120秒ARQ watchdog无reply；watchdog修复后Docker重启使Xinference在线模型消失，三轮均在embedding前置阶段404。当前PG/Redis healthy、Xinference HTTP可达但embedding_healthy=False；等待管理员重新launch bge-m3与bge-reranker-v2-m3后必须重新连续3轮，尚不得宣称Task15最终通过。
 
 ## 需要维护的文档
 

@@ -37,3 +37,16 @@ def test_grounded_search_summary_is_bounded_and_context_uses_persisted_tokens() 
         "citation_ids": [f"[DOC:{document_id}#{chunk_id}]"],
     }
     assert "private full evidence" not in result.summary.render()
+
+
+def test_empty_built_context_is_not_reported_as_successful_grounding() -> None:
+    result = build_grounded_search_result([], {}, RerankStatus.OK, token_budget=100)
+
+    assert result.context.fragments == ()
+    assert result.summary.ok is False
+    assert result.summary.data == {
+        "result_count": 0,
+        "reranker_status": "ok",
+        "citation_ids": [],
+    }
+    assert result.summary.error == "search returned no usable evidence"

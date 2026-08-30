@@ -57,7 +57,7 @@
 - M3 / 任务 12 可靠 SSE 已通过督导复审（2026-08-26）。
 - M4 / 任务 13 Vue 应用壳、登录与 API 客户端已通过督导复审（2026-08-27），批准提交 `10b0d65`、`cb41271`。
 - M4 / 任务 14 知识库、检索调试器与引用抽屉已通过督导复审（2026-08-27），批准提交 `2b6dc34`、`6eab4a4`、`d6f98ed`；下一项是任务 15。
-- M4 / 任务 15 代码与最终真实 Provider 全链验收已完成，等待督导最终复审：公开Run/message API→Outbox→Redis/ARQ→真实DeepSeek+BGE→固定版本引用→审批HTTP→Payment timeout-after-effect→RECONCILING→SUCCEEDED已通过，PG Journal seq连续且退款记录严格为1；不得在督导批准前开始任务16。
+- M4 / 任务 15 引用链复审修复已完成，等待环境恢复后再次执行连续真实 Provider 验收：空 BuiltContext 不再签发 grounded ID；成功检索后的模型正文必须经服务端持有的精确 BuiltContext 和严格 ValidatedAnswer 快照生成；当前 Xinference 可达但模型在 Docker 重启后未加载。不得开始任务16。
 - `attempt=0` outbox lifecycle 是已记录的非阻塞技术债，不要顺带重构。
 
 ## 常用验证命令

@@ -29,6 +29,7 @@ from opspilot.tools.registry import ToolRegistry, validate_arguments
 from opspilot.tools.types import ToolDefinition, ToolEffect, ToolResult
 
 DecisionKind = Literal["answer", "clarify", "tool_call", "grounded_answer"]
+INSUFFICIENT_EVIDENCE_REPLY = "Unable to answer from verified knowledge evidence."
 
 
 @dataclass(frozen=True)
@@ -107,8 +108,47 @@ class AgentRunner:
         state = AgentState(messages=[AgentMessage(role="user", content=user_message)])
         grounded_contexts: dict[str, BuiltContext] = {}
         workflow_facts: list[WorkflowFact] = []
+        knowledge_search_attempted = False
+
+        async def grounded_outcome(context: BuiltContext) -> AgentOutcome:
+            if self._grounded_answer_handler is None:
+                raise DecisionError("grounded answer generation is not configured")
+            validated = await self._grounded_answer_handler(user_message, context)
+            if validated.follow_up_question is not None:
+                return AgentOutcome(
+                    clarification=validated.follow_up_question,
+                    rounds=state.rounds,
+                    tool_calls=state.tool_calls,
+                    workflow_facts=tuple(workflow_facts),
+                    grounded=True,
+                )
+            if validated.insufficient_evidence or not validated.snapshots:
+                return AgentOutcome(
+                    final_answer=INSUFFICIENT_EVIDENCE_REPLY,
+                    rounds=state.rounds,
+                    tool_calls=state.tool_calls,
+                    workflow_facts=tuple(workflow_facts),
+                    grounded=True,
+                )
+            return AgentOutcome(
+                final_answer=validated.answer,
+                rounds=state.rounds,
+                tool_calls=state.tool_calls,
+                citation_snapshots=validated.snapshots,
+                workflow_facts=tuple(workflow_facts),
+                grounded=True,
+            )
+
         while True:
             if state.rounds >= self._max_rounds:
+                if knowledge_search_attempted:
+                    return AgentOutcome(
+                        final_answer=INSUFFICIENT_EVIDENCE_REPLY,
+                        rounds=state.rounds,
+                        tool_calls=state.tool_calls,
+                        bounded=True,
+                        workflow_facts=tuple(workflow_facts),
+                    )
                 return AgentOutcome(
                     rounds=state.rounds,
                     tool_calls=state.tool_calls,
@@ -118,15 +158,21 @@ class AgentRunner:
             state.rounds += 1
             decision = await self._decision_provider.decide(state, self._registry.all())
             if decision.kind == "answer":
-                if grounded_contexts:
-                    valid_ids = ", ".join(sorted(grounded_contexts))
+                if knowledge_search_attempted:
+                    if len(grounded_contexts) == 1 and self._grounded_answer_handler is not None:
+                        # Model prose is never persisted here. Once there is one
+                        # unambiguous server-owned context, a plain final action
+                        # is converted into the same validated generation path.
+                        return await grounded_outcome(next(iter(grounded_contexts.values())))
+                    valid_ids = ", ".join(sorted(grounded_contexts)) or "none"
                     state.messages.append(
                         AgentMessage(
-                            role="tool",
+                            role="control",
                             tool_name="search_knowledge",
                             content=(
-                                "error: answer is forbidden after a successful knowledge search. "
-                                "Return exactly a grounded decision JSON object now: "
+                                "error: answer is forbidden after a knowledge search attempt. "
+                                "Use a valid grounded decision when evidence exists, otherwise "
+                                "retry search_knowledge. Grounded decision shape: "
                                 '{"type":"grounded_answer","search_call_id":"<valid-id>"}. '
                                 f"Valid server-issued ids for this run: {valid_ids}"
                             ),
@@ -140,6 +186,13 @@ class AgentRunner:
                     workflow_facts=tuple(workflow_facts),
                 )
             if decision.kind == "clarify":
+                if knowledge_search_attempted:
+                    return AgentOutcome(
+                        final_answer=INSUFFICIENT_EVIDENCE_REPLY,
+                        rounds=state.rounds,
+                        tool_calls=state.tool_calls,
+                        workflow_facts=tuple(workflow_facts),
+                    )
                 return AgentOutcome(
                     clarification=decision.question,
                     rounds=state.rounds,
@@ -147,21 +200,23 @@ class AgentRunner:
                     workflow_facts=tuple(workflow_facts),
                 )
             if decision.kind == "grounded_answer":
+                knowledge_search_attempted = True
                 call_id = decision.search_call_id
                 context = grounded_contexts.get(call_id or "")
                 if context is None:
-                    raise DecisionError("grounded_answer references an unknown or expired search")
-                if self._grounded_answer_handler is None:
-                    raise DecisionError("grounded answer generation is not configured")
-                validated = await self._grounded_answer_handler(user_message, context)
-                return AgentOutcome(
-                    final_answer=validated.answer,
-                    rounds=state.rounds,
-                    tool_calls=state.tool_calls,
-                    citation_snapshots=validated.snapshots,
-                    workflow_facts=tuple(workflow_facts),
-                    grounded=True,
-                )
+                    state.messages.append(
+                        AgentMessage(
+                            role="control",
+                            tool_name="search_knowledge",
+                            content=(
+                                "error: grounded_answer references an unknown or expired "
+                                "server search id; retry search_knowledge and use only the "
+                                "new server-issued id"
+                            ),
+                        )
+                    )
+                    continue
+                return await grounded_outcome(context)
             if state.tool_calls >= self._max_tool_calls:
                 return AgentOutcome(
                     rounds=state.rounds,
@@ -179,22 +234,29 @@ class AgentRunner:
             definition = self._registry.get(tool_name)
             arguments = validate_arguments(definition, decision.arguments or {})
             state.tool_calls += 1
+            issued_search_call_id: str | None = None
             if definition.name == "search_knowledge" and self._knowledge_search_handler:
+                knowledge_search_attempted = True
                 grounded = await self._knowledge_search_handler(arguments)
                 summary = dict(grounded.summary.data or {})
                 summary.pop("search_call_id", None)
-                if grounded.summary.ok:
+                has_evidence = bool(grounded.context.fragments)
+                if grounded.summary.ok and has_evidence:
                     call_id = secrets.token_urlsafe(24)
                     while call_id in grounded_contexts:
                         call_id = secrets.token_urlsafe(24)
                     if len(grounded_contexts) >= self._max_rounds:
                         raise DecisionError("grounded search context limit exceeded")
                     grounded_contexts[call_id] = grounded.context
-                    summary["search_call_id"] = call_id
+                    issued_search_call_id = call_id
                 result = ToolResult(
-                    ok=grounded.summary.ok,
+                    ok=grounded.summary.ok and has_evidence,
                     data=summary,
-                    error=grounded.summary.error,
+                    error=(
+                        grounded.summary.error
+                        if grounded.summary.error or has_evidence
+                        else "search returned no usable evidence"
+                    ),
                     provider_not_called=grounded.summary.provider_not_called,
                     failure_kind=grounded.summary.failure_kind,
                 )
@@ -226,6 +288,14 @@ class AgentRunner:
                     tool_arguments=decision.arguments,
                 )
             )
+            if issued_search_call_id is not None:
+                state.messages.append(
+                    AgentMessage(
+                        role="control",
+                        tool_name="search_knowledge",
+                        content=f"verified search_call_id: {issued_search_call_id}",
+                    )
+                )
 
 
 def _workflow_fact(definition: ToolDefinition, result: ToolResult) -> WorkflowFact | None:
@@ -318,6 +388,13 @@ def _render_api_messages(
                         "role": "user",
                         "content": render_untrusted_tool_output(message.tool_name, message.content),
                     },
+                )
+            )
+        elif message.role == "control":
+            messages.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {"role": "system", "content": message.content},
                 )
             )
         else:

@@ -1,14 +1,47 @@
 """Orchestrates the chat provider and citation validation into an answer."""
 
+import asyncio
+
 from opspilot.generation.citations import ValidatedAnswer, validate_citations
 from opspilot.generation.provider import GenerationProvider
 from opspilot.retrieval.context_builder import BuiltContext
 
 
 class GenerationService:
-    def __init__(self, provider: GenerationProvider) -> None:
+    def __init__(
+        self,
+        provider: GenerationProvider,
+        *,
+        max_validation_attempts: int = 3,
+        attempt_timeout_seconds: float = 30.0,
+    ) -> None:
+        if max_validation_attempts < 1:
+            raise ValueError("max validation attempts must be positive")
+        if attempt_timeout_seconds <= 0:
+            raise ValueError("attempt timeout must be positive")
         self.provider = provider
+        self.max_validation_attempts = max_validation_attempts
+        self.attempt_timeout_seconds = attempt_timeout_seconds
 
     async def answer(self, *, query: str, context: BuiltContext) -> ValidatedAnswer:
-        grounded = await self.provider.answer(query=query, context=context)
-        return validate_citations(grounded, context)
+        validated: ValidatedAnswer | None = None
+        for _ in range(self.max_validation_attempts):
+            try:
+                async with asyncio.timeout(self.attempt_timeout_seconds):
+                    grounded = await self.provider.answer(query=query, context=context)
+            except TimeoutError:
+                continue
+            validated = validate_citations(grounded, context)
+            if validated.follow_up_question is not None:
+                return validated
+            if not validated.insufficient_evidence and validated.snapshots:
+                return validated
+        if validated is not None:
+            return validated
+        return ValidatedAnswer(
+            answer="",
+            citations=(),
+            snapshots=(),
+            insufficient_evidence=True,
+            follow_up_question=None,
+        )

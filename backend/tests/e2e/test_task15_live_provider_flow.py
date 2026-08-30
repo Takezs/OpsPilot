@@ -11,13 +11,16 @@ import httpx
 import pytest
 from sqlalchemy import delete, select
 
+from opspilot.agent.knowledge import RunKnowledgeSearch
 from opspilot.auth.models import Role, User
 from opspilot.auth.service import AuthService
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.knowledge.embedding import BgeM3EmbeddingProvider
 from opspilot.knowledge.models import Chunk, Document, DocumentStatus, KnowledgeBase
+from opspilot.retrieval.reranker import BgeReranker
 from opspilot.runs.models import Run, RunEvent
+from opspilot.tools.schemas import SearchKnowledgeArgs
 
 ROOT = Path(__file__).parents[3]
 BACKEND = ROOT / "backend"
@@ -131,7 +134,8 @@ async def _poll_history(client, run_id, headers, predicate, attempts=180):
 
 
 @pytest.mark.integration
-async def test_public_api_real_provider_refund_flow() -> None:
+@pytest.mark.parametrize("live_iteration", range(3))
+async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None:
     if os.getenv("OPSPILOT_LIVE_PROVIDER_E2E") != "1":
         pytest.skip("live Provider acceptance is opt-in")
     settings = Settings()
@@ -150,6 +154,9 @@ async def test_public_api_real_provider_refund_flow() -> None:
     )
     embedding_provider = BgeM3EmbeddingProvider(
         settings.bge_base_url, settings.bge_api_key, settings.bge_embedding_model
+    )
+    reranker_provider = BgeReranker(
+        settings.bge_base_url, settings.bge_api_key, settings.bge_reranker_model
     )
     try:
         embedding = (await embedding_provider.embed([text]))[0]
@@ -202,15 +209,31 @@ async def test_public_api_real_provider_refund_flow() -> None:
             response = await client.post("/api/v1/runs", headers=owner_headers)
             response.raise_for_status()
             run_id = uuid.UUID(response.json()["run_id"])
+
+            # Prove the exact production retrieval composition has selected the
+            # unique evidence before asking the Agent. This prevents a lucky
+            # model response from masquerading as grounded acceptance and makes
+            # an embedding/FTS miss an explicit test failure.
+            grounded = await RunKnowledgeSearch(
+                async_session_factory,
+                run_id,
+                embedding_provider,
+                reranker_provider,
+                context_token_budget=settings.generation_context_token_budget,
+                reranker_timeout_seconds=settings.retrieval_reranker_timeout_seconds,
+            )(SearchKnowledgeArgs(query=marker, top_k=5))
+            assert grounded.summary.ok is True
+            assert grounded.summary.data is not None
+            assert grounded.summary.data["result_count"] >= 1
+            assert any(item.chunk_id == str(chunk.id) for item in grounded.context.fragments)
+
             response = await client.post(
                 f"/api/v1/runs/{run_id}/messages",
                 headers=owner_headers,
                 json={
                     "content": (
-                        f"Call search_knowledge for policy marker {marker}, explain its exact "
-                        "meaning, then return "
-                        "grounded_answer with the server-issued search_call_id. Do not use the "
-                        "plain answer action."
+                        f"According to our knowledge base, what exactly does policy marker "
+                        f"{marker} say? Include its supporting evidence."
                     )
                 },
             )
@@ -233,6 +256,10 @@ async def test_public_api_real_provider_refund_flow() -> None:
             ]
             assert citations[0]["document_version"] == 1
             assert citations[0]["chunk_id"] == str(chunk.id)
+            assert (
+                "Unable to answer from verified knowledge evidence."
+                not in assistant[0]["payload"]["content"]
+            )
 
             response = await client.post(
                 f"/api/v1/runs/{run_id}/messages",
@@ -304,6 +331,7 @@ async def test_public_api_real_provider_refund_flow() -> None:
             assert [event.seq for event in events] == list(range(1, len(events) + 1))
     finally:
         await embedding_provider.aclose()
+        await reranker_provider.aclose()
         async with async_session_factory() as session:
             if run_id is not None:
                 run = await session.get(Run, run_id)
