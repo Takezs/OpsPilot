@@ -13,10 +13,10 @@ from typing import Any
 
 from opspilot.evaluation.schemas import (
     AgentEvaluationCase,
+    ApprovalExpectation,
     AttackCase,
     DatasetManifest,
     EvaluationCase,
-    ApprovalExpectation,
     sha256_file,
 )
 

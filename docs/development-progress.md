@@ -275,6 +275,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - Agent语料新增显式`operation_expected`：纯知识与缺订单追问不再携带或评分订单、金额、幂等键、审批；退款Operation用例仍要求四项全部存在并精确评分。`final_test_executed=false`，未提前运行最终test评分。
 - 实现手算可验证的Recall@5、Precision@5、MRR、nDCG@5、工具Precision/Recall/F1、未经审批执行率、重复副作用率，并精确核验引用ID、订单、金额、幂等键、审批与最终数据库状态。LLM Judge失败不阻断确定性结果。
 - 新增`0021_evaluation_tables`，真实PostgreSQL验证0001→head、约束负例与0021↔0020往返；复审修复定向20 passed，完整后端409 passed/3 skipped，Mypy 103 source files通过。Ruff在不可读ACL目录上会panic，明确Task16文件集format/check通过；PostgreSQL/Redis健康。
+- P2门禁修复：督导范围首次真实Red为根目录生成器I001；仅排序`ApprovalExpectation` import，并由确定性生成流程更新manifest中的generator SHA。冻结test内容与SHA保持`e0a5eb5a…bf8c`不变。`ruff check src tests alembic ../evaluation/generate_datasets.py`通过，Task16全部13个Python文件format check通过；全历史目录format check另暴露已批准0019的一处旧格式差异，未越权夹带修改。
 - 严格停在任务16，等待督导复审；不得开始任务17 Runner、实验配置或看板。
 
 ## 后续开发计划

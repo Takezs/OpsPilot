@@ -196,6 +196,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 迁移`0021_evaluation_tables`基于0020，真实PG验证0001→0021、top_k/lifecycle/latency/唯一约束负例及0021→0020→0021；主库current为0021 head。
 - 首次复审P1修复：固定namespace UUIDv5替代`doc-test-*`/`chunk-test-*`，schema和冻结语料均验证canonical UUID并可构造生产Document/Chunk UUID模型；Task17无需猜测映射。Agent case新增`operation_expected`，非操作用例四项业务事实必须全为NULL且不参与评分，操作用例则四项必须全部存在并继续严格评分。
 - 本轮Red真实为3 failed：旧Chunk ID不能构造UUID，clarification与answer-only各因四个强制字段ValidationError失败；Green复审修复定向20 passed，完整后端409 passed、3 skipped；Mypy 103 source files、Ruff、0021全链/往返、PG/Redis通过。
+- P2门禁修复Red：从backend执行`ruff check src tests alembic ../evaluation/generate_datasets.py`在根生成器报I001（`ApprovalExpectation`顺序）。仅排序该import；重生成只改变manifest的generator SHA，test文件零diff且冻结SHA不变。Green为定向20 passed、全范围Ruff check通过、Task16 13个Python文件format check通过、Mypy103与0021 head通过。全历史format check另发现已批准0019的一处旧格式差异，遵守最小范围未修改。
 - 未实现Task17 runner、公开API、实验矩阵或看板；等待Task16督导复审。
 
 ## 需要维护的文档
