@@ -4,6 +4,8 @@ Task 8 synthetic service. Real deployments replace this with the enterprise
 order system; the Tool Gateway contract (get_order) is unchanged.
 """
 
+import os
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -24,6 +26,15 @@ ORDERS: dict[str, Order] = {
     "A103": Order(order_number="A103", status="OPEN", amount=1200.0),
     "ORD-002": Order(order_number="ORD-002", status="OPEN", amount=350.0),
 }
+if os.getenv("OPSPILOT_EVAL_FAULT_MATRIX", "").lower() in {"1", "true"}:
+    ORDERS.update(
+        {
+            f"EVAL-{index:03d}": Order(
+                order_number=f"EVAL-{index:03d}", status="OPEN", amount=350.0
+            )
+            for index in range(1, 61)
+        }
+    )
 
 
 @app.get("/orders/{order_number}", response_model=Order)

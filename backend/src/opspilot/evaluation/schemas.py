@@ -32,6 +32,44 @@ class ApprovalExpectation(StrEnum):
     REJECTED = "REJECTED"
 
 
+class EvaluationConfiguration(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    model: str = Field(min_length=1, max_length=128)
+    embedding_model: str = Field(min_length=1, max_length=128)
+    reranker_model: str = Field(min_length=1, max_length=128)
+    top_k: int = Field(ge=1, le=100)
+    prompt_version: str = Field(min_length=1, max_length=128)
+    random_parameters: dict[str, object]
+    concurrency: int = Field(ge=1, le=32)
+    repetitions: int = Field(ge=3, le=20)
+
+
+class FreezeEvaluationRequest(BaseModel):
+    dataset_version: str = Field(min_length=1, max_length=64)
+    dataset_sha: str = Field(pattern=r"^[0-9a-f]{64}$")
+    configuration: EvaluationConfiguration
+
+
+class EvaluationExecutionResponse(BaseModel):
+    id: uuid.UUID
+    evaluation_run_id: uuid.UUID
+    dataset_version: str
+    dataset_sha: str
+    configuration_sha: str
+    status: str
+    frozen_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    failure_summary: str | None
+
+
+class EvaluationFaultPlanRequest(BaseModel):
+    matrix_run_id: uuid.UUID
+    operation_id: uuid.UUID
+    fault_point: str
+
+
 class ToolExpectation(BaseModel):
     model_config = ConfigDict(frozen=True)
 

@@ -200,6 +200,15 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 督导最终批准`bbeea2f`、`34fcba9`、`c43332d`，Bugbot无finding；独立定向20 passed，Task16 13文件format check、扩大范围Ruff check、Mypy103、0021 head及PG/Redis全部通过。冻结test SHA为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，生成器SHA与manifest一致，`final_test_executed=false`。
 - 下一项任务17。开始实现前必须裁决冻结test从“未执行”到“一次性已执行”的持久化审计状态机，不得静默绕过Task16 manifest保护。
 
+## 任务 17（实现完成，等待督导复审，2026-09-01）
+
+- `0022_evaluation_execution_audit` 实现冻结 test receipt、canonical configuration SHA、`UNIQUE(dataset_sha)`、ADMIN freeze/start/cancel/resume、case repetition 唯一身份、execution attempt 与 transactional evaluation job outbox。Task16 manifest 未修改，冻结 test 未执行。
+- Runner 通过公开 API 执行并由 ARQ/PG claim/lease/heartbeat 恢复；dev smoke 只用 dev split。报告由 evaluation_runs/cases 确定性生成 JSON/CSV/HTML，前端新增 Reviewer/Admin 评测看板，USER 后端拒绝。
+- 故障注入默认关闭；显式模式的一次性 PG plan 在三个生产边界触发进程 exit86。正式审计 Run `add59d37-acda-4e33-ba52-0461766f9700` 持久化三个故障点各 20 条：恢复 60/60、重复副作用 0、丢失 Operation 0、退款 count=1 为 60/60、Journal 连续 60/60，P95 恢复 15,421ms。
+- 真实故障矩阵先因 JWT 15 分钟到期停在 39/60，再以同 Run/同 configuration 跳过已完成 case 续跑；一次 DeepSeek 长调用在注入前超过 180 秒，验收等待改为与既有 600 秒 worker watchdog 对齐。没有删除、覆盖或重采样已完成故障事实。
+- 门禁：定向 `61 passed, 1 skipped`；完整后端 `421 passed, 4 skipped`；Ruff、Mypy113；frontend unit19、evaluation E2E1、typecheck/build；Alembic 0022主库往返及0001→head scratch全链；PG/Redis健康。
+- 当前停止在 Task17 等待督导复审，不得开始Task18。
+
 ## 需要维护的文档
 
 任务完成后更新：

@@ -8,6 +8,7 @@ import RetrievalDebuggerView from '../views/RetrievalDebuggerView.vue'
 import AgentWorkspaceView from '../views/AgentWorkspaceView.vue'
 import ApprovalCenterView from '../views/ApprovalCenterView.vue'
 import RunDetailView from '../views/RunDetailView.vue'
+import EvaluationDashboardView from '../views/EvaluationDashboardView.vue'
 import { sanitizeReturnUrl } from './security'
 
 export const router = createRouter({
@@ -22,6 +23,7 @@ export const router = createRouter({
         { path: 'retrieval', name: 'retrieval', component: RetrievalDebuggerView, meta: { title: '检索调试器' } },
         { path: 'approvals', name: 'approvals', component: ApprovalCenterView, meta: { title: '审批中心', roles: ['REVIEWER', 'ADMIN'] } },
         { path: 'runs/:id', name: 'run', component: RunDetailView, meta: { title: 'Run 时间线' } },
+        { path: 'evaluations', name: 'evaluations', component: EvaluationDashboardView, meta: { title: '评测看板', roles: ['REVIEWER', 'ADMIN'] } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/workspace' },

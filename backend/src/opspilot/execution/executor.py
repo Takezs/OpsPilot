@@ -52,6 +52,7 @@ from opspilot.execution.retry import RetryPolicy
 from opspilot.tools.types import ToolEffect, ToolResult
 
 Invoker = Callable[[Operation], Coroutine[Any, Any, ToolResult]]
+ExecutionHook = Callable[[Operation], Coroutine[Any, Any, None]]
 Clock = Callable[[], datetime]
 SessionFactory = Callable[[], AsyncSession]
 
@@ -187,6 +188,9 @@ async def execute_operation(
     effect: ToolEffect,
     invoke: Invoker,
     now: Clock | None = None,
+    before_invoke: ExecutionHook | None = None,
+    after_invoke: ExecutionHook | None = None,
+    after_commit: ExecutionHook | None = None,
 ) -> Operation:
     """Claim, run under a fenced lease, and write the terminal result.
 
@@ -227,6 +231,9 @@ async def execute_operation(
         raise LeaseStateError(f"operation {operation_id} was not claimed with a live lease")
     claimed_version = operation.version
     attempt_id = attempt.id
+
+    if before_invoke is not None:
+        await before_invoke(operation)
 
     # Run the provider invocation concurrently with the lease heartbeat.
     invoke_task: asyncio.Task[ToolResult] = asyncio.create_task(invoke(operation))
@@ -275,6 +282,9 @@ async def execute_operation(
             await _bounded_wait(invoke_task, detach_on_timeout=True)
         else:
             _consume_task_result(invoke_task)
+
+    if after_invoke is not None:
+        await after_invoke(operation)
 
     # Transaction 2: fenced terminal write. The heartbeat kept the lease alive
     # while invoke ran; the fenced update is the single authoritative decision.
@@ -350,4 +360,6 @@ async def execute_operation(
         except LeaseConflictError:
             await session.rollback()
             raise
+    if after_commit is not None:
+        await after_commit(operation)
     return operation

@@ -10,7 +10,7 @@ from sqlalchemy import func, select, update
 
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
-from opspilot.execution.executor import execute_operation
+from opspilot.execution.executor import ExecutionHook, execute_operation
 from opspilot.execution.models import Operation, OperationStatus
 from opspilot.execution.reconciliation import ReconciliationLookup, reconcile_operation
 from opspilot.jobs.models import RunJobOutbox, RunJobStatus
@@ -162,14 +162,49 @@ async def process_operation_job(
         operation = await session.get(Operation, parsed_id)
         if operation is None or operation.version != expected_version:
             return
-        expected_status = (
-            OperationStatus.READY if kind == "EXECUTE" else OperationStatus.OUTCOME_UNKNOWN
+        expected_statuses = (
+            {OperationStatus.READY, OperationStatus.RETRYING}
+            if kind == "EXECUTE"
+            else {OperationStatus.OUTCOME_UNKNOWN}
         )
-        if operation.status is not expected_status:
+        if operation.status not in expected_statuses:
             return
 
     settings = Settings()
     if kind == "EXECUTE":
+        before_hook: ExecutionHook | None = None
+        after_invoke_hook: ExecutionHook | None = None
+        after_commit_hook: ExecutionHook | None = None
+        if settings.evaluation_fault_matrix:
+            from opspilot.evaluation.faults import crash_if_planned
+            from opspilot.evaluation.models import EvaluationFaultPoint
+
+            worker_id = f"arq:{ctx.get('job_id', 'operation')}"
+
+            async def before_invoke(current: Operation) -> None:
+                await crash_if_planned(
+                    current.id,
+                    EvaluationFaultPoint.BEFORE_EXTERNAL_EFFECT,
+                    worker_id=worker_id,
+                )
+
+            async def after_invoke(current: Operation) -> None:
+                await crash_if_planned(
+                    current.id,
+                    EvaluationFaultPoint.AFTER_EXTERNAL_EFFECT_BEFORE_LOCAL_COMMIT,
+                    worker_id=worker_id,
+                )
+
+            async def after_commit(current: Operation) -> None:
+                await crash_if_planned(
+                    current.id,
+                    EvaluationFaultPoint.AFTER_LOCAL_COMMIT_BEFORE_JOB_ACK,
+                    worker_id=worker_id,
+                )
+
+            before_hook = before_invoke
+            after_invoke_hook = after_invoke
+            after_commit_hook = after_commit
         async with httpx.AsyncClient(
             base_url=settings.payment_service_url,
             timeout=settings.payment_timeout_seconds,
@@ -186,6 +221,9 @@ async def process_operation_job(
                 lease_seconds=settings.operation_lease_seconds,
                 effect=ToolEffect.SIDE_EFFECT,
                 invoke=invoke,
+                before_invoke=before_hook,
+                after_invoke=after_invoke_hook,
+                after_commit=after_commit_hook,
             )
         return
     if kind == "RECONCILE":

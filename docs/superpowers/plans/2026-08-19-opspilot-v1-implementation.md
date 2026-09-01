@@ -658,6 +658,8 @@ git commit -m "test: add versioned opspilot evaluation corpus"
 
 ### 任务 17：异步实验 Runner、故障矩阵与评测看板
 
+**状态：实现完成，等待督导复审（2026-09-01）。** 冻结 test 未执行；正式真实故障矩阵审计 Run `add59d37-acda-4e33-ba52-0461766f9700` 三个故障点各 20 次，恢复率 100%、重复副作用率 0%、丢失 Operation 率 0%、P95 15,421ms。不得开始任务18。
+
 **文件：**
 - 创建：`backend/src/opspilot/evaluation/runner.py`、`tasks.py`、`router.py`、`report.py`
 - 创建：`evaluation/experiments/vector-only.yaml`、`hybrid.yaml`、`hybrid-rerank.yaml`
@@ -666,23 +668,23 @@ git commit -m "test: add versioned opspilot evaluation corpus"
 - 创建：`backend/tests/evaluation/test_runner.py`
 - 创建：`frontend/tests/evaluation.spec.ts`
 
-- [ ] **步骤 1：编写配置快照与重复实验测试**
+- [x] **步骤 1：编写配置快照与重复实验测试**
 
 Runner 固定数据集 SHA、模型、Embedding、Reranker、top-k、Prompt、随机参数和并发；Agent 用例至少 3 次，报告均值、标准差和失败样本。
 
-- [ ] **步骤 2：实现公开 API 驱动的异步 Runner**
+- [x] **步骤 2：实现公开 API 驱动的异步 Runner**
 
 Evaluation 只能调用公开服务接口；任务通过 ARQ 执行，结果写 evaluation_runs/cases。
 
-- [ ] **步骤 3：实现故障注入矩阵**
+- [x] **步骤 3：实现故障注入矩阵**
 
 覆盖执行前、外部副作用后本地提交前、结果落库后故障；每点至少 20 次，输出恢复率、重复副作用、丢失操作和恢复耗时。
 
-- [ ] **步骤 4：实现 JSON/CSV/HTML 报告和看板**
+- [x] **步骤 4：实现 JSON/CSV/HTML 报告和看板**
 
 展示 Recall@5、MRR、nDCG@5、引用正确率、任务成功率、P95、未经审批执行率和重复副作用，并包含实验配置与失败案例。
 
-- [ ] **步骤 5：验证并提交**
+- [x] **步骤 5：验证并提交**
 
 运行：`make eval-smoke && cd frontend && npm run test:e2e -- tests/evaluation.spec.ts`。预期 PASS。
 

@@ -18,6 +18,7 @@ from opspilot.auth.models import Role
 from opspilot.auth.schemas import Principal
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
+from opspilot.jobs.queues import WORKER_QUEUE
 from opspilot.knowledge.models import (
     Chunk,
     Document,
@@ -47,7 +48,13 @@ class ArqDocumentQueue:
         self.redis = redis
 
     async def enqueue_document(self, document_id: str, job_id: str, retry_attempt: int = 0) -> None:
-        await self.redis.enqueue_job("index_document", document_id, retry_attempt, _job_id=job_id)
+        await self.redis.enqueue_job(
+            "index_document",
+            document_id,
+            retry_attempt,
+            _job_id=job_id,
+            _queue_name=WORKER_QUEUE,
+        )
 
 
 class UploadResponse(BaseModel):

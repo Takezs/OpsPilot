@@ -1,6 +1,6 @@
 from typing import Literal, Self
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     email_service_url: str = "http://127.0.0.1:8103"
     payment_timeout_seconds: float = 1.0
     operation_lease_seconds: int = 30
+    evaluation_api_base_url: str = "http://127.0.0.1:8000/api/v1"
+    evaluation_api_token: str = ""
+    evaluation_dataset_root: str = "../evaluation/datasets"
+    evaluation_lease_seconds: int = 300
+    evaluation_fault_matrix: bool = Field(
+        default=False, validation_alias="OPSPILOT_EVAL_FAULT_MATRIX"
+    )
 
     @model_validator(mode="after")
     def reject_weak_production_secret(self) -> Self:

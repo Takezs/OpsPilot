@@ -168,10 +168,12 @@ async def recover_stale_delivered_jobs(batch_size: int = 50, *, grace_seconds: i
                 break
             job, operation = pair
             attempted_operation_ids.add(job.id)
-            expected_status = (
-                OperationStatus.READY if job.kind == "EXECUTE" else OperationStatus.OUTCOME_UNKNOWN
+            expected_statuses = (
+                {OperationStatus.READY, OperationStatus.RETRYING}
+                if job.kind == "EXECUTE"
+                else {OperationStatus.OUTCOME_UNKNOWN}
             )
-            if operation.version == job.expected_version and operation.status is expected_status:
+            if operation.version == job.expected_version and operation.status in expected_statuses:
                 job.delivered_at = None
                 job.available_at = func.clock_timestamp() + timedelta(seconds=1)
                 job.last_error = "delivery acknowledgement expired before claim"

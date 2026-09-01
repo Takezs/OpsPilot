@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from opspilot.db import async_session_factory
 from opspilot.jobs.models import OperationJobOutbox, RunJobOutbox
+from opspilot.jobs.queues import WORKER_QUEUE
 
 
 class OperationQueue(Protocol):
@@ -23,7 +24,11 @@ class ArqOperationQueue:
         self, operation_id: object, expected_version: int, kind: str
     ) -> None:
         await self.redis.enqueue_job(  # type: ignore[attr-defined]
-            "process_operation_job", str(operation_id), expected_version, kind
+            "process_operation_job",
+            str(operation_id),
+            expected_version,
+            kind,
+            _queue_name=WORKER_QUEUE,
         )
 
 
@@ -36,7 +41,9 @@ class ArqRunQueue:
         self.redis = redis
 
     async def enqueue_run_message(self, message_id: object) -> None:
-        await self.redis.enqueue_job("process_run_message", str(message_id))  # type: ignore[attr-defined]
+        await self.redis.enqueue_job(  # type: ignore[attr-defined]
+            "process_run_message", str(message_id), _queue_name=WORKER_QUEUE
+        )
 
 
 async def publish_pending_run_jobs(queue: RunQueue, batch_size: int = 100) -> int:

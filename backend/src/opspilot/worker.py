@@ -7,11 +7,17 @@ from opspilot.agent.reply import render_assistant_reply
 from opspilot.agent.runner import AgentRunner, DeepSeekAgentDecider
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
+from opspilot.evaluation.runner import PublicEvaluationApi
+from opspilot.evaluation.tasks import (
+    drain_detached_evaluation_tasks,
+    process_evaluation_execution,
+)
 from opspilot.execution.executor import drain_detached_provider_tasks
 from opspilot.execution.service import build_refund_operation_handler
 from opspilot.generation.citations import ValidatedAnswer
 from opspilot.generation.provider import DeepSeekGenerationProvider
 from opspilot.generation.service import GenerationService
+from opspilot.jobs.queues import WORKER_QUEUE
 from opspilot.jobs.run_executor import RunJobFence, drain_detached_run_processor_tasks
 from opspilot.jobs.tasks import RunMessageResult, process_operation_job, process_run_message
 from opspilot.knowledge.embedding import BgeM3EmbeddingProvider
@@ -41,7 +47,8 @@ async def shutdown_worker(ctx: dict[str, object]) -> None:
     """Collect cancellation-resistant provider tasks before ARQ exits."""
     await drain_detached_provider_tasks()
     await drain_detached_run_processor_tasks()
-    for name in ("order_client", "payment_client", "email_client"):
+    await drain_detached_evaluation_tasks()
+    for name in ("order_client", "payment_client", "email_client", "evaluation_api_client"):
         client = ctx.get(name)
         if isinstance(client, httpx.AsyncClient):
             await client.aclose()
@@ -85,6 +92,15 @@ async def startup_worker(ctx: dict[str, object]) -> None:
         generation_provider=generation_provider,
         decider=decider,
     )
+    evaluation_api_client = httpx.AsyncClient(
+        base_url=settings.evaluation_api_base_url,
+        timeout=30,
+    )
+    ctx["evaluation_api_client"] = evaluation_api_client
+    if settings.evaluation_api_token:
+        ctx["evaluation_case_processor"] = PublicEvaluationApi(
+            evaluation_api_client, settings.evaluation_api_token
+        )
 
     async def process(message: RunMessage, fence: RunJobFence) -> RunMessageResult:
         run_id = message.run_id
@@ -142,6 +158,7 @@ async def startup_worker(ctx: dict[str, object]) -> None:
 
 
 class WorkerSettings:
+    queue_name = WORKER_QUEUE
     functions = [
         func(
             index_document,
@@ -150,6 +167,7 @@ class WorkerSettings:
         ),
         func(process_operation_job, max_tries=3, timeout=120),
         func(process_run_message, max_tries=3, timeout=RUN_MESSAGE_JOB_TIMEOUT),
+        func(process_evaluation_execution, max_tries=3, timeout=3600),
     ]
     on_shutdown = shutdown_worker
     on_startup = startup_worker

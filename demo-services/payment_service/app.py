@@ -31,6 +31,8 @@ ORDER_AMOUNTS: dict[str, float] = {
     "A103": 1200.0,
     "ORD-002": 350.0,
 }
+if os.getenv("OPSPILOT_EVAL_FAULT_MATRIX", "").lower() in {"1", "true"}:
+    ORDER_AMOUNTS.update({f"EVAL-{index:03d}": 350.0 for index in range(1, 61)})
 
 # Server-side business idempotency key -> refund.
 REFUNDS: dict[str, dict] = {}
@@ -81,9 +83,22 @@ async def get_refund(order_number: str) -> dict:
 
 @app.get("/__e2e/refunds/{order_number}/count")
 async def e2e_refund_count(order_number: str) -> dict[str, int]:
-    if os.getenv("OPSPILOT_DEMO_E2E", "").lower() not in {"1", "true"}:
+    if os.getenv("OPSPILOT_DEMO_E2E", "").lower() not in {"1", "true"} and os.getenv(
+        "OPSPILOT_EVAL_FAULT_MATRIX", ""
+    ).lower() not in {"1", "true"}:
         raise HTTPException(status_code=404, detail="not found")
     return {"count": int(_refund_key(order_number) in REFUNDS)}
+
+
+@app.post("/__e2e/refunds/{order_number}/reset")
+async def reset_evaluation_refund(order_number: str) -> dict[str, bool]:
+    if os.getenv("OPSPILOT_EVAL_FAULT_MATRIX", "").lower() not in {"1", "true"}:
+        raise HTTPException(status_code=404, detail="not found")
+    if not order_number.startswith("EVAL-") or order_number not in ORDER_AMOUNTS:
+        raise HTTPException(status_code=404, detail="not found")
+    REFUNDS.pop(_refund_key(order_number), None)
+    _FAULTED_ORDERS.discard(order_number)
+    return {"reset": True}
 
 
 @app.get("/refunds/{order_number}/eligibility")

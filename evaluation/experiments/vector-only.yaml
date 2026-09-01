@@ -1,0 +1,12 @@
+schema_version: 1
+name: vector-only-dev
+split: dev
+retrieval:
+  dense: true
+  postgresql_fts: false
+  reranker: false
+  top_k: 5
+random_parameters:
+  temperature: 0.0
+concurrency: 3
+agent_repetitions: 3
