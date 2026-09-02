@@ -695,6 +695,8 @@ git commit -m "feat: publish reproducible opspilot evaluations"
 
 ### 任务 18：可观测性、部署、文档与 v1.0 验收
 
+**状态：步骤 1–5 冻结 test 前发布候选已完成，等待督导 go/no-go 复审。隔离RC两次seed与公开API dev smoke通过；冻结 test 未执行，步骤 6/7 与 v1.0 tag 未开始。**
+
 **文件：**
 - 创建：`backend/src/opspilot/observability/tracing.py`、`redaction.py`
 - 创建：`backend/tests/observability/test_redaction.py`
@@ -703,23 +705,23 @@ git commit -m "feat: publish reproducible opspilot evaluations"
 - 创建：`README.md`
 - 修改：`docker-compose.yml`
 
-- [ ] **步骤 1：编写隐私与预算测试**
+- [x] **步骤 1：编写隐私与预算测试**
 
 断言邮箱、手机号、API Key、Authorization 和完整 Prompt 不进入 Attempt、Run Event、日志或 Trace；每 Run 模型次数、工具次数、Token 和总时长超限后安全终止。
 
-- [ ] **步骤 2：实现 Trace 与脱敏**
+- [x] **步骤 2：实现 Trace 与脱敏**
 
 `agent.run` 下包含 retrieval、rerank、llm、tool.policy、tool.execute、tool.reconcile；统一携带 run_id，只记录输入摘要和结构化决定。
 
-- [ ] **步骤 3：完成非 root 容器与健康检查**
+- [x] **步骤 3：完成非 root 容器与健康检查**
 
 Compose 启动 Web、API、Worker、Outbox Publisher、PostgreSQL、Redis、Order、Payment、Email；共享 Volume 只授予 API/Worker 必要权限。
 
-- [ ] **步骤 4：编写架构与面试证据文档**
+- [x] **步骤 4：编写架构与面试证据文档**
 
 解释 PostgreSQL+pgvector、RRF/Reranker、数据库权限过滤、Prompt 外策略、业务幂等键、Transactional Outbox、Lease fencing 局限和 OUTCOME_UNKNOWN 核对。简历数字只引用 `evaluation/reports/<run_id>/results.json`。
 
-- [ ] **步骤 5：执行完整发布验证**
+- [x] **步骤 5：执行完整发布验证**
 
 ```bash
 docker compose build

@@ -13,6 +13,7 @@ contract.
 
 import json
 import secrets
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
@@ -24,6 +25,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from opspilot.agent.prompts import render_system_prompt, render_untrusted_tool_output
 from opspilot.agent.state import AgentMessage, AgentState
 from opspilot.generation.citations import ValidatedAnswer
+from opspilot.observability.tracing import traced_stage
 from opspilot.retrieval.context_builder import BuiltContext, CitationSnapshot
 from opspilot.tools.registry import ToolRegistry, validate_arguments
 from opspilot.tools.types import ToolDefinition, ToolEffect, ToolResult
@@ -80,6 +82,18 @@ class AgentOutcome:
     executed_tool_calls: tuple[ExecutedToolCall, ...] = ()
 
 
+@dataclass(frozen=True)
+class AgentBudget:
+    max_model_calls: int = 8
+    max_tool_calls: int = 6
+    max_input_tokens: int = 16_000
+    max_duration_seconds: float = 300.0
+
+
+def _estimated_tokens(messages: list[AgentMessage]) -> int:
+    return sum(max(1, len(message.content.encode("utf-8")) // 4) for message in messages)
+
+
 class DecisionProvider(Protocol):
     async def decide(
         self, state: AgentState, tools: tuple[ToolDefinition, ...]
@@ -102,6 +116,8 @@ class AgentRunner:
         side_effect_handler: SideEffectHandler | None = None,
         knowledge_search_handler: KnowledgeSearchHandler | None = None,
         grounded_answer_handler: GroundedAnswerHandler | None = None,
+        budget: AgentBudget | None = None,
+        run_id: str = "unpersisted",
     ) -> None:
         self._registry = registry
         self._decision_provider = decision_provider
@@ -110,8 +126,14 @@ class AgentRunner:
         self._side_effect_handler = side_effect_handler
         self._knowledge_search_handler = knowledge_search_handler
         self._grounded_answer_handler = grounded_answer_handler
+        self._budget = budget or AgentBudget(
+            max_model_calls=max_rounds,
+            max_tool_calls=max_tool_calls,
+        )
+        self._run_id = run_id
 
     async def run(self, user_message: str) -> AgentOutcome:
+        started_at = time.monotonic()
         state = AgentState(messages=[AgentMessage(role="user", content=user_message)])
         grounded_contexts: dict[str, BuiltContext] = {}
         workflow_facts: list[WorkflowFact] = []
@@ -124,7 +146,8 @@ class AgentRunner:
         async def grounded_outcome(context: BuiltContext) -> AgentOutcome:
             if self._grounded_answer_handler is None:
                 raise DecisionError("grounded answer generation is not configured")
-            validated = await self._grounded_answer_handler(user_message, context)
+            with traced_stage("llm", self._run_id, {"decision": "grounded_answer"}):
+                validated = await self._grounded_answer_handler(user_message, context)
             if validated.follow_up_question is not None:
                 return outcome(
                     clarification=validated.follow_up_question,
@@ -151,7 +174,12 @@ class AgentRunner:
             )
 
         while True:
-            if state.rounds >= self._max_rounds:
+            budget_exhausted = (
+                state.rounds >= min(self._max_rounds, self._budget.max_model_calls)
+                or _estimated_tokens(state.messages) > self._budget.max_input_tokens
+                or time.monotonic() - started_at >= self._budget.max_duration_seconds
+            )
+            if budget_exhausted:
                 if knowledge_search_attempted:
                     return outcome(
                         final_answer=INSUFFICIENT_EVIDENCE_REPLY,
@@ -167,7 +195,15 @@ class AgentRunner:
                     workflow_facts=tuple(workflow_facts),
                 )
             state.rounds += 1
-            decision = await self._decision_provider.decide(state, self._registry.all())
+            with traced_stage("llm", self._run_id, {"decision": "agent_decision"}):
+                decision = await self._decision_provider.decide(state, self._registry.all())
+            if time.monotonic() - started_at >= self._budget.max_duration_seconds:
+                return outcome(
+                    rounds=state.rounds,
+                    tool_calls=state.tool_calls,
+                    bounded=True,
+                    workflow_facts=tuple(workflow_facts),
+                )
             if decision.kind == "answer":
                 if knowledge_search_attempted:
                     if len(grounded_contexts) == 1 and self._grounded_answer_handler is not None:
@@ -228,7 +264,7 @@ class AgentRunner:
                     )
                     continue
                 return await grounded_outcome(context)
-            if state.tool_calls >= self._max_tool_calls:
+            if state.tool_calls >= min(self._max_tool_calls, self._budget.max_tool_calls):
                 return outcome(
                     rounds=state.rounds,
                     tool_calls=state.tool_calls,
@@ -242,8 +278,9 @@ class AgentRunner:
             tool_name = decision.tool
             if tool_name is None or not tool_name:
                 raise DecisionError("decision provider returned a tool_call without a tool name")
-            definition = self._registry.get(tool_name)
-            arguments = validate_arguments(definition, decision.arguments or {})
+            with traced_stage("tool.policy", self._run_id, {"tool": tool_name}):
+                definition = self._registry.get(tool_name)
+                arguments = validate_arguments(definition, decision.arguments or {})
             executed_tool_calls.append(
                 ExecutedToolCall(
                     name=definition.name,
@@ -254,7 +291,8 @@ class AgentRunner:
             issued_search_call_id: str | None = None
             if definition.name == "search_knowledge" and self._knowledge_search_handler:
                 knowledge_search_attempted = True
-                grounded = await self._knowledge_search_handler(arguments)
+                with traced_stage("retrieval", self._run_id, {"tool": definition.name}):
+                    grounded = await self._knowledge_search_handler(arguments)
                 summary = dict(grounded.summary.data or {})
                 summary.pop("search_call_id", None)
                 has_evidence = bool(grounded.context.fragments)
@@ -291,12 +329,14 @@ class AgentRunner:
                         ),
                     )
                 else:
-                    result = await self._side_effect_handler(definition, arguments)
+                    with traced_stage("tool.execute", self._run_id, {"tool": definition.name}):
+                        result = await self._side_effect_handler(definition, arguments)
                     fact = _workflow_fact(definition, result)
                     if fact is not None:
                         workflow_facts.append(fact)
             else:
-                result = await definition.invoke(arguments)
+                with traced_stage("tool.execute", self._run_id, {"tool": definition.name}):
+                    result = await definition.invoke(arguments)
             state.messages.append(
                 AgentMessage(
                     role="tool",

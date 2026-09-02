@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-v4-flash"
     deepseek_proxy_url: str | None = None
     generation_context_token_budget: int = 4000
+    agent_max_model_calls: int = 8
+    agent_max_tool_calls: int = 6
+    agent_max_input_tokens: int = 16_000
+    agent_max_duration_seconds: float = 300.0
     retrieval_reranker_timeout_seconds: float = 5.0
     # Task 9: default time-to-decide for a pending approval request.
     approval_ttl_seconds: int = 86400

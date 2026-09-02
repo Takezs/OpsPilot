@@ -4,7 +4,7 @@ from arq.connections import RedisSettings
 
 from opspilot.agent.knowledge import RunKnowledgeSearch
 from opspilot.agent.reply import render_assistant_reply
-from opspilot.agent.runner import AgentRunner, DeepSeekAgentDecider
+from opspilot.agent.runner import AgentBudget, AgentRunner, DeepSeekAgentDecider
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.evaluation.runner import PublicEvaluationApi
@@ -26,6 +26,8 @@ from opspilot.knowledge.tasks import (
     DOCUMENT_INDEX_MAX_TRIES,
     index_document,
 )
+from opspilot.observability.redaction import install_safe_logging
+from opspilot.observability.tracing import traced_stage
 from opspilot.retrieval.context_builder import BuiltContext
 from opspilot.retrieval.reranker import BgeReranker
 from opspilot.runs.models import RunMessage
@@ -41,6 +43,7 @@ from opspilot.tools.schemas import SearchKnowledgeArgs
 from opspilot.tools.types import ToolResult
 
 RUN_MESSAGE_JOB_TIMEOUT = 600
+install_safe_logging()
 
 
 async def shutdown_worker(ctx: dict[str, object]) -> None:
@@ -138,8 +141,16 @@ async def startup_worker(ctx: dict[str, object]) -> None:
             ),
             knowledge_search_handler=knowledge_search,
             grounded_answer_handler=grounded_answer,
+            run_id=str(run_id),
+            budget=AgentBudget(
+                max_model_calls=settings.agent_max_model_calls,
+                max_tool_calls=settings.agent_max_tool_calls,
+                max_input_tokens=settings.agent_max_input_tokens,
+                max_duration_seconds=settings.agent_max_duration_seconds,
+            ),
         )
-        outcome = await runner.run(message.content)
+        with traced_stage("agent.run", str(run_id), {"prompt": message.content}):
+            outcome = await runner.run(message.content)
         snapshots: list[dict[str, object]] = [
             {
                 "document_id": snapshot.document_id,

@@ -27,7 +27,10 @@ from opspilot.knowledge.outbox import (
     reconcile_expired_retry_attempts,
 )
 from opspilot.knowledge.router import ArqDocumentQueue
+from opspilot.observability.redaction import install_safe_logging
 from opspilot.runs.outbox import RedisRunEventNotifier, publish_pending_events
+
+install_safe_logging()
 
 
 async def publish_document_outbox(ctx: dict[str, Any]) -> int:

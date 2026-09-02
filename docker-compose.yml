@@ -1,32 +1,129 @@
+x-backend: &backend
+  build: {context: ., dockerfile: deploy/Dockerfile.backend}
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp:size=64m,noexec,nosuid"]
+  environment: &backend-env
+    ENVIRONMENT: production
+    DATABASE_URL: postgresql+asyncpg://opspilot:${POSTGRES_PASSWORD:-opspilot}@postgres:5432/opspilot
+    REDIS_URL: redis://redis:6379/0
+    JWT_SECRET: ${JWT_SECRET:-}
+    BGE_BASE_URL: ${BGE_BASE_URL:-http://host.docker.internal:8080/v1}
+    BGE_API_KEY: ${BGE_API_KEY:-}
+    BGE_EMBEDDING_MODEL: ${BGE_EMBEDDING_MODEL:-bge-m3}
+    BGE_RERANKER_MODEL: ${BGE_RERANKER_MODEL:-bge-reranker-v2-m3}
+    DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+    DEEPSEEK_PROXY_URL: ${DEEPSEEK_PROXY_URL:-}
+    ORDER_SERVICE_URL: http://order:8101
+    PAYMENT_SERVICE_URL: http://payment:8102
+    EMAIL_SERVICE_URL: http://email:8103
+    STORAGE_ROOT: /app/data/documents
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+  volumes: [opspilot_storage:/app/data/documents]
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
       POSTGRES_DB: opspilot
       POSTGRES_USER: opspilot
-      POSTGRES_PASSWORD: opspilot
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-opspilot}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U opspilot -d opspilot"]
-      interval: 2s
+      test: [CMD-SHELL, pg_isready -U opspilot -d opspilot]
+      interval: 5s
       timeout: 5s
-      retries: 15
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
+      retries: 20
+    ports: ["127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
+    command: [redis-server, --appendonly, "yes"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 2s
+      test: [CMD, redis-cli, ping]
+      interval: 5s
       timeout: 5s
-      retries: 15
-    volumes:
-      - redis_data:/data
+      retries: 20
+    ports: ["127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"]
+    volumes: [redis_data:/data]
+  api:
+    <<: *backend
+    command: [uvicorn, opspilot.main:app, --host, 0.0.0.0, --port, "8000"]
+    ports: ["127.0.0.1:${API_HOST_PORT:-8000}:8000"]
+    healthcheck: &api-health
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  worker:
+    <<: *backend
+    command: [arq, opspilot.worker.WorkerSettings]
+    depends_on:
+      api: {condition: service_healthy}
+      order: {condition: service_healthy}
+      payment: {condition: service_healthy}
+      email: {condition: service_healthy}
+    healthcheck: &arq-health
+      test: [CMD, python, -c, "assert b'arq' in open('/proc/1/cmdline','rb').read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+  outbox-publisher:
+    <<: *backend
+    volumes: []
+    command: [arq, opspilot.outbox_publisher.OutboxPublisherSettings]
+    depends_on: {api: {condition: service_healthy}}
+    healthcheck: *arq-health
+  order:
+    <<: *backend
+    environment: {}
+    volumes: []
+    command: [uvicorn, app:app, --app-dir, /app/demo-services/order_service, --host, 0.0.0.0, --port, "8101"]
+    healthcheck: &order-health
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8101/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  payment:
+    <<: *backend
+    environment: {}
+    volumes: []
+    command: [uvicorn, app:app, --app-dir, /app/demo-services/payment_service, --host, 0.0.0.0, --port, "8102"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8102/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  email:
+    <<: *backend
+    environment: {}
+    volumes: []
+    command: [uvicorn, app:app, --app-dir, /app/demo-services/email_service, --host, 0.0.0.0, --port, "8103"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8103/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  web:
+    build: {context: ., dockerfile: deploy/Dockerfile.frontend}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - "/tmp:size=16m,noexec,nosuid"
+      - "/var/cache/nginx:size=16m,noexec,nosuid"
+    depends_on: {api: {condition: service_healthy}}
+    ports: ["127.0.0.1:${WEB_HOST_PORT:-8088}:8080"]
+    healthcheck:
+      test: [CMD, wget, -qO-, http://127.0.0.1:8080/]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
 volumes:
   postgres_data:
   redis_data:
+  opspilot_storage:

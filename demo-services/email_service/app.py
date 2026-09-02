@@ -8,6 +8,11 @@ from pydantic import BaseModel
 app = FastAPI(title="Email Service")
 
 
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 class EmailMessage(BaseModel):
     to: str
     subject: str

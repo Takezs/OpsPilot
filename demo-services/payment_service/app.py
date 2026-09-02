@@ -23,6 +23,12 @@ from pydantic import BaseModel
 
 app = FastAPI(title="Payment Service")
 
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 DEFAULT_FAILURE_DELAY_SECONDS = 5.0
 
 ORDER_AMOUNTS: dict[str, float] = {
@@ -128,17 +134,13 @@ async def check_eligibility(order_number: str) -> dict:
 
 
 @app.post("/refunds")
-async def create_refund(
-    request: RefundRequest, raw: Request, response: Response
-) -> dict:
+async def create_refund(request: RefundRequest, raw: Request, response: Response) -> dict:
     if request.order_number not in ORDER_AMOUNTS and not _ensure_evaluation_order(
         request.order_number
     ):
         raise HTTPException(status_code=404, detail="order not found")
     mode = raw.headers.get("x-failure-mode", _configured_mode(request.order_number))
-    delay = float(
-        raw.headers.get("x-failure-delay", str(DEFAULT_FAILURE_DELAY_SECONDS))
-    )
+    delay = float(raw.headers.get("x-failure-delay", str(DEFAULT_FAILURE_DELAY_SECONDS)))
 
     if mode == "timeout_before_effect":
         # Delay past the caller's read timeout, then confirm without applying

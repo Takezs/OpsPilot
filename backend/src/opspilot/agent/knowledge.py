@@ -11,6 +11,7 @@ from opspilot.auth.models import User
 from opspilot.auth.schemas import Principal
 from opspilot.knowledge.embedding import EmbeddingProvider
 from opspilot.knowledge.schemas import AccessLevel
+from opspilot.observability.tracing import traced_stage
 from opspilot.retrieval.context_builder import build_context
 from opspilot.retrieval.enrichment import (
     CandidateMetadata,
@@ -73,12 +74,15 @@ class RunKnowledgeSearch:
                 if item.chunk_id in metadata
             ]
             if rerank_items:
-                reranked = await rerank_with_fallback(
-                    self._reranker_provider,
-                    arguments.query,
-                    rerank_items,
-                    self._reranker_timeout_seconds,
-                )
+                with traced_stage(
+                    "rerank", str(self._run_id), {"candidate_count": len(rerank_items)}
+                ):
+                    reranked = await rerank_with_fallback(
+                        self._reranker_provider,
+                        arguments.query,
+                        rerank_items,
+                        self._reranker_timeout_seconds,
+                    )
                 candidates = list(reranked.candidates)
                 status = reranked.status
             else:

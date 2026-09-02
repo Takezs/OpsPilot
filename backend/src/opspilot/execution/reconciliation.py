@@ -14,6 +14,7 @@ from opspilot.execution.attempts import finish_attempt, start_attempt
 from opspilot.execution.claim import LeaseConflictError
 from opspilot.execution.models import Operation, OperationAttempt, OperationStatus
 from opspilot.jobs.service import enqueue_operation_job
+from opspilot.observability.tracing import traced_stage
 from opspilot.runs.journal import append_event
 from opspilot.runs.sanitize import sanitize_payload
 from opspilot.runs.status import recompute_run_status
@@ -207,7 +208,8 @@ async def reconcile_operation(
         attempt_id = attempt.id
 
     try:
-        outcome = await query(lookup)
+        with traced_stage("tool.reconcile", str(operation.run_id), {"tool": operation.tool_name}):
+            outcome = await query(lookup)
     except Exception as error:
         outcome = ToolResult(ok=False, error=str(error))
 

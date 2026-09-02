@@ -6,6 +6,7 @@ export default defineConfig({
     '**/auth.spec.ts',
     '**/citation.spec.ts',
     '**/knowledge.spec.ts',
+    '**/evaluation-unit.spec.ts',
     '**/run-events-red.spec.ts',
   ],
   globalSetup: './tests/global-setup.ts',
