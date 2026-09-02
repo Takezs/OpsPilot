@@ -658,7 +658,7 @@ git commit -m "test: add versioned opspilot evaluation corpus"
 
 ### 任务 17：异步实验 Runner、故障矩阵与评测看板
 
-**状态：实现完成，等待督导复审（2026-09-01）。** 冻结 test 未执行；正式真实故障矩阵审计 Run `add59d37-acda-4e33-ba52-0461766f9700` 三个故障点各 20 次，恢复率 100%、重复副作用率 0%、丢失 Operation 率 0%、P95 15,421ms。不得开始任务18。
+**状态：复审修复完成，等待督导再次复审（2026-09-02）。** 冻结 test 未执行；正式真实故障矩阵审计 Run `0108b7b2-991d-49d3-9e6e-d2ff50ce5c38` 三个故障点各 20 次，恢复率 100%、重复副作用率 0%、丢失 Operation 率 0%、P95 137,125ms。不得开始任务18。
 
 **文件：**
 - 创建：`backend/src/opspilot/evaluation/runner.py`、`tasks.py`、`router.py`、`report.py`

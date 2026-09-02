@@ -65,27 +65,38 @@ def build_report_artifacts(
     metrics["duplicate_side_effect_rate"] = _rate(
         [bool(row["actual"].get("duplicate_side_effect", False)) for row in rows]
     )
+    metrics["total_attempts"] = len(rows)
+    setup_failures = [
+        row for row in rows if row["actual"].get("failure_stage") in {"SETUP", "AGENT"}
+    ]
+    metrics["setup_agent_failures"] = len(setup_failures)
+    metrics["setup_agent_failure_rate"] = len(setup_failures) / len(rows) if rows else 0.0
+    metrics["end_to_end_success_rate"] = _rate(
+        [bool(row["scores"].get("task_success", False)) for row in rows]
+    )
     fault_matrix: dict[str, object] = {}
     fault_points = sorted(
         {str(row["actual"]["fault_point"]) for row in rows if row["actual"].get("fault_point")}
     )
     for point in fault_points:
         samples = [row for row in rows if row["actual"].get("fault_point") == point]
+        consumed = [row for row in samples if row["actual"].get("fault_consumed") is True]
         recovery_times = [
             float(row["actual"]["recovery_ms"])
-            for row in samples
+            for row in consumed
             if row["actual"].get("recovery_ms") is not None
         ]
         fault_matrix[point] = {
-            "runs": len(samples),
+            "attempted": len(samples),
+            "consumed": len(consumed),
             "recovery_rate": _rate(
-                [bool(row["actual"].get("recovered", False)) for row in samples]
+                [bool(row["actual"].get("recovered", False)) for row in consumed]
             ),
             "duplicate_side_effect_rate": _rate(
-                [bool(row["actual"].get("duplicate_side_effect", False)) for row in samples]
+                [bool(row["actual"].get("duplicate_side_effect", False)) for row in consumed]
             ),
             "lost_operation_rate": _rate(
-                [bool(row["actual"].get("lost_operation", False)) for row in samples]
+                [bool(row["actual"].get("lost_operation", False)) for row in consumed]
             ),
             "mean_recovery_ms": statistics.fmean(recovery_times) if recovery_times else 0.0,
         }
@@ -94,6 +105,8 @@ def build_report_artifacts(
             "case_id": row["case_id"],
             "repetition": row["repetition"],
             "error": row["error"],
+            "failure_stage": row["actual"].get("failure_stage"),
+            "scores": row["scores"],
         }
         for row in rows
         if row.get("error") or not bool(row["scores"].get("task_success", True))

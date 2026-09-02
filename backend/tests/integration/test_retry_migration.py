@@ -10,6 +10,7 @@ from alembic.config import Config
 from alembic import command
 from opspilot.config import Settings
 from opspilot.db import engine
+from tests.migration_database import migration_scratch_database
 
 
 def alembic_config() -> Config:
@@ -96,21 +97,17 @@ async def cleanup(knowledge_base_id: uuid.UUID) -> None:
 
 @pytest.mark.integration
 def test_0007_retry_history_is_backfilled_during_0008_upgrade() -> None:
-    config = alembic_config()
-    command.downgrade(config, "0007_document_retry_attempts")
-    knowledge_base_id, documents = asyncio.run(seed_0007_retry_history())
-    try:
-        command.upgrade(config, "0008_document_retry_lifecycle")
-        asyncio.run(assert_0008_backfill_and_create_next_attempt(documents))
-        asyncio.run(cleanup(knowledge_base_id))
-        command.downgrade(config, "0006_document_index_outbox")
-        command.upgrade(config, "head")
-    finally:
-        command.upgrade(config, "head")
-        # The downgrade/upgrade cycle drops and recreates enum types with new
-        # OIDs. Any pooled asyncpg connection created before this cycle caches
-        # the old OIDs, so later tests that reuse such a connection fail with
-        # "cache lookup failed for type NNNN". Dispose the app engine's pool so
-        # the stale connections are dropped and fresh ones resolve the new OIDs.
-        asyncio.run(engine.dispose())
-        asyncio.run(cleanup(knowledge_base_id))
+    with migration_scratch_database():
+        config = alembic_config()
+        command.upgrade(config, "0007_document_retry_attempts")
+        knowledge_base_id, documents = asyncio.run(seed_0007_retry_history())
+        try:
+            command.upgrade(config, "0008_document_retry_lifecycle")
+            asyncio.run(assert_0008_backfill_and_create_next_attempt(documents))
+            asyncio.run(cleanup(knowledge_base_id))
+            command.downgrade(config, "0006_document_index_outbox")
+            command.upgrade(config, "head")
+        finally:
+            command.upgrade(config, "head")
+            asyncio.run(engine.dispose())
+            asyncio.run(cleanup(knowledge_base_id))

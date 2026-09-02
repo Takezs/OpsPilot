@@ -109,7 +109,10 @@ async def test_stale_delivered_run_job_is_requeued_or_completed_from_reply() -> 
     pending_run, pending_message = await _create_run_job()
     replied_run, replied_message = await _create_run_job(with_reply=True)
     try:
-        assert await recover_stale_delivered_jobs(grace_seconds=30) == 2
+        # The production scanner is intentionally global. Persisted audit/E2E runs may
+        # contribute other legitimate stale candidates, so assert our two rows were
+        # included and verify their exact postconditions below.
+        assert await recover_stale_delivered_jobs(grace_seconds=30) >= 2
         connection = await _connect()
         try:
             pending = await connection.fetchrow(
@@ -152,7 +155,7 @@ async def test_stale_delivered_operation_job_is_requeued_only_while_fact_matches
         kind, status, expected_version=2, operation_version=3
     )
     try:
-        assert await recover_stale_delivered_jobs(grace_seconds=30) == 2
+        assert await recover_stale_delivered_jobs(grace_seconds=30) >= 2
         connection = await _connect()
         try:
             matching = await connection.fetchrow(

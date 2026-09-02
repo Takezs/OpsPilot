@@ -14,6 +14,7 @@ from alembic.config import Config
 from alembic import command
 from opspilot.config import Settings
 from opspilot.evaluation.models import EvaluationCaseRecord, EvaluationRun
+from tests.migration_database import MIGRATION_DATABASE_PREFIX, assert_safe_migration_database
 
 
 def _config() -> Config:
@@ -22,9 +23,11 @@ def _config() -> Config:
 
 @contextmanager
 def _migration_database() -> Iterator[str]:
-    database_name = f"opspilot_0021_{uuid.uuid4().hex}"
+    database_name = f"{MIGRATION_DATABASE_PREFIX}{uuid.uuid4().hex}"
     sqlalchemy_url = Settings().database_url
     asyncpg_url = sqlalchemy_url.replace("+asyncpg", "")
+    scratch_url = sqlalchemy_url.rsplit("/", 1)[0] + f"/{database_name}"
+    assert_safe_migration_database(scratch_url)
     admin_url = asyncpg_url.rsplit("/", 1)[0] + "/postgres"
 
     async def create() -> None:
@@ -43,7 +46,7 @@ def _migration_database() -> Iterator[str]:
 
     asyncio.run(create())
     previous = os.environ.get("DATABASE_URL")
-    os.environ["DATABASE_URL"] = sqlalchemy_url.rsplit("/", 1)[0] + f"/{database_name}"
+    os.environ["DATABASE_URL"] = scratch_url
     try:
         yield os.environ["DATABASE_URL"].replace("+asyncpg", "")
     finally:

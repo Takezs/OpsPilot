@@ -27,6 +27,8 @@ from opspilot.tools.types import ToolEffect, ToolResult
 class RunMessageResult:
     content: str
     citation_snapshots: list[dict[str, object]]
+    tool_calls: list[dict[str, object]] | None = None
+    response_kind: str = "ANSWERED"
 
 
 RunMessageProcessor = Callable[[RunMessage, RunJobFence], Awaitable[RunMessageResult]]
@@ -143,6 +145,8 @@ async def process_run_message(ctx: dict[str, Any], message_id: str) -> None:
                 "message_id": str(reply.id),
                 "content": result.content,
                 "citations": result.citation_snapshots,
+                "tool_calls": result.tool_calls or [],
+                "response_kind": result.response_kind,
             },
         )
         job.status = RunJobStatus.COMPLETED

@@ -62,6 +62,12 @@ class WorkflowFact:
 
 
 @dataclass(frozen=True)
+class ExecutedToolCall:
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class AgentOutcome:
     final_answer: str | None = None
     clarification: str | None = None
@@ -71,6 +77,7 @@ class AgentOutcome:
     citation_snapshots: tuple[CitationSnapshot, ...] = ()
     workflow_facts: tuple[WorkflowFact, ...] = ()
     grounded: bool = False
+    executed_tool_calls: tuple[ExecutedToolCall, ...] = ()
 
 
 class DecisionProvider(Protocol):
@@ -108,14 +115,18 @@ class AgentRunner:
         state = AgentState(messages=[AgentMessage(role="user", content=user_message)])
         grounded_contexts: dict[str, BuiltContext] = {}
         workflow_facts: list[WorkflowFact] = []
+        executed_tool_calls: list[ExecutedToolCall] = []
         knowledge_search_attempted = False
+
+        def outcome(**values: Any) -> AgentOutcome:
+            return AgentOutcome(executed_tool_calls=tuple(executed_tool_calls), **values)
 
         async def grounded_outcome(context: BuiltContext) -> AgentOutcome:
             if self._grounded_answer_handler is None:
                 raise DecisionError("grounded answer generation is not configured")
             validated = await self._grounded_answer_handler(user_message, context)
             if validated.follow_up_question is not None:
-                return AgentOutcome(
+                return outcome(
                     clarification=validated.follow_up_question,
                     rounds=state.rounds,
                     tool_calls=state.tool_calls,
@@ -123,14 +134,14 @@ class AgentRunner:
                     grounded=True,
                 )
             if validated.insufficient_evidence or not validated.snapshots:
-                return AgentOutcome(
+                return outcome(
                     final_answer=INSUFFICIENT_EVIDENCE_REPLY,
                     rounds=state.rounds,
                     tool_calls=state.tool_calls,
                     workflow_facts=tuple(workflow_facts),
                     grounded=True,
                 )
-            return AgentOutcome(
+            return outcome(
                 final_answer=validated.answer,
                 rounds=state.rounds,
                 tool_calls=state.tool_calls,
@@ -142,14 +153,14 @@ class AgentRunner:
         while True:
             if state.rounds >= self._max_rounds:
                 if knowledge_search_attempted:
-                    return AgentOutcome(
+                    return outcome(
                         final_answer=INSUFFICIENT_EVIDENCE_REPLY,
                         rounds=state.rounds,
                         tool_calls=state.tool_calls,
                         bounded=True,
                         workflow_facts=tuple(workflow_facts),
                     )
-                return AgentOutcome(
+                return outcome(
                     rounds=state.rounds,
                     tool_calls=state.tool_calls,
                     bounded=True,
@@ -179,7 +190,7 @@ class AgentRunner:
                         )
                     )
                     continue
-                return AgentOutcome(
+                return outcome(
                     final_answer=decision.answer,
                     rounds=state.rounds,
                     tool_calls=state.tool_calls,
@@ -187,13 +198,13 @@ class AgentRunner:
                 )
             if decision.kind == "clarify":
                 if knowledge_search_attempted:
-                    return AgentOutcome(
+                    return outcome(
                         final_answer=INSUFFICIENT_EVIDENCE_REPLY,
                         rounds=state.rounds,
                         tool_calls=state.tool_calls,
                         workflow_facts=tuple(workflow_facts),
                     )
-                return AgentOutcome(
+                return outcome(
                     clarification=decision.question,
                     rounds=state.rounds,
                     tool_calls=state.tool_calls,
@@ -218,7 +229,7 @@ class AgentRunner:
                     continue
                 return await grounded_outcome(context)
             if state.tool_calls >= self._max_tool_calls:
-                return AgentOutcome(
+                return outcome(
                     rounds=state.rounds,
                     tool_calls=state.tool_calls,
                     bounded=True,
@@ -233,6 +244,12 @@ class AgentRunner:
                 raise DecisionError("decision provider returned a tool_call without a tool name")
             definition = self._registry.get(tool_name)
             arguments = validate_arguments(definition, decision.arguments or {})
+            executed_tool_calls.append(
+                ExecutedToolCall(
+                    name=definition.name,
+                    arguments=arguments.model_dump(mode="json"),
+                )
+            )
             state.tool_calls += 1
             issued_search_call_id: str | None = None
             if definition.name == "search_knowledge" and self._knowledge_search_handler:

@@ -47,6 +47,8 @@ class OperationResponse(BaseModel):
     version: int
     policy_decision: str | None
     provider_reference_id: str | None
+    normalized_arguments: dict[str, object]
+    idempotency_key: str
     attempts: list[AttemptResponse]
 
 

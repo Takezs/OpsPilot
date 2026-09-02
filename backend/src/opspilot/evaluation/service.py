@@ -3,6 +3,7 @@
 import json
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import cast
 
 from sqlalchemy import func, select
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from opspilot.auth.models import Role
 from opspilot.auth.schemas import Principal
+from opspilot.config import Settings
 from opspilot.evaluation.config import canonical_configuration, configuration_sha256
 from opspilot.evaluation.models import (
     EvaluationExecutionAttempt,
@@ -20,7 +22,11 @@ from opspilot.evaluation.models import (
     EvaluationRunStatus,
     EvaluationTestExecution,
 )
-from opspilot.evaluation.schemas import EvaluationConfiguration, FreezeEvaluationRequest
+from opspilot.evaluation.schemas import (
+    EvaluationConfiguration,
+    FreezeEvaluationRequest,
+    frozen_dataset_identity,
+)
 
 
 class EvaluationPermissionError(PermissionError):
@@ -51,6 +57,9 @@ async def freeze_test_execution(
     request: FreezeEvaluationRequest,
 ) -> EvaluationTestExecution:
     require_evaluation_admin(principal)
+    identity = frozen_dataset_identity(Path(Settings().evaluation_dataset_root))
+    if request.dataset_sha != identity["test_sha256"]:
+        raise EvaluationConflictError("frozen dataset bytes do not match requested SHA")
     canonical = canonical_configuration(request.configuration)
     configuration_sha = configuration_sha256(request.configuration)
     run = EvaluationRun(
@@ -72,6 +81,7 @@ async def freeze_test_execution(
         dataset_version=request.dataset_version,
         dataset_sha=request.dataset_sha,
         configuration=json.loads(canonical),
+        dataset_identity=identity,
         configuration_sha=configuration_sha,
         status=EvaluationExecutionStatus.FROZEN,
         frozen_by_user_id=uuid.UUID(principal.user_id),

@@ -15,6 +15,7 @@ never create a duplicate refund.
 
 import asyncio
 import os
+import re
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -33,6 +34,18 @@ ORDER_AMOUNTS: dict[str, float] = {
 }
 if os.getenv("OPSPILOT_EVAL_FAULT_MATRIX", "").lower() in {"1", "true"}:
     ORDER_AMOUNTS.update({f"EVAL-{index:03d}": 350.0 for index in range(1, 61)})
+
+EVALUATION_ORDER_PATTERN = re.compile(r"EVAL-[0-9a-f]{8}-[0-9]{3}")
+
+
+def _ensure_evaluation_order(order_number: str) -> bool:
+    if os.getenv("OPSPILOT_EVAL_FAULT_MATRIX", "").lower() not in {"1", "true"}:
+        return False
+    if EVALUATION_ORDER_PATTERN.fullmatch(order_number) is None:
+        return False
+    ORDER_AMOUNTS.setdefault(order_number, 350.0)
+    return True
+
 
 # Server-side business idempotency key -> refund.
 REFUNDS: dict[str, dict] = {}
@@ -94,7 +107,7 @@ async def e2e_refund_count(order_number: str) -> dict[str, int]:
 async def reset_evaluation_refund(order_number: str) -> dict[str, bool]:
     if os.getenv("OPSPILOT_EVAL_FAULT_MATRIX", "").lower() not in {"1", "true"}:
         raise HTTPException(status_code=404, detail="not found")
-    if not order_number.startswith("EVAL-") or order_number not in ORDER_AMOUNTS:
+    if order_number not in ORDER_AMOUNTS and not _ensure_evaluation_order(order_number):
         raise HTTPException(status_code=404, detail="not found")
     REFUNDS.pop(_refund_key(order_number), None)
     _FAULTED_ORDERS.discard(order_number)
@@ -103,7 +116,7 @@ async def reset_evaluation_refund(order_number: str) -> dict[str, bool]:
 
 @app.get("/refunds/{order_number}/eligibility")
 async def check_eligibility(order_number: str) -> dict:
-    if order_number not in ORDER_AMOUNTS:
+    if order_number not in ORDER_AMOUNTS and not _ensure_evaluation_order(order_number):
         raise HTTPException(status_code=404, detail="order not found")
     refunded = _refund_key(order_number) in REFUNDS
     return {
@@ -115,18 +128,28 @@ async def check_eligibility(order_number: str) -> dict:
 
 
 @app.post("/refunds")
-async def create_refund(request: RefundRequest, raw: Request, response: Response) -> dict:
-    if request.order_number not in ORDER_AMOUNTS:
+async def create_refund(
+    request: RefundRequest, raw: Request, response: Response
+) -> dict:
+    if request.order_number not in ORDER_AMOUNTS and not _ensure_evaluation_order(
+        request.order_number
+    ):
         raise HTTPException(status_code=404, detail="order not found")
     mode = raw.headers.get("x-failure-mode", _configured_mode(request.order_number))
-    delay = float(raw.headers.get("x-failure-delay", str(DEFAULT_FAILURE_DELAY_SECONDS)))
+    delay = float(
+        raw.headers.get("x-failure-delay", str(DEFAULT_FAILURE_DELAY_SECONDS))
+    )
 
     if mode == "timeout_before_effect":
         # Delay past the caller's read timeout, then confirm without applying
         # the refund so a retry is always safe.
         await asyncio.sleep(delay)
         response.status_code = 200
-        return {"order_number": request.order_number, "status": "PENDING", "applied": False}
+        return {
+            "order_number": request.order_number,
+            "status": "PENDING",
+            "applied": False,
+        }
 
     if mode == "timeout_after_effect":
         refund, _ = _create_refund(request.order_number)

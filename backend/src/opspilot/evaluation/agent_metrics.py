@@ -1,6 +1,7 @@
 """Exact tool-call precision, recall and F1."""
 
 import json
+import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -20,9 +21,22 @@ class ToolCall:
 
     def signature(self) -> str:
         arguments = json.dumps(
-            self.arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            _normalize_json_numbers(self.arguments),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         )
         return f"{self.name}:{arguments}"
+
+
+def _normalize_json_numbers(value: object) -> object:
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    if isinstance(value, Mapping):
+        return {key: _normalize_json_numbers(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_json_numbers(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)

@@ -138,6 +138,8 @@ async def get_run(
                     version=operation.version,
                     policy_decision=operation.policy_decision,
                     provider_reference_id=_safe_diagnostic(operation.provider_reference_id),
+                    normalized_arguments=sanitize_payload(operation.normalized_arguments),
+                    idempotency_key=operation.idempotency_key,
                     attempts=[
                         AttemptResponse(
                             id=attempt.id,

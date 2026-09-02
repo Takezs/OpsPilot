@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import delete, select
@@ -17,13 +18,17 @@ from opspilot.evaluation.outbox import (
     recover_expired_evaluation_claims,
     recover_stale_evaluation_delivery,
 )
-from opspilot.evaluation.schemas import EvaluationConfiguration, FreezeEvaluationRequest
+from opspilot.evaluation.schemas import (
+    DatasetManifest,
+    EvaluationConfiguration,
+    FreezeEvaluationRequest,
+)
 from opspilot.evaluation.service import (
     EvaluationConflictError,
     freeze_test_execution,
     start_test_execution,
 )
-from opspilot.evaluation.tasks import _with_heartbeat
+from opspilot.evaluation.tasks import EvaluationLeaseLost, _lock_fenced_execution, _with_heartbeat
 from opspilot.knowledge.schemas import AccessLevel
 
 
@@ -44,10 +49,19 @@ def _request(dataset_sha: str, *, top_k: int = 5) -> FreezeEvaluationRequest:
     )
 
 
+def _dataset_sha() -> str:
+    manifest = DatasetManifest.model_validate_json(
+        (Path(__file__).parents[3] / "evaluation" / "datasets" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    return manifest.test_sha256
+
+
 @pytest.mark.integration
 async def test_concurrent_freeze_and_start_each_have_one_winner() -> None:
     user_id = uuid.uuid4()
-    dataset_sha = uuid.uuid4().hex * 2
+    dataset_sha = _dataset_sha()
     principal = Principal(
         user_id=str(user_id),
         role=Role.ADMIN,
@@ -112,7 +126,7 @@ async def test_concurrent_freeze_and_start_each_have_one_winner() -> None:
 @pytest.mark.integration
 async def test_stale_delivery_and_expired_claim_recover_once() -> None:
     user_id = uuid.uuid4()
-    dataset_sha = uuid.uuid4().hex * 2
+    dataset_sha = _dataset_sha()
     principal = Principal(
         user_id=str(user_id),
         role=Role.ADMIN,
@@ -184,7 +198,7 @@ async def test_stale_delivery_and_expired_claim_recover_once() -> None:
 @pytest.mark.integration
 async def test_heartbeat_prevents_expired_claim_recovery() -> None:
     user_id = uuid.uuid4()
-    dataset_sha = uuid.uuid4().hex * 2
+    dataset_sha = _dataset_sha()
     principal = Principal(
         user_id=str(user_id),
         role=Role.ADMIN,
@@ -224,6 +238,33 @@ async def test_heartbeat_prevents_expired_claim_recovery() -> None:
         execution = await session.get(EvaluationTestExecution, execution_id)
         assert execution is not None and execution.lease_expires_at is not None
         assert execution.lease_expires_at > datetime.now(UTC)
+        version = execution.version
+        execution.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await session.commit()
+    async with async_session_factory() as session:
+        with pytest.raises(EvaluationLeaseLost):
+            await _lock_fenced_execution(
+                session, execution_id, "heartbeat-worker", "heartbeat-token", version
+            )
+        await session.rollback()
+        execution = await session.get(EvaluationTestExecution, execution_id)
+        assert execution is not None
+        execution.lease_owner = "new-owner"
+        execution.claim_token = "new-token"
+        execution.version += 1
+        execution.lease_expires_at = datetime.now(UTC) + timedelta(seconds=30)
+        await session.commit()
+        with pytest.raises(EvaluationLeaseLost):
+            await _lock_fenced_execution(
+                session, execution_id, "heartbeat-worker", "heartbeat-token", version
+            )
+        await session.rollback()
+        current = await _lock_fenced_execution(
+            session, execution_id, "new-owner", "new-token", version + 1
+        )
+        assert current.id == execution_id
+        await session.rollback()
+    async with async_session_factory() as session:
         await session.execute(
             delete(EvaluationJobOutbox).where(EvaluationJobOutbox.execution_id == execution_id)
         )

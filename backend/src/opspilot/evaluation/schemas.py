@@ -244,3 +244,18 @@ def verify_frozen_test_dataset(path: Path, manifest: DatasetManifest) -> None:
         raise ValueError(
             f"test dataset SHA-256 mismatch: expected {manifest.test_sha256}, got {actual}"
         )
+
+
+def frozen_dataset_identity(root: Path) -> dict[str, str]:
+    manifest_path = root / "manifest.json"
+    manifest = DatasetManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+    test_path = root / "test.jsonl"
+    agent_path = root / "agent_tasks.jsonl"
+    verify_frozen_test_dataset(test_path, manifest)
+    return {
+        "manifest_sha256": sha256_file(manifest_path),
+        "test_sha256": sha256_file(test_path),
+        "agent_tasks_sha256": sha256_file(agent_path),
+        "schema_version": manifest.schema_version,
+        "generator_sha256": manifest.generator_sha256,
+    }

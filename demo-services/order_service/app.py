@@ -5,6 +5,7 @@ order system; the Tool Gateway contract (get_order) is unchanged.
 """
 
 import os
+import re
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -36,9 +37,22 @@ if os.getenv("OPSPILOT_EVAL_FAULT_MATRIX", "").lower() in {"1", "true"}:
         }
     )
 
+EVALUATION_ORDER_PATTERN = re.compile(r"EVAL-[0-9a-f]{8}-[0-9]{3}")
+
+
+def _evaluation_order(order_number: str) -> Order | None:
+    if os.getenv("OPSPILOT_EVAL_FAULT_MATRIX", "").lower() not in {"1", "true"}:
+        return None
+    if EVALUATION_ORDER_PATTERN.fullmatch(order_number) is None:
+        return None
+    return Order(order_number=order_number, status="OPEN", amount=350.0)
+
 
 @app.get("/orders/{order_number}", response_model=Order)
 async def get_order(order_number: str) -> Order:
+    evaluation_order = _evaluation_order(order_number)
+    if evaluation_order is not None:
+        return evaluation_order
     try:
         return ORDERS[order_number]
     except KeyError as error:

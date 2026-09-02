@@ -151,7 +151,13 @@ async def startup_worker(ctx: dict[str, object]) -> None:
             for snapshot in outcome.citation_snapshots
         ]
         return RunMessageResult(
-            content=render_assistant_reply(outcome), citation_snapshots=snapshots
+            content=render_assistant_reply(outcome),
+            citation_snapshots=snapshots,
+            tool_calls=[
+                {"name": call.name, "arguments": call.arguments}
+                for call in outcome.executed_tool_calls
+            ],
+            response_kind=("CLARIFICATION" if outcome.clarification is not None else "ANSWERED"),
         )
 
     ctx["run_message_processor"] = process

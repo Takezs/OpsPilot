@@ -139,6 +139,7 @@ class EvaluationTestExecution(Base):
     dataset_version: Mapped[str] = mapped_column(String(64))
     dataset_sha: Mapped[str] = mapped_column(String(64))
     configuration: Mapped[dict[str, object]] = mapped_column(JSONB)
+    dataset_identity: Mapped[dict[str, object]] = mapped_column(JSONB)
     configuration_sha: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(16), default=EvaluationExecutionStatus.FROZEN)
     frozen_by_user_id: Mapped[uuid.UUID] = mapped_column(

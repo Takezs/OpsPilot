@@ -17,6 +17,7 @@ from alembic.config import Config
 from alembic import command
 from opspilot.config import Settings
 from opspilot.db import engine
+from tests.migration_database import migration_scratch_database
 
 
 def alembic_config() -> Config:
@@ -122,17 +123,17 @@ async def assert_binding_preserved_and_enforced(
 
 @pytest.mark.integration
 def test_0013_resolution_binding_roundtrip() -> None:
-    config = alembic_config()
-    original_id, replacement_id, resolution_id = asyncio.run(seed_bound_resolution())
-    try:
-        # at head (0013); downgrade only the new migration and re-upgrade it
-        command.downgrade(config, "0012_resolution_consumption")
+    with migration_scratch_database():
+        config = alembic_config()
         command.upgrade(config, "0013_resolution_binding")
-        asyncio.run(
-            assert_binding_preserved_and_enforced(original_id, replacement_id, resolution_id)
-        )
-    finally:
-        command.upgrade(config, "head")
-        # fresh connections in case the pool cached metadata from the cycle
-        asyncio.run(engine.dispose())
-        asyncio.run(cleanup(original_id))
+        original_id, replacement_id, resolution_id = asyncio.run(seed_bound_resolution())
+        try:
+            command.downgrade(config, "0012_resolution_consumption")
+            command.upgrade(config, "0013_resolution_binding")
+            asyncio.run(
+                assert_binding_preserved_and_enforced(original_id, replacement_id, resolution_id)
+            )
+        finally:
+            command.upgrade(config, "head")
+            asyncio.run(engine.dispose())
+            asyncio.run(cleanup(original_id))

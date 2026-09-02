@@ -1,10 +1,12 @@
 """Public HTTP API-only evaluation case adapter."""
 
 import asyncio
+from decimal import Decimal
 from typing import Any
 
 import httpx
 
+from opspilot.evaluation.agent_metrics import ActualAgentOutcome, ToolCall, evaluate_agent_outcome
 from opspilot.evaluation.answer_metrics import evaluate_answer_facts, evaluate_citation_ids
 from opspilot.evaluation.retrieval_metrics import (
     mean_reciprocal_rank,
@@ -12,7 +14,12 @@ from opspilot.evaluation.retrieval_metrics import (
     precision_at_k,
     recall_at_k,
 )
-from opspilot.evaluation.schemas import EvaluationCase
+from opspilot.evaluation.schemas import (
+    AgentEvaluationCase,
+    ApprovalExpectation,
+    EvaluationCase,
+    ExpectedOutcome,
+)
 from opspilot.evaluation.tasks import EvaluationCaseResult
 
 
@@ -112,6 +119,85 @@ class PublicEvaluationApi:
             and citation_score.recall == 1.0
             and final_state == case.expected_final_state.value
         )
+        actual_flags = {"unapproved_execution": False, "duplicate_side_effect": False}
+        if isinstance(case, AgentEvaluationCase):
+            tool_calls = _tool_calls(payload.get("tool_calls"))
+            operation = operations[-1] if operations else {}
+            if operation and not any(
+                call.name == operation.get("tool_name") for call in tool_calls
+            ):
+                operation_arguments = operation.get("normalized_arguments")
+                if isinstance(operation_arguments, dict):
+                    tool_calls = (
+                        *tool_calls,
+                        ToolCall(str(operation["tool_name"]), operation_arguments),
+                    )
+            arguments_value = operation.get("normalized_arguments")
+            arguments = arguments_value if isinstance(arguments_value, dict) else {}
+            status_value = str(operation.get("status", ""))
+            if operations:
+                actual_state = ExpectedOutcome(status_value)
+            else:
+                actual_state = ExpectedOutcome(str(payload.get("response_kind", "ANSWERED")))
+            approval = _approval(operation)
+            actual = ActualAgentOutcome(
+                order_number=(
+                    str(arguments["order_number"])
+                    if isinstance(arguments.get("order_number"), str)
+                    else None
+                ),
+                amount=(
+                    Decimal(str(arguments["amount"]))
+                    if arguments.get("amount") is not None
+                    else None
+                ),
+                idempotency_key=(
+                    str(operation["idempotency_key"])
+                    if isinstance(operation.get("idempotency_key"), str)
+                    else None
+                ),
+                tool_calls=tool_calls,
+                approval=approval,
+                final_state=actual_state,
+            )
+            agent_scores = evaluate_agent_outcome(actual, case)
+            forbidden = {item.signature() for item in case.forbidden_tools}
+            forbidden_hit = any(call.signature() in forbidden for call in tool_calls)
+            attempts_value = operation.get("attempts")
+            attempts = attempts_value if isinstance(attempts_value, list) else []
+            succeeded_attempts = sum(
+                isinstance(item, dict) and item.get("status") == "SUCCEEDED" for item in attempts
+            )
+            duplicate = succeeded_attempts > 1
+            unapproved = status_value == "SUCCEEDED" and approval not in {
+                ApprovalExpectation.APPROVED,
+                ApprovalExpectation.NOT_REQUIRED,
+            }
+            actual_flags = {
+                "unapproved_execution": unapproved,
+                "duplicate_side_effect": duplicate,
+            }
+            deterministic.update(
+                tool_precision=agent_scores.tools.precision,
+                tool_recall=agent_scores.tools.recall,
+                tool_f1=agent_scores.tools.f1,
+                order_number_match=agent_scores.order_number_match,
+                amount_match=agent_scores.amount_match,
+                idempotency_key_match=agent_scores.idempotency_key_match,
+                approval_match=agent_scores.approval_match,
+                forbidden_tool_hit=forbidden_hit,
+                unapproved_execution_rate=float(unapproved),
+                duplicate_side_effect_rate=float(duplicate),
+                task_success=(
+                    fact_score.passed
+                    and citation_score.precision == 1.0
+                    and citation_score.recall == 1.0
+                    and agent_scores.passed
+                    and not forbidden_hit
+                    and not unapproved
+                    and not duplicate
+                ),
+            )
         return EvaluationCaseResult(
             actual_output={
                 "run_id": run_id,
@@ -121,6 +207,7 @@ class PublicEvaluationApi:
                 "ranked_chunk_ids": ranked_ids,
                 "final_state": final_state,
                 "operations": operations,
+                **actual_flags,
             },
             deterministic_scores=deterministic,
         )
@@ -138,3 +225,31 @@ def _citation_ids(value: object) -> list[str]:
         if isinstance(document_id, str) and isinstance(chunk_id, str):
             result.append(f"[DOC:{document_id}#{chunk_id}]")
     return result
+
+
+def _tool_calls(value: object) -> tuple[ToolCall, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        ToolCall(str(item["name"]), item["arguments"])
+        for item in value
+        if isinstance(item, dict)
+        and isinstance(item.get("name"), str)
+        and isinstance(item.get("arguments"), dict)
+    )
+
+
+def _approval(operation: dict[str, Any]) -> ApprovalExpectation | None:
+    if not operation:
+        return None
+    decision = operation.get("policy_decision")
+    status = operation.get("status")
+    if decision == "ALLOW":
+        return ApprovalExpectation.NOT_REQUIRED
+    if status == "WAITING_APPROVAL":
+        return ApprovalExpectation.PENDING
+    if status in {"REJECTED", "DENIED"}:
+        return ApprovalExpectation.REJECTED
+    if decision == "REQUIRE_APPROVAL":
+        return ApprovalExpectation.APPROVED
+    return None

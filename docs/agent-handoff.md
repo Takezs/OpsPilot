@@ -200,13 +200,15 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 督导最终批准`bbeea2f`、`34fcba9`、`c43332d`，Bugbot无finding；独立定向20 passed，Task16 13文件format check、扩大范围Ruff check、Mypy103、0021 head及PG/Redis全部通过。冻结test SHA为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，生成器SHA与manifest一致，`final_test_executed=false`。
 - 下一项任务17。开始实现前必须裁决冻结test从“未执行”到“一次性已执行”的持久化审计状态机，不得静默绕过Task16 manifest保护。
 
-## 任务 17（实现完成，等待督导复审，2026-09-01）
+## 任务 17（复审修复完成，等待督导再次复审，2026-09-02）
 
 - `0022_evaluation_execution_audit` 实现冻结 test receipt、canonical configuration SHA、`UNIQUE(dataset_sha)`、ADMIN freeze/start/cancel/resume、case repetition 唯一身份、execution attempt 与 transactional evaluation job outbox。Task16 manifest 未修改，冻结 test 未执行。
 - Runner 通过公开 API 执行并由 ARQ/PG claim/lease/heartbeat 恢复；dev smoke 只用 dev split。报告由 evaluation_runs/cases 确定性生成 JSON/CSV/HTML，前端新增 Reviewer/Admin 评测看板，USER 后端拒绝。
-- 故障注入默认关闭；显式模式的一次性 PG plan 在三个生产边界触发进程 exit86。正式审计 Run `add59d37-acda-4e33-ba52-0461766f9700` 持久化三个故障点各 20 条：恢复 60/60、重复副作用 0、丢失 Operation 0、退款 count=1 为 60/60、Journal 连续 60/60，P95 恢复 15,421ms。
-- 真实故障矩阵先因 JWT 15 分钟到期停在 39/60，再以同 Run/同 configuration 跳过已完成 case 续跑；一次 DeepSeek 长调用在注入前超过 180 秒，验收等待改为与既有 600 秒 worker watchdog 对齐。没有删除、覆盖或重采样已完成故障事实。
-- 门禁：定向 `61 passed, 1 skipped`；完整后端 `421 passed, 4 skipped`；Ruff、Mypy113；frontend unit19、evaluation E2E1、typecheck/build；Alembic 0022主库往返及0001→head scratch全链；PG/Redis健康。
+- 复审P1修复：公开 Runner 从持久化 Run history/Operation 构造 `ActualAgentOutcome` 并复用Task16 `evaluate_agent_outcome`；仅从数据库 Operation 事实补齐缺失的side-effect工具调用，禁止从模型文本猜测。冻结receipt现在绑定manifest、test、agent_tasks、generator字节SHA，Worker执行前再次验证；case写入和终态更新均匹配RUNNING、claim token/owner/version和live PG lease。
+- 迁移测试隔离：所有会执行Alembic downgrade/upgrade的测试改用名称前缀受限的独立scratch database，安全守卫在任何DDL前拒绝主库/非测试库。旧正式Run `add59d37-...`曾被旧测试误删，无法重建；失败矩阵`aa2153f9-...`与`f4ebd9a0-...`继续保留，不改写失败事实。
+- 故障矩阵采用每个matrix独立的显式测试订单ID，避免历史幂等Operation串线；每次API尝试先写唯一attempt身份，失败/取消终态记录failure_stage，后续恢复使用同matrix与`replacement_of`，只有PG fault plan实际消费后才计入60次。正式审计Run `0108b7b2-991d-49d3-9e6e-d2ff50ce5c38`持久化三个故障点各20条：恢复60/60、重复副作用0、丢失Operation 0、退款count=1为60/60、Journal连续60/60；P95恢复137,125ms。60次中1次因额外只读`get_refund_status`使工具Precision=2/3，task success为59/60，失败样本原样进入报告。
+- 报告Run事实：total attempts=60、setup/agent failures=0、recovery rate=100%、duplicate/lost=0；JSON SHA `d9f1c5a26abbce5ee0e521146a39864c0fcbdc517533c7869d7aca84e843c220`。正式矩阵真实运行`1 passed in 4784.19s`，未使用Fake或内部handler捷径。
+- 最新门禁：Task17定向`35 passed, 1 skipped`；完整后端`424 passed, 4 skipped`；25个变更Python文件Ruff format check与全范围Ruff check通过；Mypy113；frontend unit19、evaluation E2E1、typecheck/build；Alembic0022 head与scratch迁移定向3 passed；PG/Redis健康。
 - 当前停止在 Task17 等待督导复审，不得开始Task18。
 
 ## 需要维护的文档

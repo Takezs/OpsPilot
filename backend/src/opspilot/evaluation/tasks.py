@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
@@ -25,6 +26,7 @@ from opspilot.evaluation.schemas import (
     AgentEvaluationCase,
     EvaluationCase,
     EvaluationConfiguration,
+    frozen_dataset_identity,
     load_jsonl,
 )
 
@@ -42,6 +44,30 @@ _CANCEL_GRACE_SECONDS = 1.0
 
 class EvaluationLeaseLost(RuntimeError):
     pass
+
+
+async def _lock_fenced_execution(
+    session: AsyncSession,
+    execution_id: uuid.UUID,
+    owner: str,
+    token: str,
+    version: int,
+) -> EvaluationTestExecution:
+    current = await session.scalar(
+        select(EvaluationTestExecution)
+        .where(
+            EvaluationTestExecution.id == execution_id,
+            EvaluationTestExecution.status == EvaluationExecutionStatus.RUNNING,
+            EvaluationTestExecution.claim_token == token,
+            EvaluationTestExecution.lease_owner == owner,
+            EvaluationTestExecution.version == version,
+            EvaluationTestExecution.lease_expires_at >= func.clock_timestamp(),
+        )
+        .with_for_update()
+    )
+    if current is None:
+        raise EvaluationLeaseLost("evaluation execution lease lost")
+    return current
 
 
 def _consume(task: asyncio.Task[Any]) -> None:
@@ -167,13 +193,22 @@ async def process_evaluation_execution(ctx: dict[str, Any], execution_id: str) -
                 + timedelta(seconds=settings.evaluation_lease_seconds),
                 version=EvaluationTestExecution.version + 1,
             )
+            .returning(EvaluationTestExecution.version)
         )
-        if (claimed.rowcount or 0) != 1:  # type: ignore[attr-defined]
+        claimed_version = claimed.scalar_one_or_none()
+        if claimed_version is None:
             await session.rollback()
             return
         await session.commit()
 
     dataset_root = Path(settings.evaluation_dataset_root)
+    async with async_session_factory() as session:
+        receipt = await session.get(EvaluationTestExecution, parsed_id)
+        if receipt is None:
+            return
+        expected_identity = receipt.dataset_identity
+    if frozen_dataset_identity(dataset_root) != expected_identity:
+        raise ValueError("frozen evaluation dataset identity mismatch")
     cases: tuple[EvaluationCase, ...] = (
         *load_jsonl(dataset_root / "test.jsonl", EvaluationCase),
         *load_jsonl(dataset_root / "agent_tasks.jsonl", AgentEvaluationCase),
@@ -215,19 +250,9 @@ async def process_evaluation_execution(ctx: dict[str, Any], execution_id: str) -
                 )
                 latency_ms = max(0, round((time.perf_counter() - started) * 1000))
                 async with async_session_factory() as session:
-                    current = await session.scalar(
-                        select(EvaluationTestExecution)
-                        .where(
-                            EvaluationTestExecution.id == parsed_id,
-                            EvaluationTestExecution.status == EvaluationExecutionStatus.RUNNING,
-                            EvaluationTestExecution.claim_token == token,
-                            EvaluationTestExecution.lease_owner == owner,
-                            EvaluationTestExecution.lease_expires_at >= func.clock_timestamp(),
-                        )
-                        .with_for_update()
+                    current = await _lock_fenced_execution(
+                        session, parsed_id, owner, token, claimed_version
                     )
-                    if current is None:
-                        return
                     duplicate = await session.scalar(
                         select(EvaluationCaseRecord.id).where(
                             EvaluationCaseRecord.evaluation_run_id == run_id,
@@ -251,16 +276,9 @@ async def process_evaluation_execution(ctx: dict[str, Any], execution_id: str) -
                     )
                     await session.commit()
         async with async_session_factory() as session:
-            current = await session.scalar(
-                select(EvaluationTestExecution)
-                .where(
-                    EvaluationTestExecution.id == parsed_id,
-                    EvaluationTestExecution.claim_token == token,
-                )
-                .with_for_update()
+            current = await _lock_fenced_execution(
+                session, parsed_id, owner, token, claimed_version
             )
-            if current is None:
-                return
             now = await session.scalar(select(func.clock_timestamp()))
             current.status = EvaluationExecutionStatus.COMPLETED
             current.completed_at = now
@@ -286,15 +304,13 @@ async def process_evaluation_execution(ctx: dict[str, Any], execution_id: str) -
             await session.commit()
     except BaseException as error:
         async with async_session_factory() as session:
-            current = await session.scalar(
-                select(EvaluationTestExecution)
-                .where(
-                    EvaluationTestExecution.id == parsed_id,
-                    EvaluationTestExecution.claim_token == token,
+            try:
+                current = await _lock_fenced_execution(
+                    session, parsed_id, owner, token, claimed_version
                 )
-                .with_for_update()
-            )
-            if current is not None:
+            except EvaluationLeaseLost:
+                await session.rollback()
+            else:
                 now = await session.scalar(select(func.clock_timestamp()))
                 current.status = EvaluationExecutionStatus.FAILED
                 current.completed_at = now
