@@ -200,7 +200,7 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 督导最终批准`bbeea2f`、`34fcba9`、`c43332d`，Bugbot无finding；独立定向20 passed，Task16 13文件format check、扩大范围Ruff check、Mypy103、0021 head及PG/Redis全部通过。冻结test SHA为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，生成器SHA与manifest一致，`final_test_executed=false`。
 - 下一项任务17。开始实现前必须裁决冻结test从“未执行”到“一次性已执行”的持久化审计状态机，不得静默绕过Task16 manifest保护。
 
-## 任务 17（P1 修复完成，等待再次督导复审，2026-09-02）
+## 任务 17（已通过督导复审，2026-09-02）
 
 - `0022_evaluation_execution_audit` 实现冻结 test receipt、canonical configuration SHA、`UNIQUE(dataset_sha)`、ADMIN freeze/start/cancel/resume、case repetition 唯一身份、execution attempt 与 transactional evaluation job outbox。Task16 manifest 未修改，冻结 test 未执行。
 - Runner 通过公开 API 执行并由 ARQ/PG claim/lease/heartbeat 恢复；dev smoke 只用 dev split。报告由 evaluation_runs/cases 确定性生成 JSON/CSV/HTML，前端新增 Reviewer/Admin 评测看板，USER 后端拒绝。
@@ -210,7 +210,8 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 报告Run事实：total attempts=60、setup/agent failures=0、recovery rate=100%、duplicate/lost=0；JSON SHA `d9f1c5a26abbce5ee0e521146a39864c0fcbdc517533c7869d7aca84e843c220`。正式矩阵真实运行`1 passed in 4784.19s`，未使用Fake或内部handler捷径。
 - 最新P1修复：恢复已发布0022并以0023新增`dataset_identity`；旧0022数据回填、失败原子回滚与往返均用scratch PG证明。冻结bundle拒绝绝对/上跳/symlink路径，generator/test/agent实际字节只读一次并同时驱动SHA、解析与执行。claim后输入失败原子关闭Execution/Run/Attempt；每次processor前以PG clock验证token/owner/version/live lease，失权、skip、跨case与忽略取消均无旧worker后续调用或结果写入。
 - 最新门禁：Task17 evaluation定向`50 passed`；完整后端`440 passed, 4 skipped`；8个本轮Python文件Ruff format check与全范围Ruff check通过；Mypy113；frontend unit19、evaluation E2E1、typecheck/build；Alembic0023 head，PG/Redis健康。正式矩阵Run及报告SHA未改，冻结test未执行。
-- 当前停止在 Task17 等待再次督导复审，不得开始Task18。
+- 督导批准`def4c63`、`8e6d406`、`2aff943`，Bugbot最终无finding。正式矩阵Run `0108b7b2-991d-49d3-9e6e-d2ff50ce5c38`可靠性60/60、任务成功59/60；Alembic0023 head，冻结test仍未执行。
+- Task17已闭环；下一项Task18。Task18冻结test执行仍需单独go/no-go授权。
 
 ## 需要维护的文档
 
