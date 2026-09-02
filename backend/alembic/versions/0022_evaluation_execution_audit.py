@@ -40,7 +40,6 @@ def upgrade() -> None:
         sa.Column("dataset_version", sa.String(64), nullable=False),
         sa.Column("dataset_sha", sa.String(64), nullable=False),
         sa.Column("configuration", postgresql.JSONB(), nullable=False),
-        sa.Column("dataset_identity", postgresql.JSONB(), nullable=False),
         sa.Column("configuration_sha", sa.String(64), nullable=False),
         sa.Column("status", sa.String(16), nullable=False, server_default="FROZEN"),
         sa.Column(

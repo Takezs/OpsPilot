@@ -10,6 +10,7 @@ from opspilot.auth.models import Role, User
 from opspilot.auth.schemas import Principal
 from opspilot.db import async_session_factory
 from opspilot.evaluation.models import (
+    EvaluationExecutionAttempt,
     EvaluationJobOutbox,
     EvaluationRun,
     EvaluationTestExecution,
@@ -28,7 +29,12 @@ from opspilot.evaluation.service import (
     freeze_test_execution,
     start_test_execution,
 )
-from opspilot.evaluation.tasks import EvaluationLeaseLost, _lock_fenced_execution, _with_heartbeat
+from opspilot.evaluation.tasks import (
+    EvaluationLeaseLost,
+    _lock_fenced_execution,
+    _with_heartbeat,
+    process_evaluation_execution,
+)
 from opspilot.knowledge.schemas import AccessLevel
 
 
@@ -222,14 +228,25 @@ async def test_heartbeat_prevents_expired_claim_recovery() -> None:
         execution.claim_token, execution.lease_owner = "heartbeat-token", "heartbeat-worker"
         execution.lease_expires_at = datetime.now(UTC) + timedelta(seconds=1)
         await session.commit()
-        execution_id, run_id = execution.id, execution.evaluation_run_id
+        execution_id, run_id, version = (
+            execution.id,
+            execution.evaluation_run_id,
+            execution.version,
+        )
 
     async def slow_result() -> str:
         await asyncio.sleep(1.4)
         return "done"
 
     task = asyncio.create_task(
-        _with_heartbeat(slow_result, execution_id, "heartbeat-worker", "heartbeat-token", 1)
+        _with_heartbeat(
+            slow_result,
+            execution_id,
+            "heartbeat-worker",
+            "heartbeat-token",
+            1,
+            version,
+        )
     )
     await asyncio.sleep(1.1)
     assert await recover_expired_evaluation_claims() == 0
@@ -238,7 +255,6 @@ async def test_heartbeat_prevents_expired_claim_recovery() -> None:
         execution = await session.get(EvaluationTestExecution, execution_id)
         assert execution is not None and execution.lease_expires_at is not None
         assert execution.lease_expires_at > datetime.now(UTC)
-        version = execution.version
         execution.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
         await session.commit()
     async with async_session_factory() as session:
@@ -274,3 +290,82 @@ async def test_heartbeat_prevents_expired_claim_recovery() -> None:
         await session.execute(delete(EvaluationRun).where(EvaluationRun.id == run_id))
         await session.execute(delete(User).where(User.id == user_id))
         await session.commit()
+
+
+@pytest.mark.integration
+async def test_claimed_input_error_closes_execution_run_and_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid.uuid4()
+    principal = Principal(
+        user_id=str(user_id),
+        role=Role.ADMIN,
+        allowed_departments=frozenset(),
+        max_access_level=AccessLevel.PUBLIC,
+    )
+    async with async_session_factory() as session:
+        session.add(
+            User(
+                id=user_id,
+                username=f"eval-input-error-{user_id}",
+                password_hash="unused",
+                role=Role.ADMIN,
+                allowed_departments=[],
+                max_access_level=1,
+            )
+        )
+        await session.commit()
+        execution = await freeze_test_execution(session, principal, _request(_dataset_sha()))
+        await start_test_execution(session, principal, execution.id)
+        await session.commit()
+        execution_id, run_id = execution.id, execution.evaluation_run_id
+
+    def fail_identity(_root: Path) -> dict[str, str]:
+        raise ValueError("deterministic corrupt dataset")
+
+    monkeypatch.setattr("opspilot.evaluation.tasks.capture_frozen_dataset", fail_identity)
+    with pytest.raises(ValueError, match="corrupt dataset"):
+        await process_evaluation_execution(
+            {"job_id": "input-error", "evaluation_case_processor": lambda *_: None},
+            str(execution_id),
+        )
+
+    async with async_session_factory() as session:
+        execution = await session.get(EvaluationTestExecution, execution_id)
+        run = await session.get(EvaluationRun, run_id)
+        attempt = await session.scalar(
+            select(EvaluationExecutionAttempt).where(
+                EvaluationExecutionAttempt.execution_id == execution_id
+            )
+        )
+        assert execution is not None and execution.status == "FAILED"
+        assert execution.claim_token is None and execution.completed_at is not None
+        assert run is not None and run.status == "FAILED"
+        assert attempt is not None and attempt.status == "FAILED"
+        await session.execute(
+            delete(EvaluationJobOutbox).where(EvaluationJobOutbox.execution_id == execution_id)
+        )
+        await session.execute(
+            delete(EvaluationTestExecution).where(EvaluationTestExecution.id == execution_id)
+        )
+        await session.execute(delete(EvaluationRun).where(EvaluationRun.id == run_id))
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_fences_before_processor_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    invoked = False
+
+    async def fail_fence(*_args: object) -> None:
+        raise EvaluationLeaseLost("lost before invoke")
+
+    async def processor() -> str:
+        nonlocal invoked
+        invoked = True
+        return "unsafe"
+
+    monkeypatch.setattr("opspilot.evaluation.tasks._renew", fail_fence)
+    with pytest.raises(EvaluationLeaseLost, match="lost before invoke"):
+        await _with_heartbeat(processor, uuid.uuid4(), "owner", "token", 30)
+    assert invoked is False

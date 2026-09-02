@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -214,19 +215,22 @@ class DatasetManifest(BaseModel):
 
 
 def load_jsonl[ModelT: BaseModel](path: Path, model: type[ModelT]) -> tuple[ModelT, ...]:
+    return load_jsonl_bytes(path.read_bytes(), model)
+
+
+def load_jsonl_bytes[ModelT: BaseModel](content: bytes, model: type[ModelT]) -> tuple[ModelT, ...]:
     rows: list[ModelT] = []
     case_ids: set[str] = set()
-    with path.open("r", encoding="utf-8") as stream:
-        for line_number, line in enumerate(stream, start=1):
-            if not line.strip():
-                raise ValueError(f"blank JSONL line at {line_number}")
-            row = model.model_validate_json(line)
-            case_id = getattr(row, "case_id", None)
-            if isinstance(case_id, str):
-                if case_id in case_ids:
-                    raise ValueError(f"duplicate case_id: {case_id}")
-                case_ids.add(case_id)
-            rows.append(row)
+    for line_number, line in enumerate(content.decode("utf-8").splitlines(), start=1):
+        if not line.strip():
+            raise ValueError(f"blank JSONL line at {line_number}")
+        row = model.model_validate_json(line)
+        case_id = getattr(row, "case_id", None)
+        if isinstance(case_id, str):
+            if case_id in case_ids:
+                raise ValueError(f"duplicate case_id: {case_id}")
+            case_ids.add(case_id)
+        rows.append(row)
     return tuple(rows)
 
 
@@ -238,6 +242,10 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
 def verify_frozen_test_dataset(path: Path, manifest: DatasetManifest) -> None:
     actual = sha256_file(path)
     if actual != manifest.test_sha256:
@@ -246,16 +254,69 @@ def verify_frozen_test_dataset(path: Path, manifest: DatasetManifest) -> None:
         )
 
 
+@dataclass(frozen=True)
+class FrozenDatasetSnapshot:
+    identity: dict[str, str]
+    test_cases: tuple[EvaluationCase, ...]
+    agent_cases: tuple[AgentEvaluationCase, ...]
+
+
+def _trusted_generator_path(dataset_root: Path, declared: str) -> Path:
+    pure = PurePosixPath(declared)
+    if (
+        pure.is_absolute()
+        or PureWindowsPath(declared).is_absolute()
+        or ".." in pure.parts
+        or not pure.parts
+    ):
+        raise ValueError("generator path must stay within the trusted evaluation root")
+    evaluation_root = dataset_root.resolve().parent
+    if pure.parts[0] != evaluation_root.name:
+        raise ValueError("generator path must stay within the trusted evaluation root")
+    candidate = evaluation_root.joinpath(*pure.parts[1:])
+    current = evaluation_root
+    for part in pure.parts[1:]:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("generator path must not contain symlinks")
+    resolved = candidate.resolve()
+    if not resolved.is_relative_to(evaluation_root):
+        raise ValueError("generator path must stay within the trusted evaluation root")
+    return resolved
+
+
+def capture_frozen_dataset(root: Path) -> FrozenDatasetSnapshot:
+    manifest_bytes = (root / "manifest.json").read_bytes()
+    test_bytes = (root / "test.jsonl").read_bytes()
+    agent_bytes = (root / "agent_tasks.jsonl").read_bytes()
+    manifest = DatasetManifest.model_validate_json(manifest_bytes)
+    generator_bytes = _trusted_generator_path(root, manifest.generator).read_bytes()
+    test_sha = _sha256_bytes(test_bytes)
+    if test_sha != manifest.test_sha256:
+        raise ValueError(
+            f"test dataset SHA-256 mismatch: expected {manifest.test_sha256}, got {test_sha}"
+        )
+    generator_sha = _sha256_bytes(generator_bytes)
+    if generator_sha != manifest.generator_sha256:
+        raise ValueError(
+            f"generator SHA-256 mismatch: expected {manifest.generator_sha256}, got {generator_sha}"
+        )
+    test_cases = load_jsonl_bytes(test_bytes, EvaluationCase)
+    agent_cases = load_jsonl_bytes(agent_bytes, AgentEvaluationCase)
+    if len(test_cases) != manifest.test_count or len(agent_cases) != manifest.agent_task_count:
+        raise ValueError("captured evaluation case counts do not match manifest")
+    return FrozenDatasetSnapshot(
+        identity={
+            "manifest_sha256": _sha256_bytes(manifest_bytes),
+            "test_sha256": test_sha,
+            "agent_tasks_sha256": _sha256_bytes(agent_bytes),
+            "schema_version": manifest.schema_version,
+            "generator_sha256": generator_sha,
+        },
+        test_cases=test_cases,
+        agent_cases=agent_cases,
+    )
+
+
 def frozen_dataset_identity(root: Path) -> dict[str, str]:
-    manifest_path = root / "manifest.json"
-    manifest = DatasetManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
-    test_path = root / "test.jsonl"
-    agent_path = root / "agent_tasks.jsonl"
-    verify_frozen_test_dataset(test_path, manifest)
-    return {
-        "manifest_sha256": sha256_file(manifest_path),
-        "test_sha256": sha256_file(test_path),
-        "agent_tasks_sha256": sha256_file(agent_path),
-        "schema_version": manifest.schema_version,
-        "generator_sha256": manifest.generator_sha256,
-    }
+    return capture_frozen_dataset(root).identity

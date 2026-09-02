@@ -279,7 +279,7 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 督导最终批准提交`bbeea2f`（主实现）、`34fcba9`（UUID身份与条件Operation事实）、`c43332d`（根生成器Ruff范围）；Bugbot无finding。独立门禁：定向20 passed、13个Task16 Python文件format check、扩大范围Ruff check、Mypy103、Alembic0021、PG/Redis均通过。
 - 下一项任务17；冻结test仍为`final_test_executed=false`，执行前必须先建立参数冻结与不可重复执行的审计契约。
 
-## 任务 17：异步实验 Runner、故障矩阵与评测看板（等待督导再次复审，2026-09-02）
+## 任务 17：异步实验 Runner、故障矩阵与评测看板（P1 修复完成，等待再次督导复审，2026-09-02）
 
 - 新增 `0022_evaluation_execution_audit`：以 `UNIQUE(dataset_sha)` 封闭冻结 test 的全局一次机会，canonical JSON/SHA 固定配置；freeze/start/cancel/resume 仅 ADMIN，REVIEWER/ADMIN 只读，USER 拒绝。FROZEN→RUNNING 原子占位，失败/取消仍消耗机会；恢复只允许同 execution/configuration，case repetition 以数据库唯一约束幂等补缺。
 - Evaluation job 使用独立 transactional outbox，仅向 ARQ 投递 execution ID；claim/lease/heartbeat、崩溃恢复、attempt 审计与 delivered-but-unclaimed watchdog 均以 PostgreSQL 为事实源。Runner 只调用公开授权 API，dev smoke 不读取或执行冻结 test；Task16 manifest 保持不可变且 `final_test_executed=false`。
@@ -288,8 +288,9 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - Red→Green 包含：0022 初版错误 FK 指向不存在的 `operations` 并由 PostgreSQL 事务回滚，修正为 `tool_operations`；Worker/Publisher 共用 ARQ 队列导致 function-not-found，拆分明确队列；RETRYING execute intent 无法消费，扩展既有 handler 状态边界；故障 fixture ORM 清理触发非空 FK，改为数据库 CASCADE；15 分钟 JWT 与长模型调用分别通过验收拓扑 TTL 和 600 秒既有 watchdog 对齐解决，同一审计 Run 只续跑缺失 case、不重采样已完成事实。
 - 复审P1闭环：公开Runner复用Task16 Agent评分；receipt绑定manifest/test/agent_tasks/generator字节；case与终态写入使用claim token/owner/version/live lease fencing。所有迁移往返改用带安全前缀和主库拒绝守卫的scratch database；旧`add59d37-...`曾被旧迁移测试误删且不可重建，失败Run继续保留并记录。
 - 正式报告保留1个真实质量失败：一次额外`get_refund_status`令工具Precision=2/3，因此task success=59/60，但可靠恢复仍60/60。报告JSON SHA为`d9f1c5a26abbce5ee0e521146a39864c0fcbdc517533c7869d7aca84e843c220`，未删除或重采样该失败。
-- 本轮门禁：Task17定向`35 passed, 1 skipped`；完整后端`424 passed, 4 skipped`；正式故障矩阵60/60；25个变更Python文件Ruff format check、全范围Ruff check、Mypy113；前端unit19、evaluation Playwright1、typecheck/build；Alembic0022 head与scratch迁移定向3 passed；PostgreSQL/Redis健康。
-- 状态：Task17 实现完成，等待督导复审。冻结 test 从未执行，不得开始 Task18。
+- 本轮P1闭环：恢复已发布0022 schema，并新增顺序迁移0023；真实旧0022行确定性回填，升级失败时DDL与数据完整回滚。冻结输入只接受evaluation根内非symlink相对路径，实际generator/test/agent字节单次读取后同时用于SHA、解析和执行，消除TOCTOU。claim后的输入错误以token/owner/version/live lease原子关闭Execution/Run/Attempt；每次processor前同步PG fence，跨case、skip、heartbeat失权和忽略取消均不启动后续case，detached任务由shutdown hook回收。
+- 最新门禁：Task17 evaluation定向`50 passed`；完整后端`440 passed, 4 skipped`；正式故障矩阵60/60事实未改；8个本轮Python文件Ruff format check、全范围Ruff check、Mypy113；前端unit19、evaluation Playwright1、typecheck/build；Alembic0023 head、0022→0023脏数据/往返/原子失败及0001→head通过；PostgreSQL/Redis健康。
+- 状态：Task17 P1修复完成，等待再次督导复审。冻结 test 从未执行，不得开始 Task18。
 
 ## 后续开发计划
 

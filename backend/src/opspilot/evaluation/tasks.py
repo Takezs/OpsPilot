@@ -26,8 +26,7 @@ from opspilot.evaluation.schemas import (
     AgentEvaluationCase,
     EvaluationCase,
     EvaluationConfiguration,
-    frozen_dataset_identity,
-    load_jsonl,
+    capture_frozen_dataset,
 )
 
 
@@ -118,17 +117,26 @@ async def drain_detached_evaluation_tasks() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def _renew(execution_id: uuid.UUID, owner: str, token: str, lease_seconds: int) -> None:
+async def _renew(
+    execution_id: uuid.UUID,
+    owner: str,
+    token: str,
+    lease_seconds: int,
+    version: int | None = None,
+) -> None:
     async with async_session_factory() as session:
+        predicates = [
+            EvaluationTestExecution.id == execution_id,
+            EvaluationTestExecution.status == EvaluationExecutionStatus.RUNNING,
+            EvaluationTestExecution.claim_token == token,
+            EvaluationTestExecution.lease_owner == owner,
+            EvaluationTestExecution.lease_expires_at >= func.clock_timestamp(),
+        ]
+        if version is not None:
+            predicates.append(EvaluationTestExecution.version == version)
         changed = await session.execute(
             update(EvaluationTestExecution)
-            .where(
-                EvaluationTestExecution.id == execution_id,
-                EvaluationTestExecution.status == EvaluationExecutionStatus.RUNNING,
-                EvaluationTestExecution.claim_token == token,
-                EvaluationTestExecution.lease_owner == owner,
-                EvaluationTestExecution.lease_expires_at >= func.clock_timestamp(),
-            )
+            .where(*predicates)
             .values(lease_expires_at=func.clock_timestamp() + timedelta(seconds=lease_seconds))
         )
         if (changed.rowcount or 0) != 1:  # type: ignore[attr-defined]
@@ -143,13 +151,17 @@ async def _with_heartbeat[T](
     owner: str,
     token: str,
     lease: int,
+    version: int | None = None,
 ) -> T:
+    # The first PG-clock fence is synchronous: a processor can never start
+    # during the lease/3 delay before the periodic heartbeat's first renewal.
+    await _renew(execution_id, owner, token, lease, version)
     task: asyncio.Task[T] = asyncio.create_task(invoke())
 
     async def heartbeat() -> None:
         while True:
             await asyncio.sleep(max(0.05, lease / 3))
-            await _renew(execution_id, owner, token, lease)
+            await _renew(execution_id, owner, token, lease, version)
 
     beat = asyncio.create_task(heartbeat())
     try:
@@ -193,33 +205,26 @@ async def process_evaluation_execution(ctx: dict[str, Any], execution_id: str) -
                 + timedelta(seconds=settings.evaluation_lease_seconds),
                 version=EvaluationTestExecution.version + 1,
             )
-            .returning(EvaluationTestExecution.version)
+            .returning(
+                EvaluationTestExecution.version,
+                EvaluationTestExecution.evaluation_run_id,
+                EvaluationTestExecution.dataset_identity,
+                EvaluationTestExecution.configuration,
+            )
         )
-        claimed_version = claimed.scalar_one_or_none()
-        if claimed_version is None:
+        claimed_row = claimed.one_or_none()
+        if claimed_row is None:
             await session.rollback()
             return
+        claimed_version, run_id, expected_identity, configuration = claimed_row
         await session.commit()
 
-    dataset_root = Path(settings.evaluation_dataset_root)
-    async with async_session_factory() as session:
-        receipt = await session.get(EvaluationTestExecution, parsed_id)
-        if receipt is None:
-            return
-        expected_identity = receipt.dataset_identity
-    if frozen_dataset_identity(dataset_root) != expected_identity:
-        raise ValueError("frozen evaluation dataset identity mismatch")
-    cases: tuple[EvaluationCase, ...] = (
-        *load_jsonl(dataset_root / "test.jsonl", EvaluationCase),
-        *load_jsonl(dataset_root / "agent_tasks.jsonl", AgentEvaluationCase),
-    )
-    async with async_session_factory() as session:
-        execution = await session.get(EvaluationTestExecution, parsed_id)
-        if execution is None:
-            return
-        run_id = execution.evaluation_run_id
-        repetitions = EvaluationConfiguration.model_validate(execution.configuration).repetitions
     try:
+        snapshot = capture_frozen_dataset(Path(settings.evaluation_dataset_root))
+        if snapshot.identity != expected_identity:
+            raise ValueError("frozen evaluation dataset identity mismatch")
+        cases: tuple[EvaluationCase, ...] = (*snapshot.test_cases, *snapshot.agent_cases)
+        repetitions = EvaluationConfiguration.model_validate(configuration).repetitions
         for case in cases:
             case_repetitions = repetitions if isinstance(case, AgentEvaluationCase) else 1
             for repetition in range(1, case_repetitions + 1):
@@ -247,6 +252,7 @@ async def process_evaluation_execution(ctx: dict[str, Any], execution_id: str) -
                     owner,
                     token,
                     settings.evaluation_lease_seconds,
+                    claimed_version,
                 )
                 latency_ms = max(0, round((time.perf_counter() - started) * 1000))
                 async with async_session_factory() as session:
