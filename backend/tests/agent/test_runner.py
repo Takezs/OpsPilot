@@ -15,6 +15,7 @@ runner returns a fail-closed result. READ_ONLY tools keep the Task 8 contract.
 
 import json
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -435,7 +436,10 @@ async def test_grounded_answer_uses_runner_owned_id_and_exact_built_context() ->
             context=context,
         )
 
-    async def generate(query: str, exact: BuiltContext) -> ValidatedAnswer:
+    async def generate(
+        query: str, exact: BuiltContext, reserve_model_call: Callable[[], None]
+    ) -> ValidatedAnswer:
+        reserve_model_call()
         observed.append((query, exact))
         return ValidatedAnswer(
             answer="Approval is required [DOC:d1#c1].",
@@ -612,7 +616,10 @@ async def test_insufficient_validated_answer_cannot_persist_provider_factual_tex
     async def search(_: Any) -> GroundedSearchResult:
         return GroundedSearchResult(summary=ToolResult(ok=True), context=context)
 
-    async def insufficient(_: str, __: BuiltContext) -> ValidatedAnswer:
+    async def insufficient(
+        _: str, __: BuiltContext, reserve_model_call: Callable[[], None]
+    ) -> ValidatedAnswer:
+        reserve_model_call()
         return ValidatedAnswer(
             answer="provider supplied uncited policy fact",
             citations=(),

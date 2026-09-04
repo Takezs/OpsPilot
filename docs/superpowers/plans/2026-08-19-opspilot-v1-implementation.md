@@ -695,7 +695,7 @@ git commit -m "feat: publish reproducible opspilot evaluations"
 
 ### 任务 18：可观测性、部署、文档与 v1.0 验收
 
-**状态：步骤 1–5 首轮NO-GO修复已完成，等待督导再次复审。运行中deadline、脱敏、非root文档卷、seed兼容校验和Redis heartbeat已加固；冻结 test 未执行，步骤 6/7、正式receipt与v1.0 tag未开始。**
+**状态：步骤 1–5 第二轮P1复审修复已完成，等待再次go/no-go复审。access query/quoted mapping脱敏及grounded context累计token预算已加固；当前真实Provider复验被BGE模型离线阻塞。冻结 test 未执行，步骤 6/7、正式receipt与v1.0 tag未开始。**
 
 **文件：**
 - 创建：`backend/src/opspilot/observability/tracing.py`、`redaction.py`

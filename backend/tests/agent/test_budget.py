@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import pytest
@@ -13,6 +14,8 @@ from opspilot.agent.runner import (
     drain_detached_agent_tasks,
 )
 from opspilot.generation.citations import ValidatedAnswer
+from opspilot.generation.provider import GroundedAnswer
+from opspilot.generation.service import GenerationService
 from opspilot.retrieval.context_builder import BuiltContext, ContextFragment
 from opspilot.tools.registry import ToolRegistry
 from opspilot.tools.types import ToolDefinition, ToolEffect, ToolResult
@@ -74,7 +77,7 @@ async def test_inflight_decision_is_cancelled_at_monotonic_deadline() -> None:
                 cancelled.set()
 
     runner = AgentRunner(
-        ToolRegistry(()), HangingProvider(), budget=AgentBudget(max_duration_seconds=0.01)
+        ToolRegistry(()), HangingProvider(), budget=AgentBudget(max_duration_seconds=0.05)
     )
     outcome = await asyncio.wait_for(runner.run("hello"), 0.5)
     assert outcome.bounded is True
@@ -113,8 +116,11 @@ async def test_grounded_generation_consumes_model_budget() -> None:
         )
         return GroundedSearchResult(ToolResult(ok=True), context)
 
-    async def generate(_query: str, _context: BuiltContext) -> ValidatedAnswer:
+    async def generate(
+        _query: str, _context: BuiltContext, reserve_model_call: Callable[[], None]
+    ) -> ValidatedAnswer:
         nonlocal generation_calls
+        reserve_model_call()
         generation_calls += 1
         return ValidatedAnswer(answer="x", snapshots=())
 
@@ -142,6 +148,158 @@ async def test_grounded_generation_consumes_model_budget() -> None:
     assert outcome.bounded is True
     assert provider.calls == 2
     assert generation_calls == 0
+
+
+@pytest.mark.parametrize(
+    ("context_tokens", "input_budget", "expected_generation_calls"),
+    [(1, 51, 1), (1, 50, 0), (100_000, 64, 0)],
+)
+async def test_grounded_context_respects_exact_input_budget_before_generation(
+    context_tokens: int, input_budget: int, expected_generation_calls: int
+) -> None:
+    class Decisions:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def decide(self, _state: object, _tools: object) -> AgentDecision:
+            self.calls += 1
+            if self.calls == 1:
+                return AgentDecision(kind="tool_call", tool="search_knowledge", arguments={})
+            return AgentDecision(kind="answer", answer="must be replaced by grounded generation")
+
+    fragment = ContextFragment(
+        document_id="00000000-0000-0000-0000-000000000001",
+        chunk_id="00000000-0000-0000-0000-000000000002",
+        title="title",
+        document_version=1,
+        section_path=(),
+        effective_at=datetime(2026, 1, 1, tzinfo=UTC),
+        page=None,
+        content="evidence",
+        token_count=context_tokens,
+    )
+    context = BuiltContext(
+        fragments=(fragment,),
+        token_budget=context_tokens,
+        total_tokens=context_tokens,
+        truncated=False,
+    )
+
+    async def search(_args: object) -> GroundedSearchResult:
+        return GroundedSearchResult(ToolResult(ok=True), context)
+
+    generation_calls = 0
+
+    async def generate(
+        _query: str, _context: BuiltContext, reserve_model_call: Callable[[], None]
+    ) -> ValidatedAnswer:
+        nonlocal generation_calls
+        reserve_model_call()
+        generation_calls += 1
+        return ValidatedAnswer(
+            answer="unsafe",
+            citations=(),
+            snapshots=(),
+            insufficient_evidence=True,
+            follow_up_question=None,
+        )
+
+    async def unused_invoke(_args: EmptyArgs) -> ToolResult:
+        raise AssertionError
+
+    tool = ToolDefinition(
+        name="search_knowledge",
+        description="",
+        input_schema=EmptyArgs,
+        effect=ToolEffect.READ_ONLY,
+        idempotency_capable=True,
+        supports_reconciliation=True,
+        invoke=unused_invoke,
+    )
+    runner = AgentRunner(
+        ToolRegistry([tool]),
+        Decisions(),
+        knowledge_search_handler=search,
+        grounded_answer_handler=generate,
+        budget=AgentBudget(max_model_calls=8, max_input_tokens=input_budget),
+    )
+    outcome = await runner.run("q")
+    assert outcome.bounded is (expected_generation_calls == 0)
+    assert generation_calls == expected_generation_calls
+    if expected_generation_calls == 0:
+        assert outcome.model_calls == 2
+
+
+async def test_grounded_generation_retries_charge_model_and_input_budget_per_attempt() -> None:
+    class Decisions:
+        calls = 0
+
+        async def decide(self, _state: object, _tools: object) -> AgentDecision:
+            self.calls += 1
+            if self.calls == 1:
+                return AgentDecision(kind="tool_call", tool="search_knowledge", arguments={})
+            return AgentDecision(kind="answer", answer="discard me")
+
+    fragment = ContextFragment(
+        document_id="00000000-0000-0000-0000-000000000001",
+        chunk_id="00000000-0000-0000-0000-000000000002",
+        title="title",
+        document_version=1,
+        section_path=(),
+        effective_at=datetime(2026, 1, 1, tzinfo=UTC),
+        page=None,
+        content="evidence",
+        token_count=1,
+    )
+    context = BuiltContext(fragments=(fragment,), token_budget=100, total_tokens=1, truncated=False)
+
+    class UncitedProvider:
+        calls = 0
+
+        async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
+            self.calls += 1
+            return GroundedAnswer(
+                answer="unsafe fact",
+                citations=(),
+                insufficient_evidence=False,
+                follow_up_question=None,
+            )
+
+    provider = UncitedProvider()
+    service = GenerationService(provider, max_validation_attempts=3)
+
+    async def search(_args: object) -> GroundedSearchResult:
+        return GroundedSearchResult(ToolResult(ok=True), context)
+
+    async def generate(
+        query: str, exact: BuiltContext, reserve_model_call: Callable[[], None]
+    ) -> ValidatedAnswer:
+        return await service.answer(query=query, context=exact, before_attempt=reserve_model_call)
+
+    async def unused_invoke(_args: EmptyArgs) -> ToolResult:
+        raise AssertionError
+
+    tool = ToolDefinition(
+        name="search_knowledge",
+        description="",
+        input_schema=EmptyArgs,
+        effect=ToolEffect.READ_ONLY,
+        idempotency_capable=True,
+        supports_reconciliation=True,
+        invoke=unused_invoke,
+    )
+    outcome = await AgentRunner(
+        ToolRegistry([tool]),
+        Decisions(),
+        knowledge_search_handler=search,
+        grounded_answer_handler=generate,
+        budget=AgentBudget(max_model_calls=3, max_input_tokens=1_000),
+    ).run("q")
+
+    assert outcome.bounded is True
+    assert outcome.model_calls == 3
+    assert provider.calls == 1
+    assert outcome.input_tokens == 51
 
 
 async def test_deadline_supervises_processor_that_ignores_cancellation() -> None:

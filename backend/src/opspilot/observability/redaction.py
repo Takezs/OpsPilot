@@ -4,13 +4,21 @@ import hashlib
 import logging
 import re
 from collections.abc import Mapping
+from typing import cast
+from urllib.parse import unquote_plus
 
 from opspilot.runs.sanitize import sanitize_value
 
 _CONTENT_KEYS = frozenset({"prompt", "content", "request", "response", "provider_response"})
 _CREDENTIAL_ASSIGNMENT = re.compile(
-    r"(?i)(\b(?:api[_-]?key|password|secret|authorization|cer|token)\b\s*[:=]\s*)"
-    r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;]+)"
+    r"(?i)((?<![A-Za-z0-9_])[\"']?"
+    r"(?:api[_-]?key|password|secret|authorization|cer|token)"
+    r"[\"']?\s*[:=]\s*)"
+    r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;}\]&]+)"
+)
+_QUERY_PARAMETER = re.compile(r"([?&])([^=&#]+)=([^&#]*)")
+_QUERY_CREDENTIAL_KEYS = frozenset(
+    {"token", "access_token", "api_key", "key", "secret", "password", "authorization"}
 )
 
 
@@ -33,14 +41,41 @@ def safe_exception_attributes(error: BaseException) -> dict[str, str]:
     return {"exception.type": type(error).__name__, "exception.summary": _summary(error)}
 
 
+def _sanitize_request_target(value: object) -> object:
+    if not isinstance(value, str) or "?" not in value:
+        return sanitize_value(value)
+
+    def replace(match: re.Match[str]) -> str:
+        key = unquote_plus(match.group(2)).casefold().replace("-", "_")
+        if key in _QUERY_CREDENTIAL_KEYS:
+            return f"{match.group(1)}{match.group(2)}=[REDACTED]"
+        return match.group(0)
+
+    return sanitize_value(_QUERY_PARAMETER.sub(replace, value))
+
+
+def _sanitize_args(
+    args: tuple[object, ...] | Mapping[str, object] | None,
+) -> tuple[object, ...] | Mapping[str, object] | None:
+    if args is None:
+        return None
+    if isinstance(args, Mapping):
+        return cast(dict[str, object], sanitize_value(dict(args)))
+    return tuple(sanitize_value(value) for value in args)
+
+
 class SafeLogFilter(logging.Filter):
     """Sanitize the fully rendered record before any handler persists it."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             if record.name == "uvicorn.access" and isinstance(record.args, tuple):
-                record.args = tuple(sanitize_value(value) for value in record.args)
+                record.args = tuple(
+                    _sanitize_request_target(value) if index == 2 else sanitize_value(value)
+                    for index, value in enumerate(record.args)
+                )
                 return True
+            record.args = _sanitize_args(record.args)
             rendered = record.getMessage()
             rendered = _CREDENTIAL_ASSIGNMENT.sub(r"\1[REDACTED]", rendered)
             record.msg = sanitize_value(rendered)

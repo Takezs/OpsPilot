@@ -45,6 +45,61 @@ def test_safe_log_filter_preserves_uvicorn_access_formatter_arguments() -> None:
     assert "200" in rendered
 
 
+def test_uvicorn_access_query_credentials_are_redacted_without_breaking_formatter() -> None:
+    secrets = (
+        "tok-secret",
+        "access-secret",
+        "api-secret",
+        "plain-key",
+        "password-value",
+        "authorization-value",
+    )
+    target = (
+        "/search?token=tok-secret&token_count=42&ACCESS_TOKEN=access-secret"
+        "&api%5Fkey=api-secret&key=plain-key&Password=password-value"
+        "&authorization=authorization-value"
+    )
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        (("127.0.0.1", 43210), "GET", target, "1.1", 200),
+        None,
+    )
+
+    assert SafeLogFilter().filter(record)
+    rendered = AccessFormatter(
+        "%(levelprefix)s %(client_addr)s - %(request_line)s %(status_code)s"
+    ).format(record)
+
+    assert "GET /search?" in rendered
+    assert "token_count=42" in rendered
+    assert rendered.count("[REDACTED]") == 6
+    assert all(secret not in rendered for secret in secrets)
+
+
+@pytest.mark.parametrize(
+    ("message", "args"),
+    [
+        ("payload=%s", ({"api_key": "alpha", "nested": [{"password": "bravo"}]},)),
+        ("payload=%(payload)s", ({"payload": {"authorization": "charlie"}},)),
+        ('payload={"secret": "delta", "token": "echo"}', ()),
+        ("payload={'api_key': 'foxtrot', 'nested': {'password': 'golf'}}", ()),
+    ],
+)
+def test_quoted_and_structured_mapping_credentials_are_redacted(
+    message: str, args: tuple[object, ...]
+) -> None:
+    record = logging.LogRecord("opspilot.safe", logging.INFO, __file__, 1, message, args, None)
+    assert SafeLogFilter().filter(record)
+    rendered = record.getMessage()
+    for secret in ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"):
+        assert secret not in rendered
+    assert len(rendered) <= 1000
+
+
 @pytest.mark.parametrize("key", ["api_key", "password", "secret", "authorization", "cer", "token"])
 def test_formatted_credential_values_are_redacted(key: str) -> None:
     record = logging.LogRecord(

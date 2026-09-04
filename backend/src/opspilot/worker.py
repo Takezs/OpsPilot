@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import httpx
 from arq import func
 from arq.connections import RedisSettings
@@ -139,8 +141,12 @@ async def startup_worker(ctx: dict[str, object]) -> None:
             )
         )
 
-        async def grounded_answer(query: str, context: BuiltContext) -> ValidatedAnswer:
-            return await generation_service.answer(query=query, context=context)
+        async def grounded_answer(
+            query: str, context: BuiltContext, reserve_model_call: Callable[[], None]
+        ) -> ValidatedAnswer:
+            return await generation_service.answer(
+                query=query, context=context, before_attempt=reserve_model_call
+            )
 
         runner = AgentRunner(
             registry,

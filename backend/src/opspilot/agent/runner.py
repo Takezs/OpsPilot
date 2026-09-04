@@ -34,6 +34,7 @@ from opspilot.tools.types import ToolDefinition, ToolEffect, ToolResult
 DecisionKind = Literal["answer", "clarify", "tool_call", "grounded_answer"]
 INSUFFICIENT_EVIDENCE_REPLY = "Unable to answer from verified knowledge evidence."
 _CANCEL_GRACE_SECONDS = 1.0
+_GROUNDED_CONTROL_TOKEN_OVERHEAD = 32
 _DETACHED_AGENT_TASKS: set[asyncio.Task[Any]] = set()
 
 
@@ -153,6 +154,7 @@ class AgentOutcome:
     grounded: bool = False
     executed_tool_calls: tuple[ExecutedToolCall, ...] = ()
     model_calls: int = 0
+    input_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -167,6 +169,13 @@ def _estimated_tokens(messages: list[AgentMessage]) -> int:
     return sum(max(1, len(message.content.encode("utf-8")) // 4) for message in messages)
 
 
+def _grounded_prompt_tokens(query: str, context: BuiltContext) -> int:
+    if context.total_tokens < 0:
+        raise DecisionError("grounded context token count cannot be negative")
+    query_tokens = max(1, len(query.encode("utf-8")) // 4)
+    return query_tokens + context.total_tokens + _GROUNDED_CONTROL_TOKEN_OVERHEAD
+
+
 class DecisionProvider(Protocol):
     async def decide(
         self, state: AgentState, tools: tuple[ToolDefinition, ...]
@@ -175,7 +184,10 @@ class DecisionProvider(Protocol):
 
 SideEffectHandler = Callable[[ToolDefinition, Any], Awaitable[ToolResult]]
 KnowledgeSearchHandler = Callable[[Any], Awaitable[GroundedSearchResult]]
-GroundedAnswerHandler = Callable[[str, BuiltContext], Awaitable[ValidatedAnswer]]
+ModelCallReservation = Callable[[], None]
+GroundedAnswerHandler = Callable[
+    [str, BuiltContext, ModelCallReservation], Awaitable[ValidatedAnswer]
+]
 
 
 class AgentRunner:
@@ -209,6 +221,7 @@ class AgentRunner:
         started_at = time.monotonic()
         deadline = started_at + self._budget.max_duration_seconds
         model_calls = 0
+        input_tokens = 0
         state = AgentState(messages=[AgentMessage(role="user", content=user_message)])
         grounded_contexts: dict[str, BuiltContext] = {}
         workflow_facts: list[WorkflowFact] = []
@@ -219,26 +232,37 @@ class AgentRunner:
             return AgentOutcome(
                 executed_tool_calls=tuple(executed_tool_calls),
                 model_calls=model_calls,
+                input_tokens=input_tokens,
                 **values,
             )
 
+        def reserve_model_call(prompt_tokens: int) -> None:
+            nonlocal input_tokens, model_calls
+            if (
+                model_calls >= self._budget.max_model_calls
+                or input_tokens + prompt_tokens > self._budget.max_input_tokens
+            ):
+                raise AgentBudgetExceeded
+            model_calls += 1
+            input_tokens += prompt_tokens
+
         async def grounded_outcome(context: BuiltContext) -> AgentOutcome:
-            nonlocal model_calls
             if self._grounded_answer_handler is None:
                 raise DecisionError("grounded answer generation is not configured")
-            if model_calls >= self._budget.max_model_calls:
-                return outcome(
-                    final_answer=INSUFFICIENT_EVIDENCE_REPLY,
-                    rounds=state.rounds,
-                    tool_calls=state.tool_calls,
-                    bounded=True,
-                    workflow_facts=tuple(workflow_facts),
-                )
-            model_calls += 1
-            with traced_stage("llm", self._run_id, {"decision": "grounded_answer"}):
+            prompt_tokens = _grounded_prompt_tokens(user_message, context)
+            with traced_stage(
+                "llm",
+                self._run_id,
+                {"decision": "grounded_answer", "input_tokens_per_attempt": prompt_tokens},
+            ):
                 try:
                     validated = await _await_before_deadline(
-                        self._grounded_answer_handler(user_message, context), deadline
+                        self._grounded_answer_handler(
+                            user_message,
+                            context,
+                            lambda: reserve_model_call(prompt_tokens),
+                        ),
+                        deadline,
                     )
                 except AgentBudgetExceeded:
                     return outcome(
@@ -277,7 +301,6 @@ class AgentRunner:
             budget_exhausted = (
                 state.rounds >= self._max_rounds
                 or model_calls >= self._budget.max_model_calls
-                or _estimated_tokens(state.messages) > self._budget.max_input_tokens
                 or time.monotonic() - started_at >= self._budget.max_duration_seconds
             )
             if budget_exhausted:
@@ -296,8 +319,21 @@ class AgentRunner:
                     workflow_facts=tuple(workflow_facts),
                 )
             state.rounds += 1
-            model_calls += 1
-            with traced_stage("llm", self._run_id, {"decision": "agent_decision"}):
+            decision_input_tokens = _estimated_tokens(state.messages)
+            try:
+                reserve_model_call(decision_input_tokens)
+            except AgentBudgetExceeded:
+                return outcome(
+                    rounds=state.rounds - 1,
+                    tool_calls=state.tool_calls,
+                    bounded=True,
+                    workflow_facts=tuple(workflow_facts),
+                )
+            with traced_stage(
+                "llm",
+                self._run_id,
+                {"decision": "agent_decision", "input_tokens": decision_input_tokens},
+            ):
                 try:
                     decision = await _await_before_deadline(
                         self._decision_provider.decide(state, self._registry.all()), deadline

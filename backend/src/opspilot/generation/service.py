@@ -1,6 +1,7 @@
 """Orchestrates the chat provider and citation validation into an answer."""
 
 import asyncio
+from collections.abc import Callable
 
 from opspilot.generation.citations import ValidatedAnswer, validate_citations
 from opspilot.generation.provider import GenerationProvider
@@ -23,9 +24,17 @@ class GenerationService:
         self.max_validation_attempts = max_validation_attempts
         self.attempt_timeout_seconds = attempt_timeout_seconds
 
-    async def answer(self, *, query: str, context: BuiltContext) -> ValidatedAnswer:
+    async def answer(
+        self,
+        *,
+        query: str,
+        context: BuiltContext,
+        before_attempt: Callable[[], None] | None = None,
+    ) -> ValidatedAnswer:
         validated: ValidatedAnswer | None = None
         for _ in range(self.max_validation_attempts):
+            if before_attempt is not None:
+                before_attempt()
             try:
                 async with asyncio.timeout(self.attempt_timeout_seconds):
                     grounded = await self.provider.answer(query=query, context=context)

@@ -179,11 +179,18 @@ async def test_generation_service_retries_invalid_citations_without_fabricating_
             return grounded(answer="verified fact", citations=[target])
 
     provider = SequencedProvider()
+    reservations = 0
+
+    def reserve() -> None:
+        nonlocal reservations
+        reservations += 1
+
     validated = await GenerationService(provider=provider, max_validation_attempts=3).answer(
-        query="refund window", context=ctx
+        query="refund window", context=ctx, before_attempt=reserve
     )
 
     assert provider.calls == 3
+    assert reservations == 3
     assert validated.answer == "verified fact"
     assert validated.citations == (target,)
     assert validated.snapshots[0].chunk_id == "chunk-1"

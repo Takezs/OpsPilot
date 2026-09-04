@@ -224,7 +224,8 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 最终dev-only smoke通过公开API、真实PG/Redis/BGE/DeepSeek再次退出0；冻结SHA保持`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`且manifest仍为false，RC/主库test receipt均为0；隔离RC资源已清理，主拓扑healthy、正式矩阵仍`COMPLETED:60`。
 - 首轮NO-GO修复已覆盖运行中deadline和grounded generation模型计数、detached Agent任务监督、格式化日志与Trace异常脱敏、ARQ后装handler过滤、文档卷10001:10001/0750、seed身份兼容校验及独立Redis heartbeat健康检查。
 - 隔离RC公开上传由非root API写卷、非root Worker读取并经真实BGE到READY；重启后文件与Chunk保持。兼容seed重复不改密码，同名不兼容账号退出非0且不自修复。
-- Task18步骤1–5等待再次复审；不得开始步骤6/7、冻结test、正式receipt或v1.0 tag。
+- 第二轮P1修复：Uvicorn access查询凭据值在不破坏formatter tuple下脱敏；位置/映射args及Python/JSON quoted nested mapping统一先结构化脱敏再限长渲染。Agent累计input-token账本对每次decision和grounded生成重试收费，grounded收费为原始query+BuiltContext token+control overhead；恰好边界允许、超1/超大context均在Provider调用前拒绝，普通answer不进入generation。
+- Red日志5项+grounded预算2项；Green扩展定向163、全新PG完整`476 passed, 4 skipped in 93.91s`，Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过。当前live复验在业务逻辑前因Xinference `bge-m3`离线404阻塞，未用Fake冒充；BGE恢复后需补三轮live及隔离RC。Task18步骤1–5等待再次go/no-go复审；不得开始步骤6/7、冻结test、正式receipt或v1.0 tag。
 
 ## 需要维护的文档
 

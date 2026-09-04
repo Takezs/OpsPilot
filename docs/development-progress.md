@@ -306,7 +306,9 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 日志在格式化后按credential key脱敏，Uvicorn access参数结构保持；ARQ运行时handler在startup再次安装过滤器。OpenTelemetry不再接收原始业务异常/traceback，只记录异常类型及hash/length摘要。
 - Docker文档mountpoint固定`10001:10001`、`0750`，仅API/Worker挂载。隔离RC真实公开上传后Worker以UID10001读取原文件、真实BGE索引到READY/1 chunk；API/Worker重启后文件与Chunk保持。Worker/Publisher使用不同Redis heartbeat key，Redis不可用时不再健康，恢复后均healthy。
 - release seed新ADMIN固定显式`["*"]`知识范围与CONFIDENTIAL；同名inactive/非ADMIN/错误scope/access均fail-closed且不修改账号，兼容账号重复seed不改身份或密码。
-- 状态：Task18步骤1–5复审修复完成，等待再次复审。步骤6/7、冻结test、正式receipt和v1.0 tag均未开始。
+- 第二轮P1修复：Uvicorn access request-target按解码后的credential query key定点脱敏且保持formatter tuple；普通日志先递归脱敏位置/映射args，再对Python repr/JSON quoted key防御。Agent使用单一累计输入账本，每次decision与每次grounded validation attempt分别收费；grounded费用包含原始query、`BuiltContext.total_tokens`与固定control overhead，超预算在Provider调用及model-call递增前fail-closed。
+- 本轮Red为日志5项与grounded预算2项真实失败；Green扩展定向`163 passed`，全新PG完整后端`476 passed, 4 skipped in 93.91s`，Ruff通过、Mypy117、frontend unit19/Playwright8/typecheck/build通过。live门禁当前在应用逻辑前被Xinference `bge-m3`不在线（embedding 404）阻塞，未用Fake替代。
+- 状态：Task18步骤1–5第二轮复审修复完成，等待再次go/no-go复审及BGE环境恢复后live/隔离RC复验。步骤6/7、冻结test、正式receipt和v1.0 tag均未开始。
 
 ## 后续开发计划
 
