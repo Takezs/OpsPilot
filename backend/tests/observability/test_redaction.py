@@ -3,7 +3,7 @@ import logging
 import pytest
 from uvicorn.logging import AccessFormatter
 
-from opspilot.observability.redaction import SafeLogFilter, safe_attributes
+from opspilot.observability.redaction import SafeLogFilter, install_safe_logging, safe_attributes
 
 
 def test_trace_and_log_attributes_reuse_journal_redaction(caplog: pytest.LogCaptureFixture) -> None:
@@ -43,3 +43,35 @@ def test_safe_log_filter_preserves_uvicorn_access_formatter_arguments() -> None:
 
     assert "GET /health HTTP/1.1" in rendered
     assert "200" in rendered
+
+
+@pytest.mark.parametrize("key", ["api_key", "password", "secret", "authorization", "cer", "token"])
+def test_formatted_credential_values_are_redacted(key: str) -> None:
+    record = logging.LogRecord(
+        "opspilot.safe", logging.INFO, __file__, 1, f"{key}=%s", ("raw-value",), None
+    )
+    assert SafeLogFilter().filter(record)
+    assert "raw-value" not in record.getMessage()
+
+
+def test_mapping_args_and_handlers_added_after_install_are_redacted() -> None:
+    logger = logging.getLogger("opspilot.late-handler")
+    logger.handlers.clear()
+    install_safe_logging()
+    handler = logging.StreamHandler()
+    logger.addHandler(handler)
+    install_safe_logging()
+    install_safe_logging()
+    filters = [item for item in handler.filters if isinstance(item, SafeLogFilter)]
+    assert len(filters) == 1
+    record = logging.LogRecord(
+        logger.name,
+        logging.INFO,
+        __file__,
+        1,
+        "api_key=%(value)s",
+        ({"value": "raw"},),
+        None,
+    )
+    assert filters[0].filter(record)
+    assert "raw" not in record.getMessage()

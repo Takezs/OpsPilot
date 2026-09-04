@@ -60,7 +60,7 @@
 - M4 / 任务 15 工作台、审批、Run时间线与核心退款E2E已通过督导复审（2026-08-30）；最终引用加固批准提交 `d910b8e`、`39c75b8`，督导独立定向54 passed，Ruff/Mypy/Alembic0020及PostgreSQL/Redis门禁通过。下一项是任务16。
 - M5 / 任务 16 v1.0评测数据集与确定性指标已通过督导复审（2026-08-30），批准提交`bbeea2f`、`34fcba9`、`c43332d`；冻结test SHA为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`且尚未执行。下一项是任务17。
 - M5 / 任务 17 异步实验 Runner、故障矩阵与评测看板已通过督导复审（2026-09-02），批准提交 `def4c63`、`8e6d406`、`2aff943`。正式矩阵 Run `0108b7b2-991d-49d3-9e6e-d2ff50ce5c38` 可靠恢复 60/60、任务成功 59/60；Alembic 0023 head，冻结 test 未执行。下一项是任务18。
-- M5 / 任务 18 步骤 1–5 的冻结 test 前发布候选已完成，等待督导 go/no-go 复审；隔离 RC 两次 seed 幂等且 dev-only smoke 通过，后端 `451 passed, 4 skipped`，前端 unit 19、Playwright 8，Alembic 0023 head，全拓扑非 root 且 healthy。冻结 test 未执行，步骤 6/7、v1.0 tag 均未开始。
+- M5 / 任务 18 步骤 1–5 的首轮 NO-GO 修复已完成，等待督导再次复审；修复覆盖运行中 deadline、日志/Trace 脱敏、非 root 文档卷、release seed 冲突及 ARQ Redis heartbeat。冻结 test 未执行，步骤 6/7、v1.0 tag 均未开始。
 - `attempt=0` outbox lifecycle 是已记录的非阻塞技术债，不要顺带重构。
 
 ## 常用验证命令

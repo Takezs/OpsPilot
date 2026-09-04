@@ -7,7 +7,7 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace import TracerProvider
 
-from opspilot.observability.redaction import safe_attributes
+from opspilot.observability.redaction import safe_attributes, safe_exception_attributes
 
 _provider: TracerProvider | None = None
 
@@ -44,9 +44,9 @@ def traced_stage(
         yield
     except BaseException as business_error:
         try:
-            span_context.__exit__(
-                type(business_error), business_error, business_error.__traceback__
-            )
+            for key, value in safe_exception_attributes(business_error).items():
+                span.set_attribute(key, value)
+            span_context.__exit__(None, None, None)
         except BaseException:
             pass
         raise

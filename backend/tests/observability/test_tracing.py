@@ -50,3 +50,33 @@ def test_trace_export_failure_never_changes_business_result() -> None:
     with traced_stage("agent.run", "run-2", {}):
         result = "committed"
     assert result == "committed"
+
+
+def test_trace_records_only_sanitized_exception_and_preserves_business_error() -> None:
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    configure_tracing(provider)
+    raw = "Bearer raw api_key=secret alice@example.com 13800138000 full prompt"
+
+    try:
+        with traced_stage("llm", "run-error", {}):
+            raise RuntimeError(raw)
+    except RuntimeError as error:
+        assert str(error) == raw
+
+    spans = exporter.get_finished_spans()
+    rendered = repr(
+        [
+            {
+                "attributes": dict(span.attributes),
+                "events": [dict(event.attributes or {}) for event in span.events],
+            }
+            for span in spans
+        ]
+    )
+    assert raw not in rendered
+    assert "alice@example.com" not in rendered
+    assert "13800138000" not in rendered
+    assert spans[0].attributes["exception.type"] == "RuntimeError"
+    assert str(spans[0].attributes["exception.summary"]).startswith("sha256:")

@@ -14,6 +14,18 @@ from opspilot.knowledge.schemas import AccessLevel
 RELEASE_ADMIN_ACCESS_LEVEL = AccessLevel.CONFIDENTIAL
 
 
+def validate_existing_admin(user: User) -> None:
+    """Reject a colliding seed identity without mutating its security facts."""
+    compatible = (
+        user.is_active
+        and user.role is Role.ADMIN
+        and user.allowed_departments == ["*"]
+        and user.max_access_level == int(RELEASE_ADMIN_ACCESS_LEVEL)
+    )
+    if not compatible:
+        raise RuntimeError("existing release administrator identity is incompatible")
+
+
 async def seed() -> None:
     password = os.getenv("OPSPILOT_SEED_ADMIN_PASSWORD", "")
     if len(password) < 12:
@@ -27,11 +39,13 @@ async def seed() -> None:
                     username=username,
                     password_hash=AuthService(Settings().jwt_secret).hash_password(password),
                     role=Role.ADMIN,
-                    allowed_departments=[],
+                    allowed_departments=["*"],
                     max_access_level=int(RELEASE_ADMIN_ACCESS_LEVEL),
                 )
             )
             await session.commit()
+        else:
+            validate_existing_admin(existing)
 
 
 if __name__ == "__main__":

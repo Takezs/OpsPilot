@@ -11,10 +11,11 @@ fails closed when none is wired. READ_ONLY tools keep the direct-invocation
 contract.
 """
 
+import asyncio
 import json
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
 
@@ -32,6 +33,77 @@ from opspilot.tools.types import ToolDefinition, ToolEffect, ToolResult
 
 DecisionKind = Literal["answer", "clarify", "tool_call", "grounded_answer"]
 INSUFFICIENT_EVIDENCE_REPLY = "Unable to answer from verified knowledge evidence."
+_CANCEL_GRACE_SECONDS = 1.0
+_DETACHED_AGENT_TASKS: set[asyncio.Task[Any]] = set()
+
+
+class AgentBudgetExceeded(RuntimeError):
+    """An in-flight Agent operation crossed its monotonic deadline."""
+
+
+def _consume_task(task: asyncio.Task[Any]) -> None:
+    if task.cancelled() or not task.done():
+        return
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+def _forget_task(task: asyncio.Task[Any]) -> None:
+    _consume_task(task)
+    _DETACHED_AGENT_TASKS.discard(task)
+
+
+def _supervise_detached(task: asyncio.Task[Any]) -> None:
+    if task.done():
+        _consume_task(task)
+        return
+    _DETACHED_AGENT_TASKS.add(task)
+    task.add_done_callback(_forget_task)
+
+
+async def drain_detached_agent_tasks() -> None:
+    """Cancel and retrieve cancellation-resistant Agent operations at shutdown."""
+    tasks = tuple(_DETACHED_AGENT_TASKS)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        done, _ = await asyncio.wait(tasks, timeout=_CANCEL_GRACE_SECONDS)
+        for task in done:
+            _consume_task(task)
+
+
+def detached_agent_task_count() -> int:
+    """Return cancellation-resistant operations still owned by the supervisor."""
+    return len(_DETACHED_AGENT_TASKS)
+
+
+async def _cancel_bounded(task: asyncio.Task[Any]) -> None:
+    task.cancel()
+    done, _ = await asyncio.wait({task}, timeout=_CANCEL_GRACE_SECONDS)
+    if done:
+        _consume_task(task)
+    else:
+        _supervise_detached(task)
+
+
+async def _await_before_deadline(awaitable: Awaitable[Any], deadline: float) -> Any:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        if hasattr(awaitable, "close"):
+            awaitable.close()
+        raise AgentBudgetExceeded
+    task: asyncio.Task[Any] = asyncio.create_task(cast(Coroutine[Any, Any, Any], awaitable))
+    try:
+        done, _ = await asyncio.wait({task}, timeout=remaining)
+    except asyncio.CancelledError:
+        await _cancel_bounded(task)
+        raise
+    if task not in done:
+        await _cancel_bounded(task)
+        raise AgentBudgetExceeded
+    return task.result()
 
 
 @dataclass(frozen=True)
@@ -80,6 +152,7 @@ class AgentOutcome:
     workflow_facts: tuple[WorkflowFact, ...] = ()
     grounded: bool = False
     executed_tool_calls: tuple[ExecutedToolCall, ...] = ()
+    model_calls: int = 0
 
 
 @dataclass(frozen=True)
@@ -134,6 +207,8 @@ class AgentRunner:
 
     async def run(self, user_message: str) -> AgentOutcome:
         started_at = time.monotonic()
+        deadline = started_at + self._budget.max_duration_seconds
+        model_calls = 0
         state = AgentState(messages=[AgentMessage(role="user", content=user_message)])
         grounded_contexts: dict[str, BuiltContext] = {}
         workflow_facts: list[WorkflowFact] = []
@@ -141,13 +216,38 @@ class AgentRunner:
         knowledge_search_attempted = False
 
         def outcome(**values: Any) -> AgentOutcome:
-            return AgentOutcome(executed_tool_calls=tuple(executed_tool_calls), **values)
+            return AgentOutcome(
+                executed_tool_calls=tuple(executed_tool_calls),
+                model_calls=model_calls,
+                **values,
+            )
 
         async def grounded_outcome(context: BuiltContext) -> AgentOutcome:
+            nonlocal model_calls
             if self._grounded_answer_handler is None:
                 raise DecisionError("grounded answer generation is not configured")
+            if model_calls >= self._budget.max_model_calls:
+                return outcome(
+                    final_answer=INSUFFICIENT_EVIDENCE_REPLY,
+                    rounds=state.rounds,
+                    tool_calls=state.tool_calls,
+                    bounded=True,
+                    workflow_facts=tuple(workflow_facts),
+                )
+            model_calls += 1
             with traced_stage("llm", self._run_id, {"decision": "grounded_answer"}):
-                validated = await self._grounded_answer_handler(user_message, context)
+                try:
+                    validated = await _await_before_deadline(
+                        self._grounded_answer_handler(user_message, context), deadline
+                    )
+                except AgentBudgetExceeded:
+                    return outcome(
+                        final_answer=INSUFFICIENT_EVIDENCE_REPLY,
+                        rounds=state.rounds,
+                        tool_calls=state.tool_calls,
+                        bounded=True,
+                        workflow_facts=tuple(workflow_facts),
+                    )
             if validated.follow_up_question is not None:
                 return outcome(
                     clarification=validated.follow_up_question,
@@ -175,7 +275,8 @@ class AgentRunner:
 
         while True:
             budget_exhausted = (
-                state.rounds >= min(self._max_rounds, self._budget.max_model_calls)
+                state.rounds >= self._max_rounds
+                or model_calls >= self._budget.max_model_calls
                 or _estimated_tokens(state.messages) > self._budget.max_input_tokens
                 or time.monotonic() - started_at >= self._budget.max_duration_seconds
             )
@@ -195,8 +296,19 @@ class AgentRunner:
                     workflow_facts=tuple(workflow_facts),
                 )
             state.rounds += 1
+            model_calls += 1
             with traced_stage("llm", self._run_id, {"decision": "agent_decision"}):
-                decision = await self._decision_provider.decide(state, self._registry.all())
+                try:
+                    decision = await _await_before_deadline(
+                        self._decision_provider.decide(state, self._registry.all()), deadline
+                    )
+                except AgentBudgetExceeded:
+                    return outcome(
+                        rounds=state.rounds,
+                        tool_calls=state.tool_calls,
+                        bounded=True,
+                        workflow_facts=tuple(workflow_facts),
+                    )
             if time.monotonic() - started_at >= self._budget.max_duration_seconds:
                 return outcome(
                     rounds=state.rounds,
@@ -292,7 +404,18 @@ class AgentRunner:
             if definition.name == "search_knowledge" and self._knowledge_search_handler:
                 knowledge_search_attempted = True
                 with traced_stage("retrieval", self._run_id, {"tool": definition.name}):
-                    grounded = await self._knowledge_search_handler(arguments)
+                    try:
+                        grounded = await _await_before_deadline(
+                            self._knowledge_search_handler(arguments), deadline
+                        )
+                    except AgentBudgetExceeded:
+                        return outcome(
+                            final_answer=INSUFFICIENT_EVIDENCE_REPLY,
+                            rounds=state.rounds,
+                            tool_calls=state.tool_calls,
+                            bounded=True,
+                            workflow_facts=tuple(workflow_facts),
+                        )
                 summary = dict(grounded.summary.data or {})
                 summary.pop("search_call_id", None)
                 has_evidence = bool(grounded.context.fragments)
@@ -330,13 +453,33 @@ class AgentRunner:
                     )
                 else:
                     with traced_stage("tool.execute", self._run_id, {"tool": definition.name}):
-                        result = await self._side_effect_handler(definition, arguments)
+                        try:
+                            result = await _await_before_deadline(
+                                self._side_effect_handler(definition, arguments), deadline
+                            )
+                        except AgentBudgetExceeded:
+                            return outcome(
+                                rounds=state.rounds,
+                                tool_calls=state.tool_calls,
+                                bounded=True,
+                                workflow_facts=tuple(workflow_facts),
+                            )
                     fact = _workflow_fact(definition, result)
                     if fact is not None:
                         workflow_facts.append(fact)
             else:
                 with traced_stage("tool.execute", self._run_id, {"tool": definition.name}):
-                    result = await definition.invoke(arguments)
+                    try:
+                        result = await _await_before_deadline(
+                            definition.invoke(arguments), deadline
+                        )
+                    except AgentBudgetExceeded:
+                        return outcome(
+                            rounds=state.rounds,
+                            tool_calls=state.tool_calls,
+                            bounded=True,
+                            workflow_facts=tuple(workflow_facts),
+                        )
             state.messages.append(
                 AgentMessage(
                     role="tool",

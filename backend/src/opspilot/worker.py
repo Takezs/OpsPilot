@@ -4,7 +4,12 @@ from arq.connections import RedisSettings
 
 from opspilot.agent.knowledge import RunKnowledgeSearch
 from opspilot.agent.reply import render_assistant_reply
-from opspilot.agent.runner import AgentBudget, AgentRunner, DeepSeekAgentDecider
+from opspilot.agent.runner import (
+    AgentBudget,
+    AgentRunner,
+    DeepSeekAgentDecider,
+    drain_detached_agent_tasks,
+)
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.evaluation.runner import PublicEvaluationApi
@@ -51,6 +56,7 @@ async def shutdown_worker(ctx: dict[str, object]) -> None:
     await drain_detached_provider_tasks()
     await drain_detached_run_processor_tasks()
     await drain_detached_evaluation_tasks()
+    await drain_detached_agent_tasks()
     for name in ("order_client", "payment_client", "email_client", "evaluation_api_client"):
         client = ctx.get(name)
         if isinstance(client, httpx.AsyncClient):
@@ -63,6 +69,9 @@ async def shutdown_worker(ctx: dict[str, object]) -> None:
 
 
 async def startup_worker(ctx: dict[str, object]) -> None:
+    # ARQ installs its handlers after importing this module; rescan now so the
+    # final runtime handlers receive the same redaction filter.
+    install_safe_logging()
     settings = Settings()
     order_client = httpx.AsyncClient(base_url=settings.order_service_url, timeout=5)
     payment_client = httpx.AsyncClient(base_url=settings.payment_service_url, timeout=5)
@@ -176,6 +185,8 @@ async def startup_worker(ctx: dict[str, object]) -> None:
 
 class WorkerSettings:
     queue_name = WORKER_QUEUE
+    health_check_key = "opspilot:health:worker"
+    health_check_interval = 10
     functions = [
         func(
             index_document,

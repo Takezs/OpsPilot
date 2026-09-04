@@ -227,6 +227,7 @@ async def test_heartbeat_prevents_expired_claim_recovery() -> None:
         await start_test_execution(session, principal, execution.id)
         execution.claim_token, execution.lease_owner = "heartbeat-token", "heartbeat-worker"
         execution.lease_expires_at = datetime.now(UTC) + timedelta(seconds=1)
+        initial_lease_expires_at = execution.lease_expires_at
         await session.commit()
         execution_id, run_id, version = (
             execution.id,
@@ -254,7 +255,11 @@ async def test_heartbeat_prevents_expired_claim_recovery() -> None:
     async with async_session_factory() as session:
         execution = await session.get(EvaluationTestExecution, execution_id)
         assert execution is not None and execution.lease_expires_at is not None
-        assert execution.lease_expires_at > datetime.now(UTC)
+        # The processor has already returned, so its heartbeat is intentionally
+        # stopped and the renewed lease may expire before this assertion runs on
+        # a heavily loaded CI host.  Prove renewal relative to the original
+        # lease instead of requiring an idle lease to remain live.
+        assert execution.lease_expires_at > initial_lease_expires_at
         execution.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
         await session.commit()
     async with async_session_factory() as session:

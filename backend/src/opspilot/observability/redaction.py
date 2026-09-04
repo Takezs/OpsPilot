@@ -2,11 +2,16 @@
 
 import hashlib
 import logging
+import re
 from collections.abc import Mapping
 
 from opspilot.runs.sanitize import sanitize_value
 
 _CONTENT_KEYS = frozenset({"prompt", "content", "request", "response", "provider_response"})
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?i)(\b(?:api[_-]?key|password|secret|authorization|cer|token)\b\s*[:=]\s*)"
+    r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;]+)"
+)
 
 
 def _summary(value: object) -> str:
@@ -23,31 +28,31 @@ def safe_attributes(values: Mapping[str, object]) -> dict[str, object]:
     return result
 
 
+def safe_exception_attributes(error: BaseException) -> dict[str, str]:
+    """Describe an exception without exporting its message or traceback."""
+    return {"exception.type": type(error).__name__, "exception.summary": _summary(error)}
+
+
 class SafeLogFilter(logging.Filter):
     """Sanitize the fully rendered record before any handler persists it."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            record.msg = sanitize_value(record.msg)
-            if isinstance(record.args, tuple):
+            if record.name == "uvicorn.access" and isinstance(record.args, tuple):
                 record.args = tuple(sanitize_value(value) for value in record.args)
-            elif isinstance(record.args, dict):
-                record.args = sanitize_value(record.args)
+                return True
+            rendered = record.getMessage()
+            rendered = _CREDENTIAL_ASSIGNMENT.sub(r"\1[REDACTED]", rendered)
+            record.msg = sanitize_value(rendered)
+            record.args = ()
         except BaseException:
             record.msg = "[REDACTED_LOG_RECORD]"
             record.args = ()
         return True
 
 
-_logging_installed = False
-
-
 def install_safe_logging() -> None:
     """Attach sanitization to configured handlers without breaking formatter arguments."""
-    global _logging_installed
-    if _logging_installed:
-        return
-    safe_filter = SafeLogFilter()
     loggers = [logging.getLogger()]
     loggers.extend(
         logger
@@ -56,5 +61,5 @@ def install_safe_logging() -> None:
     )
     for logger in loggers:
         for handler in logger.handlers:
-            handler.addFilter(safe_filter)
-    _logging_installed = True
+            if not any(isinstance(item, SafeLogFilter) for item in handler.filters):
+                handler.addFilter(SafeLogFilter())

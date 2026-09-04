@@ -13,6 +13,8 @@ from opspilot.jobs.models import OperationJobOutbox, RunJobOutbox, RunJobStatus
 from opspilot.runs.models import RunMessage
 from opspilot.tools.types import ToolEffect
 
+_DELIVERY_RETRY_DELAY = timedelta(seconds=5)
+
 
 async def recover_expired_operations(batch_size: int = 50) -> int:
     """Recover expired leases without ever invoking an external Provider."""
@@ -136,7 +138,7 @@ async def recover_stale_delivered_jobs(batch_size: int = 50, *, grace_seconds: i
                     row.last_error = None
                 else:
                     row.delivered_at = None
-                    row.available_at = func.clock_timestamp() + timedelta(seconds=1)
+                    row.available_at = func.clock_timestamp() + _DELIVERY_RETRY_DELAY
                     row.last_error = "delivery acknowledgement expired before claim"
                 await session.commit()
                 recovered += 1
@@ -175,7 +177,7 @@ async def recover_stale_delivered_jobs(batch_size: int = 50, *, grace_seconds: i
             )
             if operation.version == job.expected_version and operation.status in expected_statuses:
                 job.delivered_at = None
-                job.available_at = func.clock_timestamp() + timedelta(seconds=1)
+                job.available_at = func.clock_timestamp() + _DELIVERY_RETRY_DELAY
                 job.last_error = "delivery acknowledgement expired before claim"
             else:
                 job.last_error = "stale operation job intent"

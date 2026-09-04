@@ -213,16 +213,18 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 督导批准`def4c63`、`8e6d406`、`2aff943`，Bugbot最终无finding。正式矩阵Run `0108b7b2-991d-49d3-9e6e-d2ff50ce5c38`可靠性60/60、任务成功59/60；Alembic0023 head，冻结test仍未执行。
 - Task17已闭环；下一项Task18。Task18冻结test执行仍需单独go/no-go授权。
 
-## 任务 18（步骤 1–5 发布候选，等待督导复审）
+## 任务 18（步骤 1–5 发布候选，等待再次复审）
 
 - 已实现 fail-safe tracing、统一脱敏、Agent 四类预算、非 root 完整 Compose 拓扑、健康检查、幂等 release seed 入口和架构/检索/可靠执行/评测/面试/发布候选文档。
 - Docker 镜像与运行边界已核验：API/Worker/Publisher 用户 `opspilot`，Web 用户 `101`；只有 API/Worker 挂载文档卷。完整拓扑健康，API `/health` 200。
 - 生产日志门禁发现并修复 Uvicorn access logger 参数破坏：真实容器旧日志复现，单元 `1 failed → 2 passed`，新镜像不再出现 Logging error/Traceback。
 - 发布候选 configuration SHA `ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693`；冻结 test SHA 未变且从未执行，无 receipt。
-- 最新门禁：Task18定向48、observability/部署3、失败可靠性集9；完整后端`451 passed, 4 skipped`；Ruff/Mypy117；frontend unit19、Playwright8、typecheck/build；真实Provider E2E3；Alembic0023、PG/Redis healthy。
+- 最新门禁：Task18定向35、失败可靠性集9；全新PG完整后端`467 passed, 4 skipped in 1373.19s`；Ruff/Mypy117；frontend unit19、Playwright8、typecheck/build；显式IPv4 Redis下真实Provider E2E连续`3 passed in 258.09s`；Alembic0023、PG/Redis healthy。
 - 督导裁决使用隔离 project `opspilot_task18_rc_20260902_01`。两次seed计数/身份均为`1|0|0|0|同一user_id`；首次真实调用发现`max_access_level=3`无法恢复Principal，新增Red后改用`AccessLevel.CONFIDENTIAL`。
-- 最终dev-only smoke通过公开API、真实PG/Redis/BGE/DeepSeek退出0；冻结SHA与manifest前后不变，RC/主库test receipt均为0。唯一RC容器、network、volumes有界清理后均剩余0，主拓扑healthy、正式矩阵仍`COMPLETED:60`。
-- Task18步骤1–5已完成，等待冻结test go/no-go；不得开始步骤6/7、冻结test或v1.0 tag。
+- 最终dev-only smoke通过公开API、真实PG/Redis/BGE/DeepSeek再次退出0；冻结SHA保持`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`且manifest仍为false，RC/主库test receipt均为0；隔离RC资源已清理，主拓扑healthy、正式矩阵仍`COMPLETED:60`。
+- 首轮NO-GO修复已覆盖运行中deadline和grounded generation模型计数、detached Agent任务监督、格式化日志与Trace异常脱敏、ARQ后装handler过滤、文档卷10001:10001/0750、seed身份兼容校验及独立Redis heartbeat健康检查。
+- 隔离RC公开上传由非root API写卷、非root Worker读取并经真实BGE到READY；重启后文件与Chunk保持。兼容seed重复不改密码，同名不兼容账号退出非0且不自修复。
+- Task18步骤1–5等待再次复审；不得开始步骤6/7、冻结test、正式receipt或v1.0 tag。
 
 ## 需要维护的文档
 

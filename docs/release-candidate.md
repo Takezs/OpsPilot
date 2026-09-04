@@ -13,6 +13,16 @@ Canonical JSON 与 SHA 见 [`evaluation/release-candidate.json`](../evaluation/r
 - smoke 前后 test SHA 均为 `e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，manifest 标志均为 false，RC 与主库 receipt 均为 0。
 - 验证结束后仅删除该 project 的容器、network、volumes；三类资源剩余数均为 0，主拓扑保持 healthy。
 
+## 首轮复审加固（2026-09-03）
+
+- Agent deadline覆盖decision、grounded generation、retrieval/rerank、READ_ONLY与SIDE_EFFECT durable边界；不响应取消任务受监督并有界drain。grounded generation计入模型调用预算。
+- 日志先安全格式化再按credential key脱敏；ARQ startup补装最终handler filter；Trace只记录异常类型与hash/length摘要。
+- 文档卷mountpoint为`10001:10001`、`0750`。隔离project `opspilot_task18_rc_20260903_02`的公开上传由非root API写入、Worker读取并经真实BGE到`READY`；重启API/Worker后文件和Chunk保持。
+- Worker/Publisher各自通过Redis TTL heartbeat健康检查；Redis不可用时检查不再为healthy，恢复后均回到healthy。
+- seed要求active ADMIN、显式`["*"]`知识范围和CONFIDENTIAL；冲突身份非零退出且不修改，兼容身份重复执行不改密码。
+- 全新PG最终完整后端门禁为`467 passed, 4 skipped in 1373.19s`；真实DeepSeek+BGE全链在显式IPv4 Redis下连续`3 passed in 258.09s`，dev-only smoke再次退出0。冻结test SHA、manifest false和主库/RC零receipt均再次核对；隔离RC容器、network与volumes验证后已删除。
+- 本节仍只记录冻结test前验证；没有创建或启动正式test execution。
+
 ## 备份与回滚
 
 1. 启动冻结 test 前使用 `pg_dump --format=custom` 备份 PostgreSQL，并记录数据库、应用镜像 digest 和 Alembic head。

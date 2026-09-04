@@ -293,16 +293,20 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 督导最终批准提交`def4c63`（主实现）、`8e6d406`（可复现审计加固）、`2aff943`（durable input/fencing闭环）；Bugbot对最终修复无finding。正式矩阵Run `0108b7b2-991d-49d3-9e6e-d2ff50ce5c38`可靠性60/60、任务成功59/60；Alembic `0023_evaluation_dataset_identity (head)`。
 - 状态：Task17已通过督导复审。冻结 test 从未执行；下一项是Task18。
 
-## 任务 18（冻结 test 前发布候选，等待督导复审）
+## 任务 18（冻结 test 前发布候选，等待再次复审）
 
 - 完成统一日志/Trace 脱敏与 fail-safe OpenTelemetry stage；Agent 增加模型调用、工具调用、输入 Token 与总时长的有界预算。
 - 完成 Web/API/Worker/Publisher/Order/Payment/Email/PostgreSQL/Redis 的非 root、只读文件系统与健康检查拓扑；仅 API/Worker 获得文档卷，PG/Redis 仅绑定 `127.0.0.1` 供真实集成门禁。
 - 发布候选配置 SHA 为 `ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693`；冻结 test SHA 保持 `e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，未创建 test receipt、未执行 test。
 - Red→Green：部署契约最初缺文件/拓扑；隐私与预算最初缺模块；生产日志复现 Uvicorn AccessFormatter 参数被清空（`1 failed`），修复为保留参数形状的逐值脱敏（`2 passed`）。
-- 最新门禁：独立 PG 0001→0023 全链；失败时间敏感集 `9 passed`；完整后端 `451 passed, 4 skipped in 93.67s`；Ruff check 全范围、Mypy117；前端 unit19、Playwright8、typecheck/build；真实 Provider E2E 3 passed；全拓扑 healthy。
+- 最新门禁：全新独立 PG 0001→0023 全链；失败时间敏感集 `9 passed`；完整后端 `467 passed, 4 skipped in 1373.19s`；Ruff check 全范围、Mypy117；前端 unit19、Playwright8、typecheck/build；显式 IPv4 Redis 下真实 Provider 全链连续 `3 passed in 258.09s`；全拓扑 healthy。
 - 督导批准使用唯一隔离 RC project `opspilot_task18_rc_20260902_01`。空库先迁移到0023；两次seed均为`users=1, KB=0, documents=0, test receipts=0`且user_id完全相同。首次真实 smoke 暴露seed写入无效access level 3，Red为deployment contract collection error，修复为`AccessLevel.CONFIDENTIAL`后3 passed。
-- dev-only smoke经公开API、真实PG/Redis/BGE/DeepSeek退出0；执行前后冻结SHA不变、manifest `final_test_executed=false`、RC/主库test receipt均为0。RC容器/network/volumes清理后均剩余0，现有主拓扑与正式矩阵`COMPLETED:60`不变。
-- 状态：Task18步骤1–5完成，等待冻结test go/no-go。步骤6/7、冻结test和v1.0 tag均未开始。
+- dev-only smoke经公开API、真实PG/Redis/BGE/DeepSeek再次退出0；冻结SHA仍为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`、manifest `final_test_executed=false`、RC/主库test receipt均为0，正式矩阵仍`COMPLETED:60`；本轮隔离RC容器、network与volumes随后均已删除。
+- 首轮NO-GO修复：所有Agent外部await受单调deadline约束，grounded generation计入模型调用预算；不响应取消任务由受控集合持有、异常回收且shutdown有界。SIDE_EFFECT仅创建durable Operation，实际Provider继续由Task10/11的`provider_not_called`、OUTCOME_UNKNOWN与reconciliation语义保护。
+- 日志在格式化后按credential key脱敏，Uvicorn access参数结构保持；ARQ运行时handler在startup再次安装过滤器。OpenTelemetry不再接收原始业务异常/traceback，只记录异常类型及hash/length摘要。
+- Docker文档mountpoint固定`10001:10001`、`0750`，仅API/Worker挂载。隔离RC真实公开上传后Worker以UID10001读取原文件、真实BGE索引到READY/1 chunk；API/Worker重启后文件与Chunk保持。Worker/Publisher使用不同Redis heartbeat key，Redis不可用时不再健康，恢复后均healthy。
+- release seed新ADMIN固定显式`["*"]`知识范围与CONFIDENTIAL；同名inactive/非ADMIN/错误scope/access均fail-closed且不修改账号，兼容账号重复seed不改身份或密码。
+- 状态：Task18步骤1–5复审修复完成，等待再次复审。步骤6/7、冻结test、正式receipt和v1.0 tag均未开始。
 
 ## 后续开发计划
 

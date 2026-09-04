@@ -67,8 +67,8 @@ services:
       order: {condition: service_healthy}
       payment: {condition: service_healthy}
       email: {condition: service_healthy}
-    healthcheck: &arq-health
-      test: [CMD, python, -c, "assert b'arq' in open('/proc/1/cmdline','rb').read()"]
+    healthcheck:
+      test: [CMD, arq, --check, opspilot.worker.WorkerSettings]
       interval: 10s
       timeout: 3s
       retries: 10
@@ -77,7 +77,11 @@ services:
     volumes: []
     command: [arq, opspilot.outbox_publisher.OutboxPublisherSettings]
     depends_on: {api: {condition: service_healthy}}
-    healthcheck: *arq-health
+    healthcheck:
+      test: [CMD, arq, --check, opspilot.outbox_publisher.OutboxPublisherSettings]
+      interval: 10s
+      timeout: 3s
+      retries: 10
   order:
     <<: *backend
     environment: {}

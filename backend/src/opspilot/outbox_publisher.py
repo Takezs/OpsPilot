@@ -33,6 +33,12 @@ from opspilot.runs.outbox import RedisRunEventNotifier, publish_pending_events
 install_safe_logging()
 
 
+async def startup_publisher(ctx: dict[str, Any]) -> None:
+    """Attach redaction after ARQ has installed its runtime log handlers."""
+    del ctx
+    install_safe_logging()
+
+
 async def publish_document_outbox(ctx: dict[str, Any]) -> int:
     return await publish_pending_document_jobs(ArqDocumentQueue(ctx["redis"]))
 
@@ -79,6 +85,9 @@ async def recover_evaluation_claims(ctx: dict[str, Any]) -> int:
 
 class OutboxPublisherSettings:
     queue_name = PUBLISHER_QUEUE
+    health_check_key = "opspilot:health:publisher"
+    health_check_interval = 10
+    on_startup = startup_publisher
     redis_settings = RedisSettings.from_dsn(Settings().redis_url)
     cron_jobs = [
         cron(
