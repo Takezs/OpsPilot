@@ -225,7 +225,9 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 首轮NO-GO修复已覆盖运行中deadline和grounded generation模型计数、detached Agent任务监督、格式化日志与Trace异常脱敏、ARQ后装handler过滤、文档卷10001:10001/0750、seed身份兼容校验及独立Redis heartbeat健康检查。
 - 隔离RC公开上传由非root API写卷、非root Worker读取并经真实BGE到READY；重启后文件与Chunk保持。兼容seed重复不改密码，同名不兼容账号退出非0且不自修复。
 - 第二轮P1修复：Uvicorn access查询凭据值在不破坏formatter tuple下脱敏；位置/映射args及Python/JSON quoted nested mapping统一先结构化脱敏再限长渲染。Agent累计input-token账本对每次decision和grounded生成重试收费，grounded收费为原始query+BuiltContext token+control overhead；恰好边界允许、超1/超大context均在Provider调用前拒绝，普通answer不进入generation。
-- Red日志5项+grounded预算2项；Green扩展定向163、全新PG完整`476 passed, 4 skipped in 93.91s`，Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过。当前live复验在业务逻辑前因Xinference `bge-m3`离线404阻塞，未用Fake冒充；BGE恢复后需补三轮live及隔离RC。Task18步骤1–5等待再次go/no-go复审；不得开始步骤6/7、冻结test、正式receipt或v1.0 tag。
+- Red日志5项+grounded预算2项；Green扩展定向163、全新PG完整`476 passed, 4 skipped in 93.91s`，Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过。环境恢复后，当前代码真实DeepSeek+BGE全链以独占Worker和IPv4 Redis连续`3 passed in 171.61s`，未用Fake。
+- 隔离RC `opspilot_task18_rc_20260905_01`全拓扑healthy并在0023 head：双seed幂等；UID10001 API公开上传、UID10001 Worker真实BGE索引至`READY|1`，API/Worker重启后文件和DB事实保持；dev-only smoke经公开API/真实PG/Redis/Provider通过。access query、nested api_key/password canary均未进入容器日志；预算/脱敏聚焦测试`28 passed`。
+- 冻结test SHA保持`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`、manifest false，主库/RC receipt均0，正式矩阵Run `0108b7b2-991d-49d3-9e6e-d2ff50ce5c38`仍`COMPLETED|60`。隔离RC资源已精确删除，主Worker/Publisher已恢复。Task18步骤1–5等待再次go/no-go复审；不得开始步骤6/7、冻结test、正式receipt或v1.0 tag。
 
 ## 需要维护的文档
 

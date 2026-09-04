@@ -21,7 +21,9 @@ Canonical JSON 与 SHA 见 [`evaluation/release-candidate.json`](../evaluation/r
 - Worker/Publisher各自通过Redis TTL heartbeat健康检查；Redis不可用时检查不再为healthy，恢复后均回到healthy。
 - seed要求active ADMIN、显式`["*"]`知识范围和CONFIDENTIAL；冲突身份非零退出且不修改，兼容身份重复执行不改密码。
 - 全新PG最终完整后端门禁为`467 passed, 4 skipped in 1373.19s`；真实DeepSeek+BGE全链在显式IPv4 Redis下连续`3 passed in 258.09s`，dev-only smoke再次退出0。冻结test SHA、manifest false和主库/RC零receipt均再次核对；隔离RC容器、network与volumes验证后已删除。
-- 第二轮安全加固增加access query与quoted/nested mapping日志脱敏，以及grounded context/retry累计input-token预算。Red为7项真实失败，Green扩展定向163、全新PG完整`476 passed, 4 skipped in 93.91s`；本次live复验因Xinference `bge-m3`离线404在应用逻辑前阻塞，环境恢复前不以Fake替代。
+- 第二轮安全加固增加access query与quoted/nested mapping日志脱敏，以及grounded context/retry累计input-token预算。Red为7项真实失败，Green扩展定向163、全新PG完整`476 passed, 4 skipped in 93.91s`。
+- 环境恢复后的当前代码复验：真实DeepSeek+BGE全链以独占Worker和IPv4 Redis连续`3 passed in 171.61s`。隔离project `opspilot_task18_rc_20260905_01`全拓扑healthy、0023 head；双seed幂等，UID10001 API公开上传后UID10001 Worker经真实BGE索引到`READY|1`，重启后文件与DB事实保持，dev-only smoke通过。日志canary与预算/脱敏聚焦`28 passed`；RC清理后主Worker/Publisher恢复。
+- 冻结test SHA保持`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，manifest false，主库与RC receipt均0，正式矩阵Run保持`COMPLETED|60`。
 - 本节仍只记录冻结test前验证；没有创建或启动正式test execution。
 
 ## 备份与回滚
