@@ -1,6 +1,5 @@
 """Safe logging and trace attributes built on the Run Journal sanitizer."""
 
-import ast
 import hashlib
 import logging
 import re
@@ -17,38 +16,84 @@ _QUERY_CREDENTIAL_KEYS = frozenset(
     {"token", "access_token", "api_key", "key", "secret", "password", "authorization"}
 )
 _MAX_KEY_LENGTH = 256
-_MAX_PERCENT_DECODE_DEPTH = 3
+_MAX_KEY_NORMALIZATION_ROUNDS = 4
 _PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
 _INVALID_PERCENT = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_RESIDUAL_BACKSLASH_ESCAPE = re.compile(r"\\(?:[uUxX]|[\\\"'])")
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 
-def _decode_quoted_key(value: str, quote: str) -> str | None:
-    if len(value) > _MAX_KEY_LENGTH:
-        return None
-    try:
-        decoded = ast.literal_eval(f"{quote}{value}{quote}")
-    except (SyntaxError, ValueError):
-        return None
-    return decoded if isinstance(decoded, str) else None
+def _decode_backslash_escapes(value: str) -> str | None:
+    """Decode the small escape grammar accepted in logged mapping keys."""
+    output: list[str] = []
+    index = 0
+    simple = {
+        "\\": "\\",
+        '"': '"',
+        "'": "'",
+        "/": "/",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+    }
+    while index < len(value):
+        char = value[index]
+        if char != "\\":
+            output.append(char)
+            index += 1
+            continue
+        if index + 1 >= len(value):
+            return None
+        escape = value[index + 1]
+        if escape in simple:
+            output.append(simple[escape])
+            index += 2
+        elif escape in {"u", "U", "x", "X"}:
+            digits = 4 if escape.casefold() == "u" else 2
+            encoded = value[index + 2 : index + 2 + digits]
+            if len(encoded) != digits or any(item not in _HEX_DIGITS for item in encoded):
+                return None
+            output.append(chr(int(encoded, 16)))
+            index += 2 + digits
+        else:
+            return None
+        if len(output) > _MAX_KEY_LENGTH:
+            return None
+    decoded = "".join(output)
+    return decoded if len(decoded) <= _MAX_KEY_LENGTH else None
 
 
 def _is_credential_key(value: str, *, quote: str | None = None) -> bool:
-    if quote is not None:
-        decoded_quoted = _decode_quoted_key(value, quote)
-        if decoded_quoted is None:
+    del quote  # Quoted and request-target keys share one normalization contract.
+    if len(value) > _MAX_KEY_LENGTH:
+        return True
+    sensitive = _QUERY_CREDENTIAL_KEYS | {"cer"}
+    for _ in range(_MAX_KEY_NORMALIZATION_ROUNDS):
+        if len(value) > _MAX_KEY_LENGTH or _INVALID_PERCENT.search(value):
             return True
-        value = decoded_quoted
-    if len(value) > _MAX_KEY_LENGTH or _INVALID_PERCENT.search(value):
-        return True
-    for _ in range(_MAX_PERCENT_DECODE_DEPTH):
-        decoded = unquote_plus(value)
-        if decoded == value:
-            break
-        value = decoded
-    if _PERCENT_ESCAPE.search(value) or _INVALID_PERCENT.search(value):
-        return True
-    normalized = unicodedata.normalize("NFKC", value).casefold().replace("-", "_")
-    return normalized in _QUERY_CREDENTIAL_KEYS | {"cer"}
+        percent_decoded = unquote_plus(value)
+        decoded = _decode_backslash_escapes(percent_decoded)
+        if decoded is None:
+            return True
+        normalized = unicodedata.normalize("NFKC", decoded).casefold().replace("-", "_")
+        if len(normalized) > _MAX_KEY_LENGTH:
+            return True
+        if normalized in sensitive:
+            return True
+        if normalized == value:
+            return bool(
+                _PERCENT_ESCAPE.search(normalized)
+                or _INVALID_PERCENT.search(normalized)
+                or _RESIDUAL_BACKSLASH_ESCAPE.search(normalized)
+            )
+        value = normalized
+    return bool(
+        _PERCENT_ESCAPE.search(value)
+        or _INVALID_PERCENT.search(value)
+        or _RESIDUAL_BACKSLASH_ESCAPE.search(value)
+    )
 
 
 def _quoted_end(value: str, start: int, quote: str) -> int | None:

@@ -231,6 +231,8 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - 第三轮P1已关闭：access target在保留formatter tuple后执行完整escape-aware credential scanner，覆盖分号/混合分隔符/percent/fragment/畸形值；quoted单/双引号、escape、CR/LF、Unicode及未终止长值均fail-closed且限长。Generation的system/user消息由单一`GenerationPrompt`渲染，同一不可变对象先收费再发送，每次retry按当次真实快照计费。
 - Red `10 failed, 30 passed`；Green聚焦90，独立PG完整后端`488 passed, 4 skipped in 69.79s`，Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过；真实Provider三轮`3 passed in 133.41s`。当前镜像隔离RC完成0001→0023、双seed、公开上传真实BGE到`READY|5`、非root卷与重启持久化、dev smoke及分号canary验证，随后已精确清理。冻结SHA/manifest false/主库与RC receipt 0/正式矩阵`COMPLETED|60`均不变；仍等待go/no-go，禁止步骤6/7。
 - 第四轮P1：key规范化增加最多3轮percent decode与quoted Python/JSON escape解析，再NFKC判定；无效/超深/超长歧义key对应值fail-closed，安全`token_count`不误伤。Decision生产路径新增不可变快照，system、完整工具schema/description、roles、untrusted wrapper和state均计费，同一对象交DeepSeek发送；exact boundary允许、超1时provider=0。
+- 第五轮P1修复：混合percent/backslash Unicode escape统一进入最多4轮固定点规范化；每轮percent→严格escape→NFKC/casefold，256字符输入/中间边界，非法/残留/超深fail-closed。精确Red `6 failed, 35 passed`；Green redaction41、Task18聚焦104、独立PG完整`506 passed, 4 skipped`，Ruff/Mypy117与frontend 19/8/typecheck/build通过。
+- 本轮live复验真实结果为`3 failed`：容器Worker配置重载曾触发Provider认证失败；独占本地Worker恢复真实检索/生成后，未映射的demo HTTP端口使退款/核对超时，且两轮模型未创建Operation。没有调整prompt或伪造事实。冻结SHA/manifest false/receipt0与正式矩阵`COMPLETED|60`保持。Task18步骤1–5等待督导再次go/no-go，不得开始步骤6/7。
 - Red `6 failed, 40 passed`；Green聚焦86、独立PG完整`496 passed, 4 skipped in 71.99s`、Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build、真实Provider`3 passed in 287.23s`。隔离RC完成真实BGE `READY|5`、重启、double-percent canary与dev smoke；真实Provider首个smoke因`answer=null`安全失败，独立新Run重试通过并如实保留失败证据。冻结事实与receipt 0未变；RC已清理、主拓扑healthy。
 
 ## 需要维护的文档

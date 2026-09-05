@@ -178,6 +178,69 @@ def test_malicious_percent_encoded_key_is_bounded_and_fail_closed() -> None:
 
 
 @pytest.mark.parametrize(
+    "message",
+    [
+        "payload={'api%255Cu005fkey':'MIXSECRET'}",
+        "GET /x?api%255Cu005fkey=MIXSECRET HTTP/1.1",
+    ],
+)
+def test_mixed_percent_and_unicode_escape_credential_key_is_redacted(message: str) -> None:
+    record = logging.LogRecord("opspilot.safe", logging.INFO, __file__, 1, message, (), None)
+    assert SafeLogFilter().filter(record)
+    assert "MIXSECRET" not in record.getMessage()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        r"payload={'api\u0025255fkey':'UNICODEPERCENTSECRET'}",
+        r"payload={'api%25255Cu005fkey':'ALTERNATINGSECRET'}",
+        r"payload={'api%255cu005Fkey':'PERCENTCASESECRET'}",
+        r"payload={'api\u00ZZkey':'INVALIDESCAPESECRET'}",
+        r"payload={'api%25255Cu005fkey':'THREELAYERSECRET'}",
+        r"payload={'api%252525255Cu005fkey':'OVERDEPTHSECRET'}",
+    ],
+)
+def test_ambiguous_or_layered_credential_keys_fail_closed(message: str) -> None:
+    record = logging.LogRecord("opspilot.safe", logging.INFO, __file__, 1, message, (), None)
+    assert SafeLogFilter().filter(record)
+    assert "SECRET" not in record.getMessage()
+
+
+def test_mixed_escape_uvicorn_access_keeps_formatter_and_safe_metadata() -> None:
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        (
+            ("127.0.0.1", 43210),
+            "GET",
+            r"/x?api%255Cu005fkey=MIXSECRET&token_count=17",
+            "1.1",
+            200,
+        ),
+        None,
+    )
+    assert SafeLogFilter().filter(record)
+    rendered = AccessFormatter(
+        "%(levelprefix)s %(client_addr)s - %(request_line)s %(status_code)s"
+    ).format(record)
+    assert "MIXSECRET" not in rendered
+    assert "token_count=17" in rendered
+    assert "GET /x?" in rendered
+
+
+def test_high_density_mixed_encoding_is_bounded() -> None:
+    message = "GET /x?" + (r"%255Cu005f" * 10_000) + "=DENSESECRET HTTP/1.1"
+    record = logging.LogRecord("opspilot.safe", logging.INFO, __file__, 1, message, (), None)
+    assert SafeLogFilter().filter(record)
+    assert "DENSESECRET" not in record.getMessage()
+    assert len(record.getMessage()) <= 1000
+
+
+@pytest.mark.parametrize(
     ("message", "args"),
     [
         ("payload=%s", ({"api_key": "alpha", "nested": [{"password": "bravo"}]},)),

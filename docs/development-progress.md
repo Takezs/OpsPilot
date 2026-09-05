@@ -315,7 +315,10 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 隔离RC `opspilot_task18_rc_20260905_02`在当前镜像上完成0001→0023、全拓扑healthy、双seed幂等、UID10001 API/Worker文档卷、公开上传真实BGE索引`READY|5`、重启持久化及dev smoke；分号access canary未进入日志且无logging error。RC随后精确down -v，主拓扑全部恢复healthy。
 - 第四轮P1修复：credential key最多3轮严格percent decode，quoted mapping key按Python/JSON escape解析后NFKC；无效/超深/超长歧义key fail-closed，`token_count`保持安全统计字段。Decision新增不可变Prompt快照，包含完整system/tool schema/description、角色与untrusted-output wrapper；Runner先按该快照收费，DeepSeek再发送同一对象，预算失败时model/provider调用均不增加。
 - Red `6 failed, 40 passed`；Green聚焦`86 passed`，独立PG完整后端`496 passed, 4 skipped in 71.99s`，Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过；真实Provider连续`3 passed in 287.23s`。当前镜像隔离RC完成0023、双seed、公开上传真实BGE到`READY|5`、重启持久化、double-percent canary与dev smoke；首次smoke遇到真实Generation返回`answer=null`而fail-closed，独立新Run重试通过，未伪装首轮结果。
-- 状态：Task18步骤1–5第四轮复审修复与复验完成，等待再次go/no-go复审。步骤6/7、冻结test、正式receipt和v1.0 tag均未开始。
+- 第五轮P1修复：key规范化改为单一最多4轮固定点，每轮依次处理percent、严格backslash/Unicode/Python escape、NFKC/casefold；输入/中间输出均限制256字符，非法、残留或超深编码对应值fail-closed。精确Bugbot Red为`6 failed, 35 passed`，Green redaction `41 passed`、Task18聚焦`104 passed`、独立PG完整`506 passed, 4 skipped in 102.68s`；Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过。
+- 本轮live复验偏离：容器Worker重新加载配置时产生DeepSeek authentication错误；改用读取受保护dotenv的独占本地Worker后，真实检索/生成与引用可运行，但宿主Worker无法访问未映射的Payment/Order容器，首轮退款进入MANUAL_REVIEW，另两轮真实模型未创建Operation，结果`3 failed`。未改prompt、未伪造引用/Operation、未声称Green，等待督导裁决。
+- 冻结test SHA仍为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`、manifest false、主库receipt 0，正式矩阵仍`COMPLETED|60`。
+- 状态：Task18步骤1–5第五轮安全修复完成，等待再次go/no-go复审。步骤6/7、冻结test、正式receipt和v1.0 tag均未开始。
 
 ## 后续开发计划
 
