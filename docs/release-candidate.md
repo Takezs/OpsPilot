@@ -30,6 +30,7 @@ Canonical JSON 与 SHA 见 [`evaluation/release-candidate.json`](../evaluation/r
 - 当前镜像隔离RC `opspilot_task18_rc_20260905_03`完成0023、双seed、非root公开上传真实BGE到`READY|5`、重启持久化和double-percent canary。dev smoke首轮因真实Provider返回`answer=null`按契约失败，独立新Run重试通过；两次结果均保留，不将失败伪报为Green。RC receipt为0且资源已删除。
 - 第五轮P1把percent与backslash/Unicode escape合并为最多4轮的固定点key规范化，非法、残留、超深及超长输入均fail-closed。精确Red `6 failed, 35 passed`，Green redaction41、Task18聚焦104、独立PG完整`506 passed, 4 skipped`，Ruff/Mypy与frontend门禁通过。
 - 本轮live复验未通过：容器配置重载出现Provider认证失败；独占本地Worker随后证明真实检索/生成可用，但无法访问未映射的demo Payment/Order端口，且两轮真实决策未创建Operation，最终`3 failed`。未修改prompt、未伪造引用或业务状态，等待督导裁决。
+- 第六轮P1严格实现Python `\\uXXXX`/`\\UXXXXXXXX`/`\\xXX`并拒绝非法scalar；Red `10 failed, 47 passed`，Green redaction57、聚焦120、独立PG完整`522 passed, 4 skipped`。Compose live共6 attempts/0完整链：3条loopback连接失败，修正为`host.docker.internal`后3条仍未形成完整退款链；全部失败保留，未重写prompt或删除样本。
 - 本节仍只记录冻结test前验证；没有创建或启动正式test execution。
 
 ## 备份与回滚

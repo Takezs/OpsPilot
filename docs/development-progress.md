@@ -318,6 +318,8 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 第五轮P1修复：key规范化改为单一最多4轮固定点，每轮依次处理percent、严格backslash/Unicode/Python escape、NFKC/casefold；输入/中间输出均限制256字符，非法、残留或超深编码对应值fail-closed。精确Bugbot Red为`6 failed, 35 passed`，Green redaction `41 passed`、Task18聚焦`104 passed`、独立PG完整`506 passed, 4 skipped in 102.68s`；Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过。
 - 本轮live复验偏离：容器Worker重新加载配置时产生DeepSeek authentication错误；改用读取受保护dotenv的独占本地Worker后，真实检索/生成与引用可运行，但宿主Worker无法访问未映射的Payment/Order容器，首轮退款进入MANUAL_REVIEW，另两轮真实模型未创建Operation，结果`3 failed`。未改prompt、未伪造引用/Operation、未声称Green，等待督导裁决。
 - 冻结test SHA仍为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`、manifest false、主库receipt 0，正式矩阵仍`COMPLETED|60`。
+- 第六轮P1修复：严格区分Python `\\u` 4位、`\\U` 8位和`\\x` 2位；拒绝位数不足、非hex、超过U+10FFFF与surrogate scalar，request-target同样支持反斜杠key。percent与大写`\\U`交替编码在fixed-point中保持大小写语义。Bugbot Red `10 failed, 47 passed`，Green redaction57、Task18聚焦120、独立PG完整`522 passed, 4 skipped in 103.09s`；Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过。
+- 第六轮Compose live共6 attempts/0完整链：首批3条因容器内DeepSeek/BGE loopback不可达，均停在history seq2；使用`host.docker.internal`修正两者后再跑3条，Provider/引用路径恢复，但真实模型/流程仍未形成三个完整退款链（失败原样保留，未改prompt或重采样删除）。
 - 状态：Task18步骤1–5第五轮安全修复完成，等待再次go/no-go复审。步骤6/7、冻结test、正式receipt和v1.0 tag均未开始。
 
 ## 后续开发计划

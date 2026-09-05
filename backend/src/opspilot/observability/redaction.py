@@ -21,6 +21,8 @@ _PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
 _INVALID_PERCENT = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _RESIDUAL_BACKSLASH_ESCAPE = re.compile(r"\\(?:[uUxX]|[\\\"'])")
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_ENCODED_UPPER_UNICODE_ESCAPE = re.compile(r"(?i)(%5c)u(?=[0-9a-f]{8})")
+_UPPER_UNICODE_SENTINEL = "\ue000"
 
 
 def _decode_backslash_escapes(value: str) -> str | None:
@@ -51,11 +53,14 @@ def _decode_backslash_escapes(value: str) -> str | None:
             output.append(simple[escape])
             index += 2
         elif escape in {"u", "U", "x", "X"}:
-            digits = 4 if escape.casefold() == "u" else 2
+            digits = {"u": 4, "U": 8, "x": 2, "X": 2}[escape]
             encoded = value[index + 2 : index + 2 + digits]
             if len(encoded) != digits or any(item not in _HEX_DIGITS for item in encoded):
                 return None
-            output.append(chr(int(encoded, 16)))
+            codepoint = int(encoded, 16)
+            if codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
+                return None
+            output.append(chr(codepoint))
             index += 2 + digits
         else:
             return None
@@ -77,7 +82,13 @@ def _is_credential_key(value: str, *, quote: str | None = None) -> bool:
         decoded = _decode_backslash_escapes(percent_decoded)
         if decoded is None:
             return True
-        normalized = unicodedata.normalize("NFKC", decoded).casefold().replace("-", "_")
+        protected = _ENCODED_UPPER_UNICODE_ESCAPE.sub(rf"\1{_UPPER_UNICODE_SENTINEL}", decoded)
+        normalized = (
+            unicodedata.normalize("NFKC", protected)
+            .casefold()
+            .replace(_UPPER_UNICODE_SENTINEL, "U")
+            .replace("-", "_")
+        )
         if len(normalized) > _MAX_KEY_LENGTH:
             return True
         if normalized in sensitive:
@@ -134,7 +145,9 @@ def _redact_credential_assignments(value: str) -> str:
         else:
             quote = None
             after_key = index
-            while after_key < length and (value[after_key].isalnum() or value[after_key] in "_-%"):
+            while after_key < length and (
+                value[after_key].isalnum() or value[after_key] in "_-%\\"
+            ):
                 after_key += 1
             if after_key == index:
                 index += 1

@@ -60,7 +60,7 @@
 - M4 / 任务 15 工作台、审批、Run时间线与核心退款E2E已通过督导复审（2026-08-30）；最终引用加固批准提交 `d910b8e`、`39c75b8`，督导独立定向54 passed，Ruff/Mypy/Alembic0020及PostgreSQL/Redis门禁通过。下一项是任务16。
 - M5 / 任务 16 v1.0评测数据集与确定性指标已通过督导复审（2026-08-30），批准提交`bbeea2f`、`34fcba9`、`c43332d`；冻结test SHA为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`且尚未执行。下一项是任务17。
 - M5 / 任务 17 异步实验 Runner、故障矩阵与评测看板已通过督导复审（2026-09-02），批准提交 `def4c63`、`8e6d406`、`2aff943`。正式矩阵 Run `0108b7b2-991d-49d3-9e6e-d2ff50ce5c38` 可靠恢复 60/60、任务成功 59/60；Alembic 0023 head，冻结 test 未执行。下一项是任务18。
-- M5 / 任务 18 步骤1–5第五轮P1修复已完成，等待督导再次go/no-go复审；混合percent/backslash Unicode escape采用有界固定点规范化并fail-closed。确定性门禁通过；本轮live复验因运行拓扑/真实模型非确定性未通过，已如实记录。冻结test未执行，步骤6/7、v1.0 tag均未开始。
+- M5 / 任务 18 步骤1–5第六轮P1修复已完成，等待督导再次go/no-go复审；Python `\\UXXXXXXXX`、`\\uXXXX`、`\\xXX`严格解析并纳入有界固定点，非法scalar fail-closed。确定性门禁通过；Compose live共6 attempts/0完整链，连接配置失败与真实模型未创建Operation均如实保留。冻结test未执行，步骤6/7、v1.0 tag均未开始。
 - `attempt=0` outbox lifecycle 是已记录的非阻塞技术债，不要顺带重构。
 
 ## 常用验证命令

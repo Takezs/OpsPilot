@@ -241,6 +241,52 @@ def test_high_density_mixed_encoding_is_bounded() -> None:
 
 
 @pytest.mark.parametrize(
+    "message",
+    [
+        r"payload={'api\U0000005fkey':'LEAKSECRET'}",
+        r"GET /x?api\U0000005fkey=LEAKSECRET&token_count=19 HTTP/1.1",
+        r"payload={'api%255CU0000005fkey':'PERCENTUPPERSECRET'}",
+        r"payload={'api\U00000025%255fkey':'UPPERPERCENTSECRET'}",
+        r"payload={'api%25255CU0000005fkey':'ALTERNATINGUPPERSECRET'}",
+        r"payload={'api\u005fkey':'LOWERUSECRET'}",
+    ],
+)
+def test_python_upper_unicode_and_mixed_escape_keys_are_redacted(message: str) -> None:
+    record = logging.LogRecord("opspilot.safe", logging.INFO, __file__, 1, message, (), None)
+    assert SafeLogFilter().filter(record)
+    assert "SECRET" not in record.getMessage()
+
+
+@pytest.mark.parametrize(
+    "escape",
+    [
+        r"\U0000005",
+        r"\U0000005Z",
+        r"\U00110000",
+        r"\U0000D800",
+        r"\uDFFF",
+        r"\x5",
+        r"\xGG",
+        "\\",
+    ],
+)
+def test_invalid_python_escape_scalar_fails_closed(escape: str) -> None:
+    message = f"payload={{'api{escape}key':'INVALIDSCALARSECRET'}}"
+    record = logging.LogRecord("opspilot.safe", logging.INFO, __file__, 1, message, (), None)
+    assert SafeLogFilter().filter(record)
+    assert "INVALIDSCALARSECRET" not in record.getMessage()
+
+
+@pytest.mark.parametrize("escape", [r"\U00000000", r"\U0010FFFF"])
+def test_valid_unicode_boundary_scalar_does_not_break_bounded_logging(escape: str) -> None:
+    message = f"payload={{'metadata{escape}':'safe', 'token_count':23}}"
+    record = logging.LogRecord("opspilot.safe", logging.INFO, __file__, 1, message, (), None)
+    assert SafeLogFilter().filter(record)
+    assert "token_count" in record.getMessage()
+    assert len(record.getMessage()) <= 1000
+
+
+@pytest.mark.parametrize(
     ("message", "args"),
     [
         ("payload=%s", ({"api_key": "alpha", "nested": [{"password": "bravo"}]},)),

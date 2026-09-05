@@ -695,7 +695,7 @@ git commit -m "feat: publish reproducible opspilot evaluations"
 
 ### 任务 18：可观测性、部署、文档与 v1.0 验收
 
-**状态：步骤1–5第五轮P1复审修复已完成，等待再次go/no-go复审。credential key混合percent/backslash Unicode escape改为有界固定点规范化并fail-closed；确定性门禁通过，本轮live复验因运行拓扑与真实模型非确定性失败并如实保留。冻结test未执行，步骤6/7、正式receipt与v1.0 tag未开始。**
+**状态：步骤1–5第六轮P1复审修复已完成，等待再次go/no-go复审。Python `\\UXXXXXXXX`、`\\uXXXX`、`\\xXX`严格解析并纳入有界固定点，非法scalar fail-closed；确定性门禁通过，Compose live 6 attempts/0完整链的连接配置与真实模型失败均保留。冻结test未执行，步骤6/7、正式receipt与v1.0 tag未开始。**
 
 **文件：**
 - 创建：`backend/src/opspilot/observability/tracing.py`、`redaction.py`
