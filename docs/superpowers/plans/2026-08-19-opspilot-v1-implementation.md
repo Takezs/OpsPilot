@@ -695,7 +695,7 @@ git commit -m "feat: publish reproducible opspilot evaluations"
 
 ### 任务 18：可观测性、部署、文档与 v1.0 验收
 
-**状态：步骤1–5第三轮P1复审修复与复验已完成，等待再次go/no-go复审。access分隔符及escape/multiline日志旁路已fail-closed，Generation按实际不可变消息快照逐attempt计费；真实Provider全链连续3/3通过。冻结test未执行，步骤6/7、正式receipt与v1.0 tag未开始。**
+**状态：步骤1–5第四轮P1复审修复与复验已完成，等待再次go/no-go复审。credential key重复percent/quoted escape规范化及Decision实际Prompt快照计费已加固；真实Provider全链连续3/3通过。冻结test未执行，步骤6/7、正式receipt与v1.0 tag未开始。**
 
 **文件：**
 - 创建：`backend/src/opspilot/observability/tracing.py`、`redaction.py`

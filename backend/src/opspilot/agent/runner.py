@@ -119,6 +119,23 @@ class AgentDecision:
 
 
 @dataclass(frozen=True)
+class DecisionPrompt:
+    """Immutable decision messages shared by budget accounting and transport."""
+
+    messages: tuple[ChatCompletionMessageParam, ...]
+    input_tokens: int
+
+
+def render_decision_prompt(state: AgentState, tools: tuple[ToolDefinition, ...]) -> DecisionPrompt:
+    messages = tuple(_render_api_messages(state, tools))
+    rendered = json.dumps(messages, ensure_ascii=False, separators=(",", ":"))
+    return DecisionPrompt(
+        messages=messages,
+        input_tokens=max(1, len(rendered.encode("utf-8")) // 4),
+    )
+
+
+@dataclass(frozen=True)
 class GroundedSearchResult:
     """Server-owned search result; only ``summary`` is exposed to the decider."""
 
@@ -310,7 +327,19 @@ class AgentRunner:
                     workflow_facts=tuple(workflow_facts),
                 )
             state.rounds += 1
-            decision_input_tokens = _estimated_tokens(state.messages)
+            tools = self._registry.all()
+            prepare_decision = getattr(self._decision_provider, "prepare_decision", None)
+            decide_prepared = getattr(self._decision_provider, "decide_prepared", None)
+            decision_prompt: DecisionPrompt | None = None
+            prepared_call: Callable[[DecisionPrompt], Awaitable[AgentDecision]] | None = None
+            if callable(prepare_decision) and callable(decide_prepared):
+                decision_prompt = cast(DecisionPrompt, prepare_decision(state, tools))
+                prepared_call = cast(
+                    Callable[[DecisionPrompt], Awaitable[AgentDecision]], decide_prepared
+                )
+                decision_input_tokens = decision_prompt.input_tokens
+            else:
+                decision_input_tokens = _estimated_tokens(state.messages)
             try:
                 reserve_model_call(decision_input_tokens)
             except AgentBudgetExceeded:
@@ -326,9 +355,12 @@ class AgentRunner:
                 {"decision": "agent_decision", "input_tokens": decision_input_tokens},
             ):
                 try:
-                    decision = await _await_before_deadline(
-                        self._decision_provider.decide(state, self._registry.all()), deadline
+                    decision_awaitable = (
+                        prepared_call(decision_prompt)
+                        if decision_prompt is not None and prepared_call is not None
+                        else self._decision_provider.decide(state, tools)
                     )
+                    decision = await _await_before_deadline(decision_awaitable, deadline)
                 except AgentBudgetExceeded:
                     return outcome(
                         rounds=state.rounds,
@@ -575,9 +607,17 @@ class DeepSeekAgentDecider:
         )
 
     async def decide(self, state: AgentState, tools: tuple[ToolDefinition, ...]) -> AgentDecision:
+        return await self.decide_prepared(self.prepare_decision(state, tools))
+
+    def prepare_decision(
+        self, state: AgentState, tools: tuple[ToolDefinition, ...]
+    ) -> DecisionPrompt:
+        return render_decision_prompt(state, tools)
+
+    async def decide_prepared(self, prompt: DecisionPrompt) -> AgentDecision:
         response = await self._client.chat.completions.create(
             model=self.model,
-            messages=_render_api_messages(state, tools),
+            messages=list(prompt.messages),
             response_format={"type": "json_object"},
         )
         content = response.choices[0].message.content

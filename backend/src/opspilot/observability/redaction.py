@@ -1,5 +1,6 @@
 """Safe logging and trace attributes built on the Run Journal sanitizer."""
 
+import ast
 import hashlib
 import logging
 import re
@@ -15,10 +16,39 @@ _QUERY_PARAMETER = re.compile(r"([?&])([^=&#]+)=([^&#]*)")
 _QUERY_CREDENTIAL_KEYS = frozenset(
     {"token", "access_token", "api_key", "key", "secret", "password", "authorization"}
 )
+_MAX_KEY_LENGTH = 256
+_MAX_PERCENT_DECODE_DEPTH = 3
+_PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
+_INVALID_PERCENT = re.compile(r"%(?![0-9A-Fa-f]{2})")
 
 
-def _normalized_credential_key(value: str) -> str:
-    return unicodedata.normalize("NFKC", unquote_plus(value)).casefold().replace("-", "_")
+def _decode_quoted_key(value: str, quote: str) -> str | None:
+    if len(value) > _MAX_KEY_LENGTH:
+        return None
+    try:
+        decoded = ast.literal_eval(f"{quote}{value}{quote}")
+    except (SyntaxError, ValueError):
+        return None
+    return decoded if isinstance(decoded, str) else None
+
+
+def _is_credential_key(value: str, *, quote: str | None = None) -> bool:
+    if quote is not None:
+        decoded_quoted = _decode_quoted_key(value, quote)
+        if decoded_quoted is None:
+            return True
+        value = decoded_quoted
+    if len(value) > _MAX_KEY_LENGTH or _INVALID_PERCENT.search(value):
+        return True
+    for _ in range(_MAX_PERCENT_DECODE_DEPTH):
+        decoded = unquote_plus(value)
+        if decoded == value:
+            break
+        value = decoded
+    if _PERCENT_ESCAPE.search(value) or _INVALID_PERCENT.search(value):
+        return True
+    normalized = unicodedata.normalize("NFKC", value).casefold().replace("-", "_")
+    return normalized in _QUERY_CREDENTIAL_KEYS | {"cer"}
 
 
 def _quoted_end(value: str, start: int, quote: str) -> int | None:
@@ -57,6 +87,7 @@ def _redact_credential_assignments(value: str) -> str:
             raw_key = value[index + 1 : key_end - 1]
             after_key = key_end
         else:
+            quote = None
             after_key = index
             while after_key < length and (value[after_key].isalnum() or value[after_key] in "_-%"):
                 after_key += 1
@@ -73,7 +104,7 @@ def _redact_credential_assignments(value: str) -> str:
         value_start = separator + 1
         while value_start < length and value[value_start].isspace():
             value_start += 1
-        if _normalized_credential_key(raw_key) not in _QUERY_CREDENTIAL_KEYS | {"cer"}:
+        if not _is_credential_key(raw_key, quote=quote):
             index = max(index + 1, value_start)
             continue
 
@@ -117,8 +148,7 @@ def _sanitize_request_target(value: object) -> object:
         return sanitize_value(value)
 
     def replace(match: re.Match[str]) -> str:
-        key = unquote_plus(match.group(2)).casefold().replace("-", "_")
-        if key in _QUERY_CREDENTIAL_KEYS:
+        if _is_credential_key(match.group(2)):
             return f"{match.group(1)}{match.group(2)}=[REDACTED]"
         return match.group(0)
 

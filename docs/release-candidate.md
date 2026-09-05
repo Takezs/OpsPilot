@@ -26,6 +26,8 @@ Canonical JSON 与 SHA 见 [`evaluation/release-candidate.json`](../evaluation/r
 - 冻结test SHA保持`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，manifest false，主库与RC receipt均0，正式矩阵Run保持`COMPLETED|60`。
 - 第三轮P1加固：access分号/混合分隔符及quoted escape/multiline旁路改由有界scanner fail-closed；Generation的实际system/user消息以不可变快照在收费与Provider发送间共享，每次retry按当次完整wrapper、metadata和正文重新计费。Red `10 failed, 30 passed`，Green聚焦90、完整独立PG后端`488 passed, 4 skipped`，真实Provider连续`3 passed in 133.41s`。
 - 当前镜像隔离RC `opspilot_task18_rc_20260905_02`完成0001→0023、双seed、非root公开上传与真实BGE `READY|5`、重启持久化、dev smoke和分号access canary；正式receipt保持0，验证后隔离资源已删除、主拓扑恢复healthy。
+- 第四轮P1加固重复percent与quoted escape key规范化，并把Decision完整system/tool schema/wrapper/state渲染成计费与发送共享的不可变快照。Red `6 failed, 40 passed`；Green聚焦86、完整独立PG `496 passed, 4 skipped`、真实Provider连续`3 passed in 287.23s`。
+- 当前镜像隔离RC `opspilot_task18_rc_20260905_03`完成0023、双seed、非root公开上传真实BGE到`READY|5`、重启持久化和double-percent canary。dev smoke首轮因真实Provider返回`answer=null`按契约失败，独立新Run重试通过；两次结果均保留，不将失败伪报为Green。RC receipt为0且资源已删除。
 - 本节仍只记录冻结test前验证；没有创建或启动正式test execution。
 
 ## 备份与回滚

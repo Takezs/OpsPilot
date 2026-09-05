@@ -12,7 +12,9 @@ from opspilot.agent.runner import (
     GroundedSearchResult,
     detached_agent_task_count,
     drain_detached_agent_tasks,
+    render_decision_prompt,
 )
+from opspilot.agent.state import AgentMessage, AgentState
 from opspilot.generation.citations import ValidatedAnswer
 from opspilot.generation.provider import GenerationPrompt, GroundedAnswer, render_generation_prompt
 from opspilot.generation.service import GenerationService
@@ -32,6 +34,57 @@ class AnswerProvider:
     async def decide(self, _state: object, _tools: object) -> AgentDecision:
         self.calls += 1
         return AgentDecision(kind="answer", answer="unsafe success")
+
+
+@pytest.mark.parametrize(("budget_delta", "expected_calls"), [(0, 1), (-1, 0)])
+async def test_decision_budget_charges_exact_prepared_provider_messages_before_call(
+    budget_delta: int, expected_calls: int
+) -> None:
+    class PreparedProvider:
+        calls = 0
+        prepared: object | None = None
+        received: object | None = None
+
+        def prepare_decision(self, state: object, tools: object) -> object:
+            self.prepared = render_decision_prompt(state, tools)  # type: ignore[arg-type]
+            return self.prepared
+
+        async def decide_prepared(self, prompt: object) -> AgentDecision:
+            self.received = prompt
+            self.calls += 1
+            return AgentDecision(kind="answer", answer="must not run")
+
+        async def decide(self, _state: object, _tools: object) -> AgentDecision:
+            self.calls += 1
+            return AgentDecision(kind="answer", answer="must not run")
+
+    async def unused(_args: EmptyArgs) -> ToolResult:
+        raise AssertionError
+
+    huge_tool = ToolDefinition(
+        name="read_policy",
+        description="metadata-" + "x" * 4000,
+        input_schema=EmptyArgs,
+        effect=ToolEffect.READ_ONLY,
+        idempotency_capable=True,
+        supports_reconciliation=True,
+        invoke=unused,
+    )
+    provider = PreparedProvider()
+    prompt = render_decision_prompt(
+        AgentState(messages=[AgentMessage(role="user", content="q")]), (huge_tool,)
+    )
+    outcome = await AgentRunner(
+        ToolRegistry([huge_tool]),
+        provider,
+        budget=AgentBudget(max_model_calls=8, max_input_tokens=prompt.input_tokens + budget_delta),
+    ).run("q")
+
+    assert outcome.bounded is (expected_calls == 0)
+    assert outcome.model_calls == expected_calls
+    assert provider.calls == expected_calls
+    if expected_calls:
+        assert provider.received is provider.prepared
 
 
 @pytest.mark.parametrize(

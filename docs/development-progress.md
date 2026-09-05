@@ -313,7 +313,9 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 第三轮P1修复：access request-target在保留Uvicorn tuple后仍执行完整credential scanner，覆盖`;`、混合分隔符、重复/空值、畸形/百分号/fragment；普通日志改用有界escape-aware scanner，quoted单/双引号、反斜线、CR/LF、Unicode规范化及未终止值均fail-closed。GenerationService生成不可变`GenerationPrompt`，同一对象先以统一估算器收费再交Provider发送；system/user wrapper及所有fragment metadata均进入每次attempt费用，retry提示变化重新渲染收费。
 - 第三轮Red为`10 failed, 30 passed`；Green聚焦`90 passed`，完整独立PG后端`488 passed, 4 skipped in 69.79s`，Ruff check、排除既有已批准0019格式债的format check、Mypy117、frontend unit19/Playwright8/typecheck/build通过；当前代码真实Provider全链连续`3 passed in 133.41s`。
 - 隔离RC `opspilot_task18_rc_20260905_02`在当前镜像上完成0001→0023、全拓扑healthy、双seed幂等、UID10001 API/Worker文档卷、公开上传真实BGE索引`READY|5`、重启持久化及dev smoke；分号access canary未进入日志且无logging error。RC随后精确down -v，主拓扑全部恢复healthy。
-- 状态：Task18步骤1–5第三轮复审修复与复验完成，等待再次go/no-go复审。步骤6/7、冻结test、正式receipt和v1.0 tag均未开始。
+- 第四轮P1修复：credential key最多3轮严格percent decode，quoted mapping key按Python/JSON escape解析后NFKC；无效/超深/超长歧义key fail-closed，`token_count`保持安全统计字段。Decision新增不可变Prompt快照，包含完整system/tool schema/description、角色与untrusted-output wrapper；Runner先按该快照收费，DeepSeek再发送同一对象，预算失败时model/provider调用均不增加。
+- Red `6 failed, 40 passed`；Green聚焦`86 passed`，独立PG完整后端`496 passed, 4 skipped in 71.99s`，Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过；真实Provider连续`3 passed in 287.23s`。当前镜像隔离RC完成0023、双seed、公开上传真实BGE到`READY|5`、重启持久化、double-percent canary与dev smoke；首次smoke遇到真实Generation返回`answer=null`而fail-closed，独立新Run重试通过，未伪装首轮结果。
+- 状态：Task18步骤1–5第四轮复审修复与复验完成，等待再次go/no-go复审。步骤6/7、冻结test、正式receipt和v1.0 tag均未开始。
 
 ## 后续开发计划
 

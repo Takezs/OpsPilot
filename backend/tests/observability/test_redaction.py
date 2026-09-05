@@ -154,6 +154,30 @@ def test_malformed_long_credential_logging_is_bounded() -> None:
 
 
 @pytest.mark.parametrize(
+    ("message", "secret"),
+    [
+        ("GET /x?api%255Fkey=DOUBLESECRET HTTP/1.1", "DOUBLESECRET"),
+        ('payload={"api\\u005fkey":"JSONESCAPESECRET"}', "JSONESCAPESECRET"),
+        ('payload={"\\u0061pi_key":"PREFIXESCAPESECRET"}', "PREFIXESCAPESECRET"),
+        ("GET /x?To%256bEn=MiXeDSECRET HTTP/1.1", "MiXeDSECRET"),
+        ("GET /x?api%25255Fkey=TRIPLESECRET HTTP/1.1", "TRIPLESECRET"),
+    ],
+)
+def test_encoded_credential_keys_are_normalized_before_redaction(message: str, secret: str) -> None:
+    record = logging.LogRecord("opspilot.safe", logging.INFO, __file__, 1, message, (), None)
+    assert SafeLogFilter().filter(record)
+    assert secret not in record.getMessage()
+
+
+def test_malicious_percent_encoded_key_is_bounded_and_fail_closed() -> None:
+    message = "GET /x?" + ("%25" * 20_000) + "token=ENCODEDTAILSECRET HTTP/1.1"
+    record = logging.LogRecord("opspilot.safe", logging.INFO, __file__, 1, message, (), None)
+    assert SafeLogFilter().filter(record)
+    assert "ENCODEDTAILSECRET" not in record.getMessage()
+    assert len(record.getMessage()) <= 1000
+
+
+@pytest.mark.parametrize(
     ("message", "args"),
     [
         ("payload=%s", ({"api_key": "alpha", "nested": [{"password": "bravo"}]},)),
