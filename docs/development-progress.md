@@ -310,7 +310,10 @@ Task 11 / 0016 脏数据升级兼容修复（2026-08-26，已通过督导复审�
 - 本轮Red为日志5项与grounded预算2项真实失败；Green扩展定向`163 passed`，全新PG完整后端`476 passed, 4 skipped in 93.91s`，Ruff通过、Mypy117、frontend unit19/Playwright8/typecheck/build通过。环境恢复后，当前代码真实DeepSeek+BGE全链以独占Worker和IPv4 Redis连续`3 passed in 171.61s`；未使用Fake。
 - 隔离project `opspilot_task18_rc_20260905_01`使用独立PG/Redis/文档卷：全拓扑healthy，0023 head；两次seed保持唯一active ADMIN及正确scope；公开上传由UID10001 API写入、UID10001 Worker经真实BGE索引到`READY|1`，API/Worker重启后文件与数据库事实保持；dev-only smoke经公开API和真实Provider通过。access-query与nested mapping canary均未出现在容器日志，预算/脱敏聚焦门禁`28 passed`。
 - 冻结test SHA仍为`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`，manifest `final_test_executed=false`，主库与RC正式receipt均为0，正式矩阵Run仍`COMPLETED|60`。隔离RC容器、network、volumes已删除，主Worker/Publisher已恢复。
-- 状态：Task18步骤1–5第二轮复审修复与环境恢复后复验完成，等待再次go/no-go复审。步骤6/7、冻结test、正式receipt和v1.0 tag均未开始。
+- 第三轮P1修复：access request-target在保留Uvicorn tuple后仍执行完整credential scanner，覆盖`;`、混合分隔符、重复/空值、畸形/百分号/fragment；普通日志改用有界escape-aware scanner，quoted单/双引号、反斜线、CR/LF、Unicode规范化及未终止值均fail-closed。GenerationService生成不可变`GenerationPrompt`，同一对象先以统一估算器收费再交Provider发送；system/user wrapper及所有fragment metadata均进入每次attempt费用，retry提示变化重新渲染收费。
+- 第三轮Red为`10 failed, 30 passed`；Green聚焦`90 passed`，完整独立PG后端`488 passed, 4 skipped in 69.79s`，Ruff check、排除既有已批准0019格式债的format check、Mypy117、frontend unit19/Playwright8/typecheck/build通过；当前代码真实Provider全链连续`3 passed in 133.41s`。
+- 隔离RC `opspilot_task18_rc_20260905_02`在当前镜像上完成0001→0023、全拓扑healthy、双seed幂等、UID10001 API/Worker文档卷、公开上传真实BGE索引`READY|5`、重启持久化及dev smoke；分号access canary未进入日志且无logging error。RC随后精确down -v，主拓扑全部恢复healthy。
+- 状态：Task18步骤1–5第三轮复审修复与复验完成，等待再次go/no-go复审。步骤6/7、冻结test、正式receipt和v1.0 tag均未开始。
 
 ## 后续开发计划
 

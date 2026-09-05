@@ -3,6 +3,7 @@
 import hashlib
 import logging
 import re
+import unicodedata
 from collections.abc import Mapping
 from typing import cast
 from urllib.parse import unquote_plus
@@ -10,16 +11,86 @@ from urllib.parse import unquote_plus
 from opspilot.runs.sanitize import sanitize_value
 
 _CONTENT_KEYS = frozenset({"prompt", "content", "request", "response", "provider_response"})
-_CREDENTIAL_ASSIGNMENT = re.compile(
-    r"(?i)((?<![A-Za-z0-9_])[\"']?"
-    r"(?:api[_-]?key|password|secret|authorization|cer|token)"
-    r"[\"']?\s*[:=]\s*)"
-    r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;}\]&]+)"
-)
 _QUERY_PARAMETER = re.compile(r"([?&])([^=&#]+)=([^&#]*)")
 _QUERY_CREDENTIAL_KEYS = frozenset(
     {"token", "access_token", "api_key", "key", "secret", "password", "authorization"}
 )
+
+
+def _normalized_credential_key(value: str) -> str:
+    return unicodedata.normalize("NFKC", unquote_plus(value)).casefold().replace("-", "_")
+
+
+def _quoted_end(value: str, start: int, quote: str) -> int | None:
+    escaped = False
+    for index in range(start, len(value)):
+        char = value[index]
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == quote:
+            return index + 1
+    return None
+
+
+def _redact_credential_assignments(value: str) -> str:
+    """Redact credential assignments with bounded, escape-aware scanning.
+
+    Malformed quoted values are hidden through the end of the record. This is
+    intentionally lossy: logs are diagnostic output, never a reason to expose
+    an ambiguously delimited credential.
+    """
+    output: list[str] = []
+    cursor = 0
+    index = 0
+    length = len(value)
+    while index < length:
+        if index and (value[index - 1].isalnum() or value[index - 1] == "_"):
+            index += 1
+            continue
+        if value[index] in {'"', "'"}:
+            quote = value[index]
+            key_end = _quoted_end(value, index + 1, quote)
+            if key_end is None:
+                break
+            raw_key = value[index + 1 : key_end - 1]
+            after_key = key_end
+        else:
+            after_key = index
+            while after_key < length and (value[after_key].isalnum() or value[after_key] in "_-%"):
+                after_key += 1
+            if after_key == index:
+                index += 1
+                continue
+            raw_key = value[index:after_key]
+        separator = after_key
+        while separator < length and value[separator].isspace():
+            separator += 1
+        if separator >= length or value[separator] not in ":=":
+            index = max(index + 1, after_key)
+            continue
+        value_start = separator + 1
+        while value_start < length and value[value_start].isspace():
+            value_start += 1
+        if _normalized_credential_key(raw_key) not in _QUERY_CREDENTIAL_KEYS | {"cer"}:
+            index = max(index + 1, value_start)
+            continue
+
+        if value_start < length and value[value_start] in {'"', "'"}:
+            value_end = _quoted_end(value, value_start + 1, value[value_start])
+            if value_end is None:
+                value_end = length
+        else:
+            value_end = value_start
+            while value_end < length and value[value_end] not in ",;}]&#\r\n":
+                value_end += 1
+        output.append(value[cursor:value_start])
+        output.append("[REDACTED]")
+        cursor = value_end
+        index = value_end
+    output.append(value[cursor:])
+    return "".join(output)
 
 
 def _summary(value: object) -> str:
@@ -51,7 +122,8 @@ def _sanitize_request_target(value: object) -> object:
             return f"{match.group(1)}{match.group(2)}=[REDACTED]"
         return match.group(0)
 
-    return sanitize_value(_QUERY_PARAMETER.sub(replace, value))
+    parsed = _QUERY_PARAMETER.sub(replace, value)
+    return sanitize_value(_redact_credential_assignments(parsed))
 
 
 def _sanitize_args(
@@ -77,7 +149,7 @@ class SafeLogFilter(logging.Filter):
                 return True
             record.args = _sanitize_args(record.args)
             rendered = record.getMessage()
-            rendered = _CREDENTIAL_ASSIGNMENT.sub(r"\1[REDACTED]", rendered)
+            rendered = _redact_credential_assignments(rendered)
             record.msg = sanitize_value(rendered)
             record.args = ()
         except BaseException:

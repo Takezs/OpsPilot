@@ -4,7 +4,11 @@ import asyncio
 from collections.abc import Callable
 
 from opspilot.generation.citations import ValidatedAnswer, validate_citations
-from opspilot.generation.provider import GenerationProvider
+from opspilot.generation.provider import (
+    GenerationPrompt,
+    GenerationProvider,
+    render_generation_prompt,
+)
 from opspilot.retrieval.context_builder import BuiltContext
 
 
@@ -29,15 +33,16 @@ class GenerationService:
         *,
         query: str,
         context: BuiltContext,
-        before_attempt: Callable[[], None] | None = None,
+        before_attempt: Callable[[GenerationPrompt], None] | None = None,
     ) -> ValidatedAnswer:
         validated: ValidatedAnswer | None = None
         for _ in range(self.max_validation_attempts):
+            prompt = render_generation_prompt(query, context)
             if before_attempt is not None:
-                before_attempt()
+                before_attempt(prompt)
             try:
                 async with asyncio.timeout(self.attempt_timeout_seconds):
-                    grounded = await self.provider.answer(query=query, context=context)
+                    grounded = await self.provider.answer(prompt=prompt)
             except TimeoutError:
                 continue
             validated = validate_citations(grounded, context)

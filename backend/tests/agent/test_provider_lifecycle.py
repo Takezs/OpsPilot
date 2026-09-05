@@ -160,8 +160,9 @@ async def test_deepseek_generation_uses_deterministic_sampling(
     provider = generation_provider.DeepSeekGenerationProvider(api_key="configured")
 
     await provider.answer(
-        query="question",
-        context=BuiltContext((), token_budget=10, total_tokens=0, truncated=False),
+        prompt=generation_provider.render_generation_prompt(
+            "question", BuiltContext((), token_budget=10, total_tokens=0, truncated=False)
+        )
     )
 
     assert calls[0]["temperature"] == 0
@@ -195,8 +196,9 @@ async def test_deepseek_generation_maps_explicit_citation_identity_to_canonical_
     provider = generation_provider.DeepSeekGenerationProvider(api_key="configured")
 
     result = await provider.answer(
-        query="question",
-        context=BuiltContext((), token_budget=10, total_tokens=0, truncated=False),
+        prompt=generation_provider.render_generation_prompt(
+            "question", BuiltContext((), token_budget=10, total_tokens=0, truncated=False)
+        )
     )
 
     assert result.citations == ["[DOC:doc-1#chunk-1]"]

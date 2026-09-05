@@ -31,6 +31,7 @@ from opspilot.agent.runner import (
 )
 from opspilot.agent.state import AgentMessage, AgentState
 from opspilot.generation.citations import ValidatedAnswer
+from opspilot.generation.provider import render_generation_prompt
 from opspilot.retrieval.context_builder import BuiltContext, CitationSnapshot, ContextFragment
 from opspilot.tools.registry import (
     ToolArgumentError,
@@ -437,9 +438,9 @@ async def test_grounded_answer_uses_runner_owned_id_and_exact_built_context() ->
         )
 
     async def generate(
-        query: str, exact: BuiltContext, reserve_model_call: Callable[[], None]
+        query: str, exact: BuiltContext, reserve_model_call: Callable[[int], None]
     ) -> ValidatedAnswer:
-        reserve_model_call()
+        reserve_model_call(render_generation_prompt(query, exact).input_tokens)
         observed.append((query, exact))
         return ValidatedAnswer(
             answer="Approval is required [DOC:d1#c1].",
@@ -617,9 +618,9 @@ async def test_insufficient_validated_answer_cannot_persist_provider_factual_tex
         return GroundedSearchResult(summary=ToolResult(ok=True), context=context)
 
     async def insufficient(
-        _: str, __: BuiltContext, reserve_model_call: Callable[[], None]
+        query: str, context: BuiltContext, reserve_model_call: Callable[[int], None]
     ) -> ValidatedAnswer:
-        reserve_model_call()
+        reserve_model_call(render_generation_prompt(query, context).input_tokens)
         return ValidatedAnswer(
             answer="provider supplied uncited policy fact",
             citations=(),

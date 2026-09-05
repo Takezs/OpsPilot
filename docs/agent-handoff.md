@@ -228,6 +228,8 @@ Windows 默认临时目录可能出现 ACL 错误；使用仓库内唯一 `--bas
 - Red日志5项+grounded预算2项；Green扩展定向163、全新PG完整`476 passed, 4 skipped in 93.91s`，Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过。环境恢复后，当前代码真实DeepSeek+BGE全链以独占Worker和IPv4 Redis连续`3 passed in 171.61s`，未用Fake。
 - 隔离RC `opspilot_task18_rc_20260905_01`全拓扑healthy并在0023 head：双seed幂等；UID10001 API公开上传、UID10001 Worker真实BGE索引至`READY|1`，API/Worker重启后文件和DB事实保持；dev-only smoke经公开API/真实PG/Redis/Provider通过。access query、nested api_key/password canary均未进入容器日志；预算/脱敏聚焦测试`28 passed`。
 - 冻结test SHA保持`e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c`、manifest false，主库/RC receipt均0，正式矩阵Run `0108b7b2-991d-49d3-9e6e-d2ff50ce5c38`仍`COMPLETED|60`。隔离RC资源已精确删除，主Worker/Publisher已恢复。Task18步骤1–5等待再次go/no-go复审；不得开始步骤6/7、冻结test、正式receipt或v1.0 tag。
+- 第三轮P1已关闭：access target在保留formatter tuple后执行完整escape-aware credential scanner，覆盖分号/混合分隔符/percent/fragment/畸形值；quoted单/双引号、escape、CR/LF、Unicode及未终止长值均fail-closed且限长。Generation的system/user消息由单一`GenerationPrompt`渲染，同一不可变对象先收费再发送，每次retry按当次真实快照计费。
+- Red `10 failed, 30 passed`；Green聚焦90，独立PG完整后端`488 passed, 4 skipped in 69.79s`，Ruff/Mypy117、frontend unit19/Playwright8/typecheck/build通过；真实Provider三轮`3 passed in 133.41s`。当前镜像隔离RC完成0001→0023、双seed、公开上传真实BGE到`READY|5`、非root卷与重启持久化、dev smoke及分号canary验证，随后已精确清理。冻结SHA/manifest false/主库与RC receipt 0/正式矩阵`COMPLETED|60`均不变；仍等待go/no-go，禁止步骤6/7。
 
 ## 需要维护的文档
 

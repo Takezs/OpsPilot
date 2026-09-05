@@ -17,7 +17,7 @@ from opspilot.auth.service import AuthService
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.generation.citations import validate_citations
-from opspilot.generation.provider import DeepSeekGenerationProvider
+from opspilot.generation.provider import DeepSeekGenerationProvider, render_generation_prompt
 from opspilot.knowledge.embedding import BgeM3EmbeddingProvider
 from opspilot.knowledge.models import Chunk, Document, DocumentStatus, KnowledgeBase
 from opspilot.retrieval.reranker import BgeReranker
@@ -241,7 +241,7 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
                     f"{marker} say? Include its supporting evidence."
                 )
                 raw_grounded = await generation_provider.answer(
-                    query=diagnostic_query, context=grounded.context
+                    prompt=render_generation_prompt(diagnostic_query, grounded.context)
                 )
                 validated_grounded = validate_citations(raw_grounded, grounded.context)
                 assert validated_grounded.snapshots, {

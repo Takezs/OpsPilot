@@ -142,10 +142,12 @@ async def startup_worker(ctx: dict[str, object]) -> None:
         )
 
         async def grounded_answer(
-            query: str, context: BuiltContext, reserve_model_call: Callable[[], None]
+            query: str, context: BuiltContext, reserve_model_call: Callable[[int], None]
         ) -> ValidatedAnswer:
             return await generation_service.answer(
-                query=query, context=context, before_attempt=reserve_model_call
+                query=query,
+                context=context,
+                before_attempt=lambda prompt: reserve_model_call(prompt.input_tokens),
             )
 
         runner = AgentRunner(

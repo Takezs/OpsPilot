@@ -34,7 +34,6 @@ from opspilot.tools.types import ToolDefinition, ToolEffect, ToolResult
 DecisionKind = Literal["answer", "clarify", "tool_call", "grounded_answer"]
 INSUFFICIENT_EVIDENCE_REPLY = "Unable to answer from verified knowledge evidence."
 _CANCEL_GRACE_SECONDS = 1.0
-_GROUNDED_CONTROL_TOKEN_OVERHEAD = 32
 _DETACHED_AGENT_TASKS: set[asyncio.Task[Any]] = set()
 
 
@@ -169,13 +168,6 @@ def _estimated_tokens(messages: list[AgentMessage]) -> int:
     return sum(max(1, len(message.content.encode("utf-8")) // 4) for message in messages)
 
 
-def _grounded_prompt_tokens(query: str, context: BuiltContext) -> int:
-    if context.total_tokens < 0:
-        raise DecisionError("grounded context token count cannot be negative")
-    query_tokens = max(1, len(query.encode("utf-8")) // 4)
-    return query_tokens + context.total_tokens + _GROUNDED_CONTROL_TOKEN_OVERHEAD
-
-
 class DecisionProvider(Protocol):
     async def decide(
         self, state: AgentState, tools: tuple[ToolDefinition, ...]
@@ -184,7 +176,7 @@ class DecisionProvider(Protocol):
 
 SideEffectHandler = Callable[[ToolDefinition, Any], Awaitable[ToolResult]]
 KnowledgeSearchHandler = Callable[[Any], Awaitable[GroundedSearchResult]]
-ModelCallReservation = Callable[[], None]
+ModelCallReservation = Callable[[int], None]
 GroundedAnswerHandler = Callable[
     [str, BuiltContext, ModelCallReservation], Awaitable[ValidatedAnswer]
 ]
@@ -249,18 +241,17 @@ class AgentRunner:
         async def grounded_outcome(context: BuiltContext) -> AgentOutcome:
             if self._grounded_answer_handler is None:
                 raise DecisionError("grounded answer generation is not configured")
-            prompt_tokens = _grounded_prompt_tokens(user_message, context)
             with traced_stage(
                 "llm",
                 self._run_id,
-                {"decision": "grounded_answer", "input_tokens_per_attempt": prompt_tokens},
+                {"decision": "grounded_answer"},
             ):
                 try:
                     validated = await _await_before_deadline(
                         self._grounded_answer_handler(
                             user_message,
                             context,
-                            lambda: reserve_model_call(prompt_tokens),
+                            reserve_model_call,
                         ),
                         deadline,
                     )

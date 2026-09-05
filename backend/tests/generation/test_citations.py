@@ -9,9 +9,13 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+
+from opspilot.generation import provider as generation_provider
 from opspilot.generation.citations import ValidatedAnswer, validate_citations
 from opspilot.generation.provider import (
     DeterministicGenerationProvider,
+    GenerationPrompt,
     GroundedAnswer,
 )
 from opspilot.generation.service import GenerationService
@@ -170,7 +174,8 @@ async def test_generation_service_retries_invalid_citations_without_fabricating_
         def __init__(self) -> None:
             self.calls = 0
 
-        async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
+        async def answer(self, *, prompt: GenerationPrompt) -> GroundedAnswer:
+            del prompt
             self.calls += 1
             if self.calls == 1:
                 return grounded(answer="uncited fact", citations=[])
@@ -181,7 +186,7 @@ async def test_generation_service_retries_invalid_citations_without_fabricating_
     provider = SequencedProvider()
     reservations = 0
 
-    def reserve() -> None:
+    def reserve(_prompt: GenerationPrompt) -> None:
         nonlocal reservations
         reservations += 1
 
@@ -196,6 +201,36 @@ async def test_generation_service_retries_invalid_citations_without_fabricating_
     assert validated.snapshots[0].chunk_id == "chunk-1"
 
 
+async def test_generation_budget_and_provider_share_each_retry_prompt_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    doc_id = str(uuid.uuid4())
+    ctx = context_for(fragment("chunk-1", doc_id))
+    reserved: list[GenerationPrompt] = []
+
+    class ChangingPromptProvider:
+        prompts: list[GenerationPrompt] = []
+
+        async def answer(self, *, prompt: GenerationPrompt) -> GroundedAnswer:
+            self.prompts.append(prompt)
+            if len(self.prompts) == 1:
+                monkeypatch.setattr(
+                    generation_provider,
+                    "SYSTEM_PROMPT",
+                    generation_provider.SYSTEM_PROMPT + " retry-specific-instruction",
+                )
+            return grounded(answer="uncited", citations=[])
+
+    provider = ChangingPromptProvider()
+    await GenerationService(provider=provider, max_validation_attempts=2).answer(
+        query="refund window", context=ctx, before_attempt=reserved.append
+    )
+
+    assert len(provider.prompts) == 2
+    assert all(sent is charged for sent, charged in zip(provider.prompts, reserved, strict=True))
+    assert provider.prompts[1].input_tokens > provider.prompts[0].input_tokens
+
+
 async def test_generation_service_exhaustion_stays_insufficient_without_citation() -> None:
     doc_id = str(uuid.uuid4())
     ctx = context_for(fragment("chunk-1", doc_id))
@@ -204,7 +239,8 @@ async def test_generation_service_exhaustion_stays_insufficient_without_citation
         def __init__(self) -> None:
             self.calls = 0
 
-        async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
+        async def answer(self, *, prompt: GenerationPrompt) -> GroundedAnswer:
+            del prompt
             self.calls += 1
             return grounded(answer=f"uncited fact {self.calls}", citations=[])
 
@@ -227,7 +263,8 @@ async def test_generation_service_retries_are_bounded_below_worker_timeout() -> 
         def __init__(self) -> None:
             self.calls = 0
 
-        async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
+        async def answer(self, *, prompt: GenerationPrompt) -> GroundedAnswer:
+            del prompt
             self.calls += 1
             await asyncio.sleep(10)
             raise AssertionError("unreachable")

@@ -14,7 +14,7 @@ from opspilot.agent.runner import (
     drain_detached_agent_tasks,
 )
 from opspilot.generation.citations import ValidatedAnswer
-from opspilot.generation.provider import GroundedAnswer
+from opspilot.generation.provider import GenerationPrompt, GroundedAnswer, render_generation_prompt
 from opspilot.generation.service import GenerationService
 from opspilot.retrieval.context_builder import BuiltContext, ContextFragment
 from opspilot.tools.registry import ToolRegistry
@@ -117,10 +117,10 @@ async def test_grounded_generation_consumes_model_budget() -> None:
         return GroundedSearchResult(ToolResult(ok=True), context)
 
     async def generate(
-        _query: str, _context: BuiltContext, reserve_model_call: Callable[[], None]
+        _query: str, _context: BuiltContext, reserve_model_call: Callable[[int], None]
     ) -> ValidatedAnswer:
         nonlocal generation_calls
-        reserve_model_call()
+        reserve_model_call(render_generation_prompt(_query, _context).input_tokens)
         generation_calls += 1
         return ValidatedAnswer(answer="x", snapshots=())
 
@@ -151,11 +151,11 @@ async def test_grounded_generation_consumes_model_budget() -> None:
 
 
 @pytest.mark.parametrize(
-    ("context_tokens", "input_budget", "expected_generation_calls"),
-    [(1, 51, 1), (1, 50, 0), (100_000, 64, 0)],
+    ("budget_delta", "expected_generation_calls"),
+    [(0, 1), (-1, 0)],
 )
 async def test_grounded_context_respects_exact_input_budget_before_generation(
-    context_tokens: int, input_budget: int, expected_generation_calls: int
+    budget_delta: int, expected_generation_calls: int
 ) -> None:
     class Decisions:
         def __init__(self) -> None:
@@ -176,12 +176,12 @@ async def test_grounded_context_respects_exact_input_budget_before_generation(
         effective_at=datetime(2026, 1, 1, tzinfo=UTC),
         page=None,
         content="evidence",
-        token_count=context_tokens,
+        token_count=1,
     )
     context = BuiltContext(
         fragments=(fragment,),
-        token_budget=context_tokens,
-        total_tokens=context_tokens,
+        token_budget=1,
+        total_tokens=1,
         truncated=False,
     )
 
@@ -191,10 +191,10 @@ async def test_grounded_context_respects_exact_input_budget_before_generation(
     generation_calls = 0
 
     async def generate(
-        _query: str, _context: BuiltContext, reserve_model_call: Callable[[], None]
+        _query: str, _context: BuiltContext, reserve_model_call: Callable[[int], None]
     ) -> ValidatedAnswer:
         nonlocal generation_calls
-        reserve_model_call()
+        reserve_model_call(render_generation_prompt(_query, _context).input_tokens)
         generation_calls += 1
         return ValidatedAnswer(
             answer="unsafe",
@@ -216,12 +216,17 @@ async def test_grounded_context_respects_exact_input_budget_before_generation(
         supports_reconciliation=True,
         invoke=unused_invoke,
     )
+    prompt_tokens = render_generation_prompt("q", context).input_tokens
+    decision_tokens = 17
     runner = AgentRunner(
         ToolRegistry([tool]),
         Decisions(),
         knowledge_search_handler=search,
         grounded_answer_handler=generate,
-        budget=AgentBudget(max_model_calls=8, max_input_tokens=input_budget),
+        budget=AgentBudget(
+            max_model_calls=8,
+            max_input_tokens=decision_tokens + prompt_tokens + budget_delta,
+        ),
     )
     outcome = await runner.run("q")
     assert outcome.bounded is (expected_generation_calls == 0)
@@ -256,7 +261,8 @@ async def test_grounded_generation_retries_charge_model_and_input_budget_per_att
     class UncitedProvider:
         calls = 0
 
-        async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
+        async def answer(self, *, prompt: GenerationPrompt) -> GroundedAnswer:
+            del prompt
             self.calls += 1
             return GroundedAnswer(
                 answer="unsafe fact",
@@ -272,9 +278,13 @@ async def test_grounded_generation_retries_charge_model_and_input_budget_per_att
         return GroundedSearchResult(ToolResult(ok=True), context)
 
     async def generate(
-        query: str, exact: BuiltContext, reserve_model_call: Callable[[], None]
+        query: str, exact: BuiltContext, reserve_model_call: Callable[[int], None]
     ) -> ValidatedAnswer:
-        return await service.answer(query=query, context=exact, before_attempt=reserve_model_call)
+        return await service.answer(
+            query=query,
+            context=exact,
+            before_attempt=lambda prompt: reserve_model_call(prompt.input_tokens),
+        )
 
     async def unused_invoke(_args: EmptyArgs) -> ToolResult:
         raise AssertionError
@@ -299,7 +309,74 @@ async def test_grounded_generation_retries_charge_model_and_input_budget_per_att
     assert outcome.bounded is True
     assert outcome.model_calls == 3
     assert provider.calls == 1
-    assert outcome.input_tokens == 51
+    prompt_tokens = render_generation_prompt("q", context).input_tokens
+    assert outcome.input_tokens == 17 + prompt_tokens
+
+
+async def test_grounded_budget_charges_full_rendered_provider_messages_before_call() -> None:
+    class Decisions:
+        calls = 0
+
+        async def decide(self, _state: object, _tools: object) -> AgentDecision:
+            self.calls += 1
+            if self.calls == 1:
+                return AgentDecision(kind="tool_call", tool="search_knowledge", arguments={})
+            return AgentDecision(kind="answer", answer="discard me")
+
+    fragment = ContextFragment(
+        document_id="00000000-0000-0000-0000-000000000001",
+        chunk_id="00000000-0000-0000-0000-000000000002",
+        title="metadata-" + "x" * 2000,
+        document_version=123456,
+        section_path=("section-" + "y" * 1000,),
+        effective_at=datetime(2026, 1, 1, tzinfo=UTC),
+        page=999,
+        content="evidence",
+        token_count=1,
+    )
+    context = BuiltContext(fragments=(fragment,), token_budget=10, total_tokens=1, truncated=False)
+
+    async def search(_args: object) -> GroundedSearchResult:
+        return GroundedSearchResult(ToolResult(ok=True), context)
+
+    provider_calls = 0
+
+    async def generate(
+        _query: str, _context: BuiltContext, reserve_model_call: Callable[[int], None]
+    ) -> ValidatedAnswer:
+        nonlocal provider_calls
+        reserve_model_call(render_generation_prompt(_query, _context).input_tokens)
+        provider_calls += 1
+        return ValidatedAnswer(
+            answer="unsafe",
+            citations=(),
+            snapshots=(),
+            insufficient_evidence=True,
+            follow_up_question=None,
+        )
+
+    async def unused(_args: EmptyArgs) -> ToolResult:
+        raise AssertionError
+
+    search_tool = ToolDefinition(
+        name="search_knowledge",
+        description="",
+        input_schema=EmptyArgs,
+        effect=ToolEffect.READ_ONLY,
+        idempotency_capable=True,
+        supports_reconciliation=True,
+        invoke=unused,
+    )
+    outcome = await AgentRunner(
+        ToolRegistry([search_tool]),
+        Decisions(),
+        knowledge_search_handler=search,
+        grounded_answer_handler=generate,
+        budget=AgentBudget(max_model_calls=8, max_input_tokens=200),
+    ).run("q")
+
+    assert outcome.bounded is True
+    assert provider_calls == 0
 
 
 async def test_deadline_supervises_processor_that_ignores_cancellation() -> None:

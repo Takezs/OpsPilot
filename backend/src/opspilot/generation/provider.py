@@ -1,6 +1,7 @@
 """Structured answer provider contract and OpenAI-compatible DeepSeek client."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
@@ -18,6 +19,22 @@ class GroundedAnswer(BaseModel):
     follow_up_question: str | None = None
 
 
+@dataclass(frozen=True)
+class GenerationPrompt:
+    """The immutable messages charged to budget and sent to the provider."""
+
+    system: str
+    user: str
+
+    @property
+    def input_tokens(self) -> int:
+        return sum(max(1, len(item.encode("utf-8")) // 4) for item in (self.system, self.user))
+
+
+def render_generation_prompt(query: str, context: BuiltContext) -> GenerationPrompt:
+    return GenerationPrompt(system=SYSTEM_PROMPT, user=render_user_prompt(query, context))
+
+
 class _ProviderCitation(BaseModel):
     document_id: str = Field(min_length=1)
     chunk_id: str = Field(min_length=1)
@@ -31,7 +48,7 @@ class _ProviderGroundedAnswer(BaseModel):
 
 
 class GenerationProvider(Protocol):
-    async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer: ...
+    async def answer(self, *, prompt: GenerationPrompt) -> GroundedAnswer: ...
 
 
 class GenerationProviderError(RuntimeError):
@@ -58,12 +75,12 @@ class DeepSeekGenerationProvider:
             http_client=http_client,
         )
 
-    async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
+    async def answer(self, *, prompt: GenerationPrompt) -> GroundedAnswer:
         response = await self._client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": render_user_prompt(query, context)},
+                {"role": "system", "content": prompt.system},
+                {"role": "user", "content": prompt.user},
             ],
             response_format={"type": "json_object"},
             temperature=0,
@@ -100,7 +117,8 @@ class DeterministicGenerationProvider:
         self._insufficient_evidence = insufficient_evidence
         self._follow_up_question = follow_up_question
 
-    async def answer(self, *, query: str, context: BuiltContext) -> GroundedAnswer:
+    async def answer(self, *, prompt: GenerationPrompt) -> GroundedAnswer:
+        del prompt
         return GroundedAnswer(
             answer=self._answer,
             citations=self._citations,

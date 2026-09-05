@@ -81,6 +81,79 @@ def test_uvicorn_access_query_credentials_are_redacted_without_breaking_formatte
 
 
 @pytest.mark.parametrize(
+    "target",
+    [
+        "/x?foo=1;token=semicolon-secret",
+        "/x?foo=1&bar=2;API_KEY=mixed-secret&token=repeat-one;token=repeat-two",
+        "/x?password=;token=no-value;Authorization=Bearer%20encoded-secret",
+        "/x?foo=ok;to%6Ben=encoded-key-secret#token=fragment-secret",
+        "/x?broken;SECRET=malformed-secret&token_count=17",
+    ],
+)
+def test_uvicorn_access_query_credentials_fail_closed_across_delimiters(target: str) -> None:
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        (("127.0.0.1", 43210), "GET", target, "1.1", 200),
+        None,
+    )
+
+    assert SafeLogFilter().filter(record)
+    rendered = AccessFormatter(
+        "%(levelprefix)s %(client_addr)s - %(request_line)s %(status_code)s"
+    ).format(record)
+
+    for secret in (
+        "semicolon-secret",
+        "mixed-secret",
+        "repeat-one",
+        "repeat-two",
+        "encoded-secret",
+        "encoded-key-secret",
+        "fragment-secret",
+        "malformed-secret",
+    ):
+        assert secret not in rendered
+    assert "token_count=17" in rendered if "token_count" in target else True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        'payload={"token":"abc\\"tail-secret"}',
+        'payload={"password":"first-line\nsecond-line-secret"}',
+        "payload={'api_key': 'abc\\'tail-secret'}",
+        'payload={"nested":{"Authorization":"Bearer multiline\r\ntail-secret"}}',
+        'payload={"ＴＯＫＥＮ":"unicode-secret", "token":"unterminated-secret',
+    ],
+)
+def test_quoted_credentials_with_escapes_multiline_and_malformed_values_fail_closed(
+    message: str,
+) -> None:
+    record = logging.LogRecord("opspilot.safe", logging.INFO, __file__, 1, message, (), None)
+    assert SafeLogFilter().filter(record)
+    rendered = record.getMessage()
+    assert "tail-secret" not in rendered
+    assert "second-line-secret" not in rendered
+    assert "unicode-secret" not in rendered
+    assert "unterminated-secret" not in rendered
+    assert len(rendered) <= 1000
+
+
+def test_malformed_long_credential_logging_is_bounded() -> None:
+    secret = "s" * 100_000
+    record = logging.LogRecord(
+        "opspilot.safe", logging.INFO, __file__, 1, '{"token":"' + secret, (), None
+    )
+    assert SafeLogFilter().filter(record)
+    assert secret not in record.getMessage()
+    assert len(record.getMessage()) <= 1000
+
+
+@pytest.mark.parametrize(
     ("message", "args"),
     [
         ("payload=%s", ({"api_key": "alpha", "nested": [{"password": "bravo"}]},)),
