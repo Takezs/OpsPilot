@@ -94,8 +94,11 @@ services:
       retries: 20
   payment:
     <<: *backend
-    environment: {}
+    environment:
+      OPSPILOT_DEMO_E2E: ${OPSPILOT_DEMO_E2E:-false}
+      OPSPILOT_DEMO_E2E_TIMEOUT_ORDER: ${OPSPILOT_DEMO_E2E_TIMEOUT_ORDER:-}
     volumes: []
+    ports: ["127.0.0.1:${PAYMENT_HOST_PORT:-18102}:8102"]
     command: [uvicorn, app:app, --app-dir, /app/demo-services/payment_service, --host, 0.0.0.0, --port, "8102"]
     healthcheck:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8102/health', timeout=2)"]

@@ -168,6 +168,57 @@ async def test_correct_tool_invoked_with_validated_arguments() -> None:
     assert "A100" in provider.tool_results_seen[0]
 
 
+@pytest.mark.parametrize("message", ["Do not call refund_order.", "Explain refund_order."])
+async def test_tool_mention_does_not_require_execution(message: str) -> None:
+    fake = FakeTools()
+    runner = AgentRunner(
+        _registry(fake), ScriptedDecisionProvider([_answer("Explanation only.")] * 8)
+    )
+    outcome = await runner.run(message)
+    assert outcome.final_answer == "Explanation only."
+    assert not outcome.bounded
+    assert fake.calls == []
+
+
+async def test_named_refund_with_missing_parameters_allows_clarification() -> None:
+    fake = FakeTools()
+    runner = AgentRunner(
+        _registry(fake), ScriptedDecisionProvider([_clarify("Order number and amount?")] * 8)
+    )
+    outcome = await runner.run("Use refund_order to refund my order.")
+    assert outcome.clarification == "Order number and amount?"
+    assert fake.calls == []
+
+
+async def test_complete_refund_decision_routes_through_durable_handler() -> None:
+    fake = FakeTools()
+    received: list[str] = []
+
+    async def handler(definition: Any, arguments: Any) -> ToolResult:
+        received.append(definition.name)
+        return ToolResult(
+            ok=True, data={"operation_id": str(uuid.uuid4()), "status": "WAITING_APPROVAL"}
+        )
+
+    provider = ScriptedDecisionProvider(
+        [
+            _tool("check_refund_eligibility", order_number="ORD-002"),
+            _tool("refund_order", order_number="ORD-002", amount=350),
+            _answer("created"),
+        ]
+    )
+    runner = AgentRunner(_registry(fake), provider, side_effect_handler=handler)
+
+    outcome = await runner.run(
+        "Call check_refund_eligibility for ORD-002, then create the "
+        "refund_order Operation for ORD-002 amount 350."
+    )
+
+    assert received == ["refund_order"]
+    assert outcome.workflow_facts[0].status == "WAITING_APPROVAL"
+    assert outcome.final_answer == "created"
+
+
 async def test_invalid_arguments_raise_tool_argument_error() -> None:
     fake = FakeTools()
     runner = AgentRunner(_registry(fake), ScriptedDecisionProvider([_tool("get_order")]))

@@ -1,5 +1,7 @@
 # OpsPilot Agent 开发规则
 
+> 2026-09-06最新Task18状态：步骤1–5 Compose控制面修复完成，等待督导go/no-go。按督导裁决撤去工具名词法强制，不阻止缺参clarify；仅DEMO_E2E/EVAL_FAULT_MATRIX显式启用时允许demo reset，默认关闭。聚焦126 passed；独立scratch完整528 passed/4 skipped；隔离Compose单轮1 passed及同镜像连续3 passed（114.96s）。本轮历史attempt已解析20次，另有FF未解析证据；旧最初六次失败PG行已被测试finally删除，不得宣称仍在。RC已清理，主审计基线不变。详见docs/task18-compose-verification-20260906.md。冻结test、receipt、步骤6/7、tag/push仍禁止。
+
 本文件适用于整个仓库。任何自动化 Agent 在修改代码前都必须遵守以下规则。
 
 ## 开始前必读

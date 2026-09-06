@@ -111,7 +111,9 @@ async def e2e_refund_count(order_number: str) -> dict[str, int]:
 
 @app.post("/__e2e/refunds/{order_number}/reset")
 async def reset_evaluation_refund(order_number: str) -> dict[str, bool]:
-    if os.getenv("OPSPILOT_EVAL_FAULT_MATRIX", "").lower() not in {"1", "true"}:
+    if os.getenv("OPSPILOT_DEMO_E2E", "").lower() not in {"1", "true"} and os.getenv(
+        "OPSPILOT_EVAL_FAULT_MATRIX", ""
+    ).lower() not in {"1", "true"}:
         raise HTTPException(status_code=404, detail="not found")
     if order_number not in ORDER_AMOUNTS and not _ensure_evaluation_order(order_number):
         raise HTTPException(status_code=404, detail="not found")

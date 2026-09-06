@@ -1,10 +1,12 @@
 """Task 15 live acceptance through public HTTP, real ARQ, and real providers."""
 
 import asyncio
+import json
 import os
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -28,8 +30,13 @@ ROOT = Path(__file__).parents[3]
 BACKEND = ROOT / "backend"
 PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 ARQ = ROOT / ".venv" / "Scripts" / "arq.exe"
-API = "http://127.0.0.1:18000"
-PAYMENT = "http://127.0.0.1:18102"
+COMPOSE_E2E = os.getenv("OPSPILOT_LIVE_COMPOSE_E2E") == "1"
+API = (
+    os.getenv("OPSPILOT_LIVE_COMPOSE_API_URL", "http://127.0.0.1:8000")
+    if COMPOSE_E2E
+    else "http://127.0.0.1:18000"
+)
+PAYMENT = os.getenv("OPSPILOT_LIVE_COMPOSE_PAYMENT_URL", "http://127.0.0.1:18102")
 
 
 async def _wait(url: str) -> None:
@@ -46,6 +53,14 @@ async def _wait(url: str) -> None:
 
 @asynccontextmanager
 async def _runtime():
+    if COMPOSE_E2E:
+        await _wait(f"{API}/health")
+        await _wait(f"{PAYMENT}/refunds/ORD-002/eligibility")
+        async with httpx.AsyncClient(base_url=PAYMENT, timeout=5) as payment:
+            reset = await payment.post("/__e2e/refunds/ORD-002/reset")
+            reset.raise_for_status()
+        yield
+        return
     env = os.environ.copy()
     env.update(
         OPSPILOT_DEMO_E2E="true",
@@ -143,6 +158,16 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
     settings = Settings()
     assert settings.deepseek_api_key
     suffix = uuid.uuid4().hex
+    evidence = {
+        "attempt_id": suffix,
+        "started_at": datetime.now(UTC).isoformat(),
+        "iteration": live_iteration,
+        "compose": COMPOSE_E2E,
+        "stage": "SETUP",
+        "run_created": False,
+        "operation_created": False,
+        "complete": False,
+    }
     owner_id, reviewer_id = uuid.uuid4(), uuid.uuid4()
     owner_name, reviewer_name = f"live-owner-{suffix}", f"live-reviewer-{suffix}"
     password = f"Live-{uuid.uuid4().hex}!"
@@ -211,6 +236,7 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
             response = await client.post("/api/v1/runs", headers=owner_headers)
             response.raise_for_status()
             run_id = uuid.UUID(response.json()["run_id"])
+            evidence.update(run_created=True, run_id=str(run_id), stage="CITATIONS")
 
             # Prove the exact production retrieval composition has selected the
             # unique evidence before asking the Agent. This prevents a lucky
@@ -277,11 +303,13 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
             ]
             assert citations[0]["document_version"] == 1
             assert citations[0]["chunk_id"] == str(chunk.id)
+            evidence.update(exact_citations=True)
             assert (
                 "Unable to answer from verified knowledge evidence."
                 not in assistant[0]["payload"]["content"]
             )
 
+            evidence.update(stage="OPERATION")
             response = await client.post(
                 f"/api/v1/runs/{run_id}/messages",
                 headers=owner_headers,
@@ -302,6 +330,9 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
                 ),
             )
             operation_id = waiting["operations"][0]["id"]
+            evidence.update(
+                operation_created=True, operation_id=operation_id, stage="RECONCILIATION"
+            )
 
             approvals = (
                 await client.get(
@@ -342,6 +373,7 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
                 count = await payment.get("/__e2e/refunds/ORD-002/count")
                 count.raise_for_status()
                 assert count.json() == {"count": 1}
+            evidence.update(refund_count=1, reconciliation=True, public_seq_contiguous=True)
 
         async with async_session_factory() as session:
             events = list(
@@ -350,7 +382,13 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
                 )
             )
             assert [event.seq for event in events] == list(range(1, len(events) + 1))
+            assert [event.seq for event in events] == [event["seq"] for event in history]
+            evidence.update(
+                pg_seq_contiguous=True, seq_count=len(events), complete=True, stage="SUCCEEDED"
+            )
     finally:
+        evidence["finished_at"] = datetime.now(UTC).isoformat()
+        print("LIVE_EVIDENCE " + json.dumps(evidence, sort_keys=True))
         await embedding_provider.aclose()
         await reranker_provider.aclose()
         async with async_session_factory() as session:

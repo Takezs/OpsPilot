@@ -11,6 +11,7 @@ import importlib.util
 from pathlib import Path
 
 import httpx
+import pytest
 
 from opspilot.tools.adapters.python import (
     get_order_adapter,
@@ -80,6 +81,24 @@ async def test_payment_success_is_idempotent() -> None:
     assert second.status_code == 200
     assert first.json()["refund_id"] == second.json()["refund_id"]
     assert first.json()["provider_reference"] == second.json()["provider_reference"]
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_demo_reset_is_explicit_and_order_scoped(monkeypatch, enabled: bool) -> None:
+    monkeypatch.delenv("OPSPILOT_EVAL_FAULT_MATRIX", raising=False)
+    monkeypatch.setenv("OPSPILOT_DEMO_E2E", "true" if enabled else "false")
+    app = _load_app("payment_service")
+    async with _client_for(app) as client:
+        await client.post("/refunds", json={"order_number": "ORD-002"})
+        count = await client.get("/__e2e/refunds/ORD-002/count")
+        reset = await client.post("/__e2e/refunds/ORD-002/reset")
+        assert count.status_code == (200 if enabled else 404)
+        assert reset.status_code == (200 if enabled else 404)
+        if enabled:
+            assert count.json() == {"count": 1}
+            assert reset.json() == {"reset": True}
+            assert (await client.get("/__e2e/refunds/ORD-002/count")).json() == {"count": 0}
+        assert (await client.post("/__e2e/refunds/UNKNOWN/reset")).status_code == 404
 
 
 async def test_payment_timeout_before_effect_creates_no_refund() -> None:
