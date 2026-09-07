@@ -10,6 +10,8 @@ import re
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from opspilot.demo_control import E2E_ORDER, enabled
+
 app = FastAPI(title="Order Service")
 
 
@@ -55,6 +57,8 @@ def _evaluation_order(order_number: str) -> Order | None:
 
 @app.get("/orders/{order_number}", response_model=Order)
 async def get_order(order_number: str) -> Order:
+    if enabled("OPSPILOT_DEMO_E2E") and E2E_ORDER.fullmatch(order_number):
+        return Order(order_number=order_number, status="OPEN", amount=350.0)
     evaluation_order = _evaluation_order(order_number)
     if evaluation_order is not None:
         return evaluation_order

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -15,6 +16,7 @@ from sqlalchemy import text
 
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
+from opspilot.demo_control import control_headers
 from opspilot.execution import reconciliation as reconciliation_module
 from opspilot.execution.claim import LeaseConflictError, recover_expired
 from opspilot.execution.errors import FailureDisposition, ProviderFailureKind, classify_failure
@@ -438,24 +440,40 @@ async def test_recovery_closes_only_latest_running_attempt_and_next_number_is_co
         await _cleanup_run(run_id)
 
 
-async def test_reconciliation_finds_timeout_after_effect_and_never_refunds_twice() -> None:
+async def test_reconciliation_finds_timeout_after_effect_and_never_refunds_twice(
+    monkeypatch, tmp_path
+) -> None:
+    secret = secrets.token_bytes(32)
+    secret_path = tmp_path / "control"
+    secret_path.write_bytes(secret)
+    secret_path.chmod(0o600)
+    monkeypatch.setenv("OPSPILOT_DEMO_E2E", "true")
+    monkeypatch.setenv("OPSPILOT_E2E_CONTROL_FILE", str(secret_path))
+    order = f"E2E-{uuid.uuid4().hex}"
     payment = _load_payment_module()
-    run_id, operation_id = await _create_outcome_unknown_operation("A100")
+    run_id, operation_id = await _create_outcome_unknown_operation(order)
     transport = httpx.ASGITransport(app=payment.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://payment") as client:
+        assert (
+            await client.post(
+                f"/__e2e/refunds/{order}/reset",
+                headers=control_headers(secret, "POST", "reset", order),
+            )
+        ).status_code == 200
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(
                 client.post(
                     "/refunds",
-                    json={"order_number": "A100"},
-                    headers={"x-failure-mode": "timeout_after_effect", "x-failure-delay": "1"},
+                    json={"order_number": order},
+                    headers=control_headers(secret, "POST", "fault", order)
+                    | {"x-failure-mode": "timeout_after_effect", "x-failure-delay": "1"},
                 ),
                 timeout=0.05,
             )
 
         async def _query(lookup: ReconciliationLookup) -> ToolResult:
-            assert lookup.idempotency_key == "refund:A100"
-            response = await client.get("/refunds/A100")
+            assert lookup.idempotency_key == f"refund:{order}"
+            response = await client.get(f"/refunds/{order}")
             return ToolResult(ok=True, data=response.json())
 
         try:
@@ -503,15 +521,31 @@ async def test_reconciliation_confirmed_absent_retries_and_unknown_is_manual_rev
             await _cleanup_run(run_id)
 
 
-async def test_unknown_5xx_after_effect_executes_once_then_reconciles() -> None:
+async def test_unknown_5xx_after_effect_executes_once_then_reconciles(
+    monkeypatch, tmp_path
+) -> None:
+    secret = secrets.token_bytes(32)
+    secret_path = tmp_path / "control"
+    secret_path.write_bytes(secret)
+    secret_path.chmod(0o600)
+    monkeypatch.setenv("OPSPILOT_DEMO_E2E", "true")
+    monkeypatch.setenv("OPSPILOT_E2E_CONTROL_FILE", str(secret_path))
+    order = f"E2E-{uuid.uuid4().hex}"
     payment = _load_payment_module()
-    run_id, operation_id = await _create_operation("A102", status="READY")
+    run_id, operation_id = await _create_operation(order, status="READY")
     transport = httpx.ASGITransport(app=payment.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://payment") as client:
+        assert (
+            await client.post(
+                f"/__e2e/refunds/{order}/reset",
+                headers=control_headers(secret, "POST", "reset", order),
+            )
+        ).status_code == 200
         original_post = client.post
 
         async def _post(*args: object, **kwargs: object) -> httpx.Response:
             headers = dict(kwargs.pop("headers", {}) or {})
+            headers.update(control_headers(secret, "POST", "fault", order))
             headers["x-failure-mode"] = "unknown_5xx_after_effect"
             return await original_post(*args, headers=headers, **kwargs)
 
@@ -519,7 +553,7 @@ async def test_unknown_5xx_after_effect_executes_once_then_reconciles() -> None:
         refund = refund_order_adapter(client)
 
         async def _invoke(operation: object) -> ToolResult:
-            return await refund(RefundOrderArgs(order_number="A102", amount=350.0))
+            return await refund(RefundOrderArgs(order_number=order, amount=350.0))
 
         try:
             uncertain = await execute_operation(
@@ -534,7 +568,7 @@ async def test_unknown_5xx_after_effect_executes_once_then_reconciles() -> None:
             status_adapter = get_refund_status_adapter(client)
 
             async def _query(lookup: ReconciliationLookup) -> ToolResult:
-                assert lookup.idempotency_key == "refund:A102"
+                assert lookup.idempotency_key == f"refund:{order}"
                 return await status_adapter(GetRefundStatusArgs(order_number=lookup.order_number))
 
             reconciled = await reconcile_operation(

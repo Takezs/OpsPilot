@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import secrets
 import statistics
 import subprocess
 import time
@@ -14,12 +15,14 @@ from pathlib import Path
 
 import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from opspilot.auth.models import Role, User
 from opspilot.auth.service import AuthService
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
+from opspilot.demo_control import control_headers
 from opspilot.evaluation.agent_metrics import ToolCall, tool_metrics
 from opspilot.evaluation.config import configuration_sha256
 from opspilot.evaluation.models import (
@@ -35,6 +38,7 @@ from opspilot.execution.models import Operation
 from opspilot.knowledge.embedding import BgeM3EmbeddingProvider
 from opspilot.knowledge.models import Chunk, Document, DocumentStatus, KnowledgeBase
 from opspilot.runs.models import Run
+from tests.e2e.control import payment_control_lock
 
 ROOT = Path(__file__).parents[3]
 BACKEND = ROOT / "backend"
@@ -63,8 +67,13 @@ def _spawn(command: list[str], cwd: Path, env: dict[str, str]) -> subprocess.Pop
 
 
 @asynccontextmanager
-async def _runtime():
+async def _runtime(tmp_path):
+    secret = secrets.token_bytes(32)
+    path = tmp_path / "fault-control-secret"
+    path.write_bytes(secret)
+    path.chmod(0o600)
     env = os.environ.copy()
+    env.pop("OPSPILOT_E2E_CONTROL_FILE", None)
     env.update(
         OPSPILOT_EVAL_FAULT_MATRIX="1",
         ORDER_SERVICE_URL="http://127.0.0.1:18201",
@@ -95,7 +104,7 @@ async def _runtime():
                 "warning",
             ],
             cwd,
-            env,
+            env | ({"OPSPILOT_E2E_CONTROL_FILE": str(path)} if port == 18202 else {}),
         )
         for app, port, cwd in services
     ]
@@ -105,8 +114,8 @@ async def _runtime():
     processes.append(publisher)
     try:
         await _wait(f"{API}/health")
-        await _wait(f"{PAYMENT}/refunds/EVAL-001/eligibility")
-        yield env, processes
+        await _wait(f"{PAYMENT}/health")
+        yield env, processes, secret
     finally:
         for process in reversed(processes):
             if process.poll() is None:
@@ -117,6 +126,7 @@ async def _runtime():
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+        path.unlink(missing_ok=True)
 
 
 async def _poll(
@@ -191,8 +201,16 @@ def _score_agent_contract(
     }
 
 
+@pytest_asyncio.fixture
+async def matrix_control_lock():
+    if os.getenv("OPSPILOT_FAULT_MATRIX_E2E") != "1":
+        pytest.skip("process fault matrix is opt-in")
+    async with payment_control_lock(Settings().database_url):
+        yield
+
+
 @pytest.mark.integration
-async def test_process_level_fault_matrix() -> None:
+async def test_process_level_fault_matrix(tmp_path, matrix_control_lock) -> None:
     if os.getenv("OPSPILOT_FAULT_MATRIX_E2E") != "1":
         pytest.skip("process fault matrix is opt-in")
     trials = int(os.getenv("OPSPILOT_FAULT_MATRIX_TRIALS", "1"))
@@ -339,7 +357,7 @@ async def test_process_level_fault_matrix() -> None:
         await session.commit()
     try:
         async with (
-            _runtime() as (env, processes),
+            _runtime(tmp_path) as (env, processes, control_secret),
             httpx.AsyncClient(base_url=API, timeout=15) as client,
         ):
             login = await client.post(
@@ -397,7 +415,10 @@ async def test_process_level_fault_matrix() -> None:
                         await session.commit()
                     current_attempt_case_id = attempt_case_id
                     current_failure_stage = "SETUP"
-                    reset = await client.post(f"{PAYMENT}/__e2e/refunds/{order}/reset")
+                    reset = await client.post(
+                        f"{PAYMENT}/__e2e/refunds/{order}/reset",
+                        headers=control_headers(control_secret, "POST", "reset", order),
+                    )
                     reset.raise_for_status()
                     worker = _spawn([str(ARQ), "opspilot.worker.WorkerSettings"], BACKEND, env)
                     processes.append(worker)
@@ -475,7 +496,10 @@ async def test_process_level_fault_matrix() -> None:
                         ),
                     )
                     assert completed["operations"][-1]["status"] == "SUCCEEDED"
-                    count = await client.get(f"{PAYMENT}/__e2e/refunds/{order}/count")
+                    count = await client.get(
+                        f"{PAYMENT}/__e2e/refunds/{order}/count",
+                        headers=control_headers(control_secret, "GET", "count", order),
+                    )
                     assert count.json() == {"count": 1}
                     history_rows = await _poll(
                         client,

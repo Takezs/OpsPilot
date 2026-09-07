@@ -2,6 +2,8 @@
 
 > 2026-09-06 Task18最新交接：仅修复显式DEMO_E2E Payment reset门控及纯Compose测试编排，等待督导go/no-go。词法工具名强制已撤去，正常解释/否定/缺参clarify恢复；不改Prompt/意图协议。隔离单轮1 passed、同镜像连续3 passed（114.96s），refund count每次1。聚焦126、完整scratch 528 passed/4 skipped、frontend19/8、Mypy117通过；Ruff check通过，format仅既有0019格式债；0023全链通过。本轮历史20次已解析，另有FF未解析记录，最初六次失败PG行被旧finally删除的缺口保留。scratch/RC已清理，主receipt0/矩阵COMPLETED|60/报告SHA及冻结SHA不变。详见[本轮验证](task18-compose-verification-20260906.md)。仍禁止冻结test/receipt/步骤6/7/tag/push；提交后停止等待督导。
 
+2026-09-07 P1交接：控制凭据仅Payment只读挂载，跨进程锁覆盖完整流程；auth03三轮真实Compose通过，scratch551 passed/4 skipped。完整证据见docs/task18-control-verification-20260907.md。继续等待督导go/no-go。
+
 ## 工作位置
 
 - 仓库：`E:\JavaProjects\OpsPilot`

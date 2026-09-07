@@ -1,7 +1,10 @@
+import secrets
+
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from opspilot.demo_control import CONTROL_HEADER, control_proof
 from opspilot.observability.tracing import configure_tracing, traced_stage
 
 
@@ -80,3 +83,42 @@ def test_trace_records_only_sanitized_exception_and_preserves_business_error() -
     assert "13800138000" not in rendered
     assert spans[0].attributes["exception.type"] == "RuntimeError"
     assert str(spans[0].attributes["exception.summary"]).startswith("sha256:")
+
+
+def test_exported_span_never_contains_demo_control_credentials() -> None:
+    secret = secrets.token_bytes(32)
+    signature = control_proof(secret, "POST", "reset", "E2E-" + "c" * 32)
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    configure_tracing(provider)
+    try:
+        try:
+            with traced_stage(
+                "tool.control",
+                "canary-run",
+                {
+                    "control_secret": secret.hex(),
+                    CONTROL_HEADER: signature,
+                    "authorization": "Bearer trace-control-canary",
+                    "contact": "canary@example.com 13800138000",
+                },
+            ):
+                raise RuntimeError(signature)
+        except RuntimeError:
+            pass
+        provider.force_flush()
+        rendered = "".join(span.to_json() for span in exporter.get_finished_spans())
+        assert len(exporter.get_finished_spans()) == 1
+        assert not any(
+            value in rendered
+            for value in (
+                secret.hex(),
+                signature,
+                "trace-control-canary",
+                "canary@example.com",
+                "13800138000",
+            )
+        )
+    finally:
+        configure_tracing(None)

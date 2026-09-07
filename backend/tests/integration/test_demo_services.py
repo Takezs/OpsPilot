@@ -8,11 +8,14 @@ refund id and provider reference (server-side business idempotency key).
 """
 
 import importlib.util
+import secrets
+import uuid
 from pathlib import Path
 
 import httpx
 import pytest
 
+from opspilot.demo_control import control_headers
 from opspilot.tools.adapters.python import (
     get_order_adapter,
     get_refund_status_adapter,
@@ -92,24 +95,36 @@ async def test_demo_reset_is_explicit_and_order_scoped(monkeypatch, enabled: boo
         await client.post("/refunds", json={"order_number": "ORD-002"})
         count = await client.get("/__e2e/refunds/ORD-002/count")
         reset = await client.post("/__e2e/refunds/ORD-002/reset")
-        assert count.status_code == (200 if enabled else 404)
-        assert reset.status_code == (200 if enabled else 404)
-        if enabled:
-            assert count.json() == {"count": 1}
-            assert reset.json() == {"reset": True}
-            assert (await client.get("/__e2e/refunds/ORD-002/count")).json() == {"count": 0}
+        assert count.status_code == 404
+        assert reset.status_code == 404
         assert (await client.post("/__e2e/refunds/UNKNOWN/reset")).status_code == 404
 
 
-async def test_payment_timeout_before_effect_creates_no_refund() -> None:
+@pytest.fixture
+def demo_fault_control(monkeypatch, tmp_path):
+    secret = secrets.token_bytes(32)
+    path = tmp_path / "demo-secret"
+    path.write_bytes(secret)
+    path.chmod(0o600)
+    monkeypatch.setenv("OPSPILOT_DEMO_E2E", "true")
+    monkeypatch.setenv("OPSPILOT_E2E_CONTROL_FILE", str(path))
+    return secret, f"E2E-{uuid.uuid4().hex}"
+
+
+async def test_payment_timeout_before_effect_creates_no_refund(demo_fault_control) -> None:
+    secret, order = demo_fault_control
     app = _load_app("payment_service")
     async with _client_for(app) as client:
+        await client.post(
+            f"/__e2e/refunds/{order}/reset", headers=control_headers(secret, "POST", "reset", order)
+        )
         headers = {
             "x-failure-mode": "timeout_before_effect",
             "x-failure-delay": str(FAILURE_DELAY),
+            **control_headers(secret, "POST", "fault", order),
         }
-        response = await client.post("/refunds", json={"order_number": "A101"}, headers=headers)
-        status = await client.get("/refunds/A101")
+        response = await client.post("/refunds", json={"order_number": order}, headers=headers)
+        status = await client.get(f"/refunds/{order}")
 
     # The delay outlives the caller's read timeout, but no refund is applied, so
     # a retry is safe (a status query finds no refund).
@@ -117,15 +132,20 @@ async def test_payment_timeout_before_effect_creates_no_refund() -> None:
     assert status.status_code == 404
 
 
-async def test_payment_timeout_after_effect_creates_refund() -> None:
+async def test_payment_timeout_after_effect_creates_refund(demo_fault_control) -> None:
+    secret, order = demo_fault_control
     app = _load_app("payment_service")
     async with _client_for(app) as client:
+        await client.post(
+            f"/__e2e/refunds/{order}/reset", headers=control_headers(secret, "POST", "reset", order)
+        )
         headers = {
             "x-failure-mode": "timeout_after_effect",
             "x-failure-delay": str(FAILURE_DELAY),
+            **control_headers(secret, "POST", "fault", order),
         }
-        response = await client.post("/refunds", json={"order_number": "A102"}, headers=headers)
-        status = await client.get("/refunds/A102")
+        response = await client.post("/refunds", json={"order_number": order}, headers=headers)
+        status = await client.get(f"/refunds/{order}")
 
     # The refund WAS applied before the delay; reconciliation must treat the
     # operation as possibly-succeeded and query status instead of retrying.
@@ -134,12 +154,19 @@ async def test_payment_timeout_after_effect_creates_refund() -> None:
     assert status.json()["status"] == "REFUNDED"
 
 
-async def test_payment_unknown_5xx_after_effect_creates_refund() -> None:
+async def test_payment_unknown_5xx_after_effect_creates_refund(demo_fault_control) -> None:
+    secret, order = demo_fault_control
     app = _load_app("payment_service")
     async with _client_for(app) as client:
-        headers = {"x-failure-mode": "unknown_5xx_after_effect"}
-        response = await client.post("/refunds", json={"order_number": "A103"}, headers=headers)
-        status = await client.get("/refunds/A103")
+        await client.post(
+            f"/__e2e/refunds/{order}/reset", headers=control_headers(secret, "POST", "reset", order)
+        )
+        headers = {
+            "x-failure-mode": "unknown_5xx_after_effect",
+            **control_headers(secret, "POST", "fault", order),
+        }
+        response = await client.post("/refunds", json={"order_number": order}, headers=headers)
+        status = await client.get(f"/refunds/{order}")
 
     assert response.status_code == 500
     assert status.status_code == 200

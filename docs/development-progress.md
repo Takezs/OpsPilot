@@ -3,6 +3,8 @@
 > 2026-09-06 Task18最新补充：步骤1–5 Compose控制面最小修复完成，等待督导go/no-go；Runner词法强制已按裁决撤去。隔离同镜像单轮1 passed/随后连续3 passed（114.96s），每轮精确引用、PG/history连续、reconciliation、refund count=1。本轮历史已解析20次（含新4次），另有仅FF的未解析命令，不再以旧6次口径代表总数。聚焦126、完整scratch 528 passed/4 skipped（1371.29s）、frontend19/8、Mypy117通过；Ruff check通过，format仅既有0019格式债；0023全链通过，scratch与RC已清理。详见[本轮验证及完整attempt清单](task18-compose-verification-20260906.md)。冻结test、receipt、步骤6/7、tag/push仍未执行。
 
 > 最后更新：2026-09-02
+>
+> 2026-09-07 Task18 P1复审：文件凭据、订单绑定HMAC、跨进程PG锁和SpanExporter canary均已修复验证；auth03并发/单轮/连续3轮真实Compose通过，scratch551 passed/4 skipped。详见task18-control-verification-20260907.md。冻结test、receipt、步骤6/7、tag/push未执行。
 > 当前分支：`plan/opspilot-core-mvp`  
 > 当前阶段：M1–M5 / 任务 1–17 已通过督导复审；任务 18 步骤 1–5 发布候选等待督导复审
 

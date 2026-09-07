@@ -13,7 +13,17 @@ from opspilot.runs.sanitize import sanitize_value
 _CONTENT_KEYS = frozenset({"prompt", "content", "request", "response", "provider_response"})
 _QUERY_PARAMETER = re.compile(r"([?&])([^=&#]+)=([^&#]*)")
 _QUERY_CREDENTIAL_KEYS = frozenset(
-    {"token", "access_token", "api_key", "key", "secret", "password", "authorization"}
+    {
+        "token",
+        "access_token",
+        "api_key",
+        "key",
+        "secret",
+        "password",
+        "authorization",
+        "x_opspilot_control_token",
+        "control_secret",
+    }
 )
 _MAX_KEY_LENGTH = 256
 _MAX_KEY_NORMALIZATION_ROUNDS = 4
@@ -192,7 +202,11 @@ def safe_attributes(values: Mapping[str, object]) -> dict[str, object]:
     """Return bounded attributes without raw prompts, provider bodies, secrets or PII."""
     result: dict[str, object] = {}
     for key, value in values.items():
-        result[key] = _summary(value) if key.casefold() in _CONTENT_KEYS else sanitize_value(value)
+        result[key] = (
+            _summary(value)
+            if key.casefold() in _CONTENT_KEYS
+            else cast(dict[str, object], sanitize_value({key: value}))[key]
+        )
     return result
 
 

@@ -84,7 +84,8 @@ services:
       retries: 10
   order:
     <<: *backend
-    environment: {}
+    environment:
+      OPSPILOT_DEMO_E2E: ${OPSPILOT_DEMO_E2E:-false}
     volumes: []
     command: [uvicorn, app:app, --app-dir, /app/demo-services/order_service, --host, 0.0.0.0, --port, "8101"]
     healthcheck: &order-health
@@ -96,8 +97,8 @@ services:
     <<: *backend
     environment:
       OPSPILOT_DEMO_E2E: ${OPSPILOT_DEMO_E2E:-false}
-      OPSPILOT_DEMO_E2E_TIMEOUT_ORDER: ${OPSPILOT_DEMO_E2E_TIMEOUT_ORDER:-}
-    volumes: []
+      OPSPILOT_E2E_CONTROL_FILE: /run/opspilot-e2e/control
+    volumes: ["opspilot_e2e_control:/run/opspilot-e2e:ro"]
     ports: ["127.0.0.1:${PAYMENT_HOST_PORT:-18102}:8102"]
     command: [uvicorn, app:app, --app-dir, /app/demo-services/payment_service, --host, 0.0.0.0, --port, "8102"]
     healthcheck:
@@ -131,6 +132,7 @@ services:
       retries: 20
 
 volumes:
+  opspilot_e2e_control:
   postgres_data:
   redis_data:
   opspilot_storage:

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import secrets
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
@@ -11,6 +12,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select
 
 from opspilot.agent.knowledge import RunKnowledgeSearch
@@ -18,6 +20,7 @@ from opspilot.auth.models import Role, User
 from opspilot.auth.service import AuthService
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
+from opspilot.demo_control import control_headers
 from opspilot.generation.citations import validate_citations
 from opspilot.generation.provider import DeepSeekGenerationProvider, render_generation_prompt
 from opspilot.knowledge.embedding import BgeM3EmbeddingProvider
@@ -25,6 +28,7 @@ from opspilot.knowledge.models import Chunk, Document, DocumentStatus, Knowledge
 from opspilot.retrieval.reranker import BgeReranker
 from opspilot.runs.models import Run, RunEvent
 from opspilot.tools.schemas import SearchKnowledgeArgs
+from tests.e2e import control
 
 ROOT = Path(__file__).parents[3]
 BACKEND = ROOT / "backend"
@@ -36,7 +40,11 @@ API = (
     if COMPOSE_E2E
     else "http://127.0.0.1:18000"
 )
-PAYMENT = os.getenv("OPSPILOT_LIVE_COMPOSE_PAYMENT_URL", "http://127.0.0.1:18102")
+PAYMENT = (
+    os.getenv("OPSPILOT_LIVE_COMPOSE_PAYMENT_URL", "http://127.0.0.1:18102")
+    if COMPOSE_E2E
+    else "http://127.0.0.1:18102"
+)
 
 
 async def _wait(url: str) -> None:
@@ -52,19 +60,22 @@ async def _wait(url: str) -> None:
 
 
 @asynccontextmanager
-async def _runtime():
+async def _runtime(order: str, secret: bytes, secret_path: Path):
     if COMPOSE_E2E:
         await _wait(f"{API}/health")
-        await _wait(f"{PAYMENT}/refunds/ORD-002/eligibility")
+        await _wait(f"{PAYMENT}/health")
         async with httpx.AsyncClient(base_url=PAYMENT, timeout=5) as payment:
-            reset = await payment.post("/__e2e/refunds/ORD-002/reset")
+            reset = await payment.post(
+                f"/__e2e/refunds/{order}/reset",
+                headers=control_headers(secret, "POST", "reset", order),
+            )
             reset.raise_for_status()
         yield
         return
     env = os.environ.copy()
+    env.pop("OPSPILOT_E2E_CONTROL_FILE", None)
     env.update(
         OPSPILOT_DEMO_E2E="true",
-        OPSPILOT_DEMO_E2E_TIMEOUT_ORDER="ORD-002",
         ORDER_SERVICE_URL="http://127.0.0.1:18101",
         PAYMENT_SERVICE_URL=PAYMENT,
         EMAIL_SERVICE_URL="http://127.0.0.1:18103",
@@ -99,13 +110,28 @@ async def _runtime():
     ]
     processes = [
         subprocess.Popen(  # noqa: ASYNC220
-            command, cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            command,
+            cwd=cwd,
+            env=env
+            | (
+                {"OPSPILOT_E2E_CONTROL_FILE": str(secret_path)}
+                if cwd == ROOT / "demo-services" / "payment_service"
+                else {}
+            ),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         for command, cwd in commands
     ]
     try:
         await _wait(f"{API}/health")
-        await _wait(f"{PAYMENT}/refunds/ORD-002/eligibility")
+        await _wait(f"{PAYMENT}/health")
+        async with httpx.AsyncClient(base_url=PAYMENT) as payment:
+            reset = await payment.post(
+                f"/__e2e/refunds/{order}/reset",
+                headers=control_headers(secret, "POST", "reset", order),
+            )
+            reset.raise_for_status()
         yield
     finally:
         for process in reversed(processes):
@@ -150,19 +176,42 @@ async def _poll_history(client, run_id, headers, predicate, attempts=180):
     raise AssertionError(f"history timeout: {history}")
 
 
+@pytest_asyncio.fixture
+async def live_runtime(tmp_path):
+    if os.getenv("OPSPILOT_LIVE_PROVIDER_E2E") != "1":
+        pytest.skip("live Provider acceptance is opt-in")
+    secret = control.COMPOSE_SECRET if COMPOSE_E2E else secrets.token_bytes(32)
+    if secret is None:
+        raise RuntimeError("Compose control secret must be injected in memory by the test launcher")
+    order = f"E2E-{uuid.uuid4().hex}"
+    path = tmp_path / "payment-control"
+    if not COMPOSE_E2E:
+        path.write_bytes(secret)
+        path.chmod(0o600)
+    try:
+        async with control.payment_control_lock(Settings().database_url):
+            async with _runtime(order, secret, path):
+                yield order, secret
+    finally:
+        if not COMPOSE_E2E:
+            path.unlink(missing_ok=True)
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize("live_iteration", range(3))
-async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None:
+async def test_public_api_real_provider_refund_flow(live_iteration: int, live_runtime) -> None:
     if os.getenv("OPSPILOT_LIVE_PROVIDER_E2E") != "1":
         pytest.skip("live Provider acceptance is opt-in")
     settings = Settings()
     assert settings.deepseek_api_key
     suffix = uuid.uuid4().hex
+    order, control_secret = live_runtime
     evidence = {
         "attempt_id": suffix,
         "started_at": datetime.now(UTC).isoformat(),
         "iteration": live_iteration,
         "compose": COMPOSE_E2E,
+        "order_id": order,
         "stage": "SETUP",
         "run_created": False,
         "operation_created": False,
@@ -176,7 +225,7 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
     marker = f"LIVE-POLICY-{suffix[:12]}"
     text = (
         f"Policy marker {marker}: refunds above 100 require reviewer approval. "
-        "ORD-002 is a 350 USD order "
+        f"{order} is a 350 USD order "
         "and must be approved before the refund worker executes it."
     )
     embedding_provider = BgeM3EmbeddingProvider(
@@ -230,7 +279,7 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
             await session.commit()
             kb_id = kb.id
 
-        async with _runtime(), httpx.AsyncClient(base_url=API, timeout=10) as client:
+        async with httpx.AsyncClient(base_url=API, timeout=10) as client:
             owner_headers = await _login(client, owner_name, password)
             reviewer_headers = await _login(client, reviewer_name, password)
             response = await client.post("/api/v1/runs", headers=owner_headers)
@@ -315,8 +364,8 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
                 headers=owner_headers,
                 json={
                     "content": (
-                        "Call check_refund_eligibility for ORD-002, then create the "
-                        "refund_order Operation for ORD-002 amount 350."
+                        f"Call check_refund_eligibility for {order}, then create the "
+                        f"refund_order Operation for {order} amount 350."
                     )
                 },
             )
@@ -370,7 +419,10 @@ async def test_public_api_real_provider_refund_flow(live_iteration: int) -> None
                 "operation_reconciled_succeeded",
             } <= types
             async with httpx.AsyncClient(base_url=PAYMENT, timeout=5) as payment:
-                count = await payment.get("/__e2e/refunds/ORD-002/count")
+                count = await payment.get(
+                    f"/__e2e/refunds/{order}/count",
+                    headers=control_headers(control_secret, "GET", "count", order),
+                )
                 count.raise_for_status()
                 assert count.json() == {"count": 1}
             evidence.update(refund_count=1, reconciliation=True, public_seq_contiguous=True)
