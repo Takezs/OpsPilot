@@ -7,6 +7,7 @@ import redis.asyncio as redis_async
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from opspilot.auth.dependencies import get_current_principal
 from opspilot.auth.models import Role
@@ -46,9 +47,21 @@ async def create_run(
     evaluation_correlation: Annotated[str | None, Header(alias="X-Evaluation-Correlation")] = None,
 ) -> RunCreateResponse:
     async with async_session_factory() as session:
-        run = await create_agent_run(
-            session, principal, evaluation_correlation=evaluation_correlation
-        )
+        try:
+            run = await create_agent_run(
+                session, principal, evaluation_correlation=evaluation_correlation
+            )
+        except IntegrityError:
+            await session.rollback()
+            if evaluation_correlation is None:
+                raise HTTPException(status.HTTP_409_CONFLICT, "run creation conflict") from None
+            adopted = await session.scalar(
+                select(Run).where(Run.evaluation_correlation == evaluation_correlation)
+            )
+            if adopted is None:
+                raise HTTPException(status.HTTP_409_CONFLICT, "run correlation conflict") from None
+            run = adopted
+            return RunCreateResponse(run_id=run.id, status=run.status.value)
         await append_event(session, run.id, "run_created", {"owner_user_id": principal.user_id})
         await session.commit()
     return RunCreateResponse(run_id=run.id, status=run.status.value)
@@ -77,15 +90,45 @@ async def create_message(
     run_id: uuid.UUID,
     request: MessageCreateRequest,
     principal: Annotated[Principal, Depends(get_current_principal)],
+    evaluation_correlation: Annotated[str | None, Header(alias="X-Evaluation-Correlation")] = None,
 ) -> MessageCreateResponse:
     async with async_session_factory() as session:
         run = await require_run_access(session, run_id, principal)
         safe = sanitize_payload({"content": request.content})["content"]
         if not isinstance(safe, str):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "invalid message")
-        message = RunMessage(run_id=run.id, role="USER", content=safe)
+        if evaluation_correlation:
+            existing = await session.scalar(
+                select(RunMessage).where(
+                    RunMessage.run_id == run.id,
+                    RunMessage.evaluation_correlation == evaluation_correlation,
+                )
+            )
+            if existing is not None:
+                return MessageCreateResponse(
+                    message_id=existing.id, run_id=run.id, status=run.status.value
+                )
+        message = RunMessage(
+            run_id=run.id, role="USER", content=safe, evaluation_correlation=evaluation_correlation
+        )
         session.add(message)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            existing = await session.scalar(
+                select(RunMessage).where(
+                    RunMessage.run_id == run.id,
+                    RunMessage.evaluation_correlation == evaluation_correlation,
+                )
+            )
+            if existing is None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "message correlation conflict"
+                ) from None
+            return MessageCreateResponse(
+                message_id=existing.id, run_id=run.id, status=run.status.value
+            )
         run.status = RunStatus.RUNNING
         await append_event(
             session,

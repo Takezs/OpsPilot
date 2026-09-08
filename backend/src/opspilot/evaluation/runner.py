@@ -114,15 +114,24 @@ class PublicEvaluationApi:
                 if isinstance(row, dict)
             ):
                 message_response = await self._client.post(
-                    f"/runs/{run_id}/messages", headers=self._headers, json={"content": case.query}
+                    f"/runs/{run_id}/messages",
+                    headers={**self._headers, "X-Evaluation-Correlation": correlation},
+                    json={"content": case.query},
                 )
                 message_response.raise_for_status()
         elif lookup.status_code in {200, 404}:
             run_response = await self._client.post(
                 "/runs", headers={**self._headers, "X-Evaluation-Correlation": correlation}
             )
-            run_response.raise_for_status()
-            run_id = str(run_response.json()["run_id"])
+            if run_response.status_code == 409:
+                adopted = await self._client.get(
+                    f"/runs/by-correlation/{correlation}", headers=self._headers
+                )
+                adopted.raise_for_status()
+                run_id = str(adopted.json()["run_id"])
+            else:
+                run_response.raise_for_status()
+                run_id = str(run_response.json()["run_id"])
             message_response = await self._client.post(
                 f"/runs/{run_id}/messages", headers=self._headers, json={"content": case.query}
             )
