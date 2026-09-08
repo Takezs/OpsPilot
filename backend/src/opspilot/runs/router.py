@@ -43,7 +43,7 @@ def _safe_diagnostic(value: str | None) -> str | None:
 @router.post("", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_run(
     principal: Annotated[Principal, Depends(get_current_principal)],
-    evaluation_correlation: Annotated[str | None, Header()] = None,
+    evaluation_correlation: Annotated[str | None, Header(alias="X-Evaluation-Correlation")] = None,
 ) -> RunCreateResponse:
     async with async_session_factory() as session:
         run = await create_agent_run(

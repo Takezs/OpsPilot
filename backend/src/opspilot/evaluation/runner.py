@@ -104,6 +104,19 @@ class PublicEvaluationApi:
         lookup_value = lookup.json() if lookup.status_code == 200 else {}
         if lookup.status_code == 200 and isinstance(lookup_value.get("run_id"), str):
             run_id = lookup_value["run_id"]
+            existing_history = await self._client.get(
+                f"/runs/{run_id}/history", headers=self._headers
+            )
+            existing_history.raise_for_status()
+            if not any(
+                row.get("event_type") == "user_message_created"
+                for row in existing_history.json()
+                if isinstance(row, dict)
+            ):
+                message_response = await self._client.post(
+                    f"/runs/{run_id}/messages", headers=self._headers, json={"content": case.query}
+                )
+                message_response.raise_for_status()
         elif lookup.status_code in {200, 404}:
             run_response = await self._client.post(
                 "/runs", headers={**self._headers, "X-Evaluation-Correlation": correlation}
