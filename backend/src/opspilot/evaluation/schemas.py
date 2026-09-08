@@ -24,6 +24,10 @@ class ExpectedOutcome(StrEnum):
     MANUAL_REVIEW = "MANUAL_REVIEW"
     REJECTED = "REJECTED"
     DENIED = "DENIED"
+    RETRYING = "RETRYING"
+    READY = "READY"
+    EXECUTING = "EXECUTING"
+    RECONCILING = "RECONCILING"
 
 
 class ApprovalExpectation(StrEnum):
