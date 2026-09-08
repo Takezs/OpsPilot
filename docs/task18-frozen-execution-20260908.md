@@ -39,3 +39,7 @@ Attempt 1：09:59:38–10:00:54 UTC，`TimeoutError: public Run API did not prod
 启动前receipt=0、Alembic0023、PG/Redis/API/DeepSeek models+chat/BGE embedding+reranker及三角色文件鉴权通过；secret canary未命中。manifest文件依照批准约束不可修改，因此其final_test_executed仍false；实际已执行状态以PG唯一receipt及本报告为准，不能据此再次执行。
 
 发布结论：步骤6尝试已消耗唯一机会，但完整性失败。停止等待督导裁决；未开始步骤7、tag、push或外部发布。既有用户未跟踪文件、安装包和ACL临时目录未编辑或清理。
+
+## P1 修复后的最后一次恢复
+
+督导批准 `7a46169bf2478e4c146adae34f3c08f424e37a93` 后重建镜像 `sha256:e611f83737a715e68927f9b3555d456239a3317a148d555d534371fa1a61bdc2`，并授权同 execution 最后一次恢复。恢复在处理 `test-013` 时立即失败：运行中的主 Compose 数据库尚未应用候选的 0024/0025 migrations，API 查询新建的 `agent_runs.evaluation_correlation` 返回 `UndefinedColumnError`。因此没有新增 Run、case、Operation 或 Payment 请求，现有12条case、18个已完成Run和历史Attempts均未改写。Attempt 数现为3（第三次FAILED），receipt仍为1，结果仍12/320。禁止再恢复；该部署迁移阻塞和不完整结果交由督导裁决。
