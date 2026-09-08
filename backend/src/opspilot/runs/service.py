@@ -16,10 +16,14 @@ async def create_agent_run(
     *,
     run_id: uuid.UUID | None = None,
     status_value: RunStatus = RunStatus.QUEUED,
+    evaluation_correlation: str | None = None,
 ) -> Run:
     """Create a user Run; callers cannot supply or forge an owner."""
     run = Run(
-        id=run_id or uuid.uuid4(), owner_user_id=uuid.UUID(principal.user_id), status=status_value
+        id=run_id or uuid.uuid4(),
+        owner_user_id=uuid.UUID(principal.user_id),
+        status=status_value,
+        evaluation_correlation=evaluation_correlation,
     )
     session.add(run)
     await session.flush()

@@ -9,13 +9,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from opspilot.auth.dependencies import get_current_principal
+from opspilot.auth.models import Role
 from opspilot.auth.schemas import Principal
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
 from opspilot.execution.models import Operation, OperationAttempt
 from opspilot.jobs.service import enqueue_run_job
 from opspilot.runs.journal import append_event
-from opspilot.runs.models import RunEvent, RunMessage, RunStatus
+from opspilot.runs.models import Run, RunEvent, RunMessage, RunStatus
 from opspilot.runs.sanitize import sanitize_payload
 from opspilot.runs.schemas import (
     AttemptResponse,
@@ -42,11 +43,28 @@ def _safe_diagnostic(value: str | None) -> str | None:
 @router.post("", response_model=RunCreateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_run(
     principal: Annotated[Principal, Depends(get_current_principal)],
+    evaluation_correlation: Annotated[str | None, Header()] = None,
 ) -> RunCreateResponse:
     async with async_session_factory() as session:
-        run = await create_agent_run(session, principal)
+        run = await create_agent_run(
+            session, principal, evaluation_correlation=evaluation_correlation
+        )
         await append_event(session, run.id, "run_created", {"owner_user_id": principal.user_id})
         await session.commit()
+    return RunCreateResponse(run_id=run.id, status=run.status.value)
+
+
+@router.get("/by-correlation/{correlation}", response_model=RunCreateResponse)
+async def find_correlated_run(
+    correlation: str,
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> RunCreateResponse:
+    async with async_session_factory() as session:
+        run = await session.scalar(select(Run).where(Run.evaluation_correlation == correlation))
+        if run is None or (
+            principal.role is not Role.ADMIN and run.owner_user_id != uuid.UUID(principal.user_id)
+        ):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "run not found")
     return RunCreateResponse(run_id=run.id, status=run.status.value)
 
 

@@ -44,6 +44,9 @@ class Run(Base):
         Enum(RunStatus, name="run_status"), default=RunStatus.QUEUED
     )
     next_seq: Mapped[int] = mapped_column(Integer, default=0)
+    evaluation_correlation: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
     )

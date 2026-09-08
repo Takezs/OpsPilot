@@ -34,7 +34,7 @@ class PublicEvaluationApi:
         token: str = "",
         *,
         poll_seconds: float = 0.25,
-        max_polls: int = 240,
+        max_polls: int = 2400,
         configuration: EvaluationConfiguration | None = None,
         user_credentials_file: str = "",
         reviewer_credentials_file: str = "",
@@ -97,15 +97,25 @@ class PublicEvaluationApi:
                 for item in stage
                 if isinstance(item, dict) and item.get("chunk_id") is not None
             ]
-        run_response = await self._client.post("/runs", headers=self._headers)
-        run_response.raise_for_status()
-        run_id = str(run_response.json()["run_id"])
-        message_response = await self._client.post(
-            f"/runs/{run_id}/messages",
-            headers=self._headers,
-            json={"content": case.query},
+        correlation = f"evaluation:{case.case_id}:{repetition}"
+        lookup = await self._client.get(
+            f"/runs/by-correlation/{correlation}", headers=self._headers
         )
-        message_response.raise_for_status()
+        lookup_value = lookup.json() if lookup.status_code == 200 else {}
+        if lookup.status_code == 200 and isinstance(lookup_value.get("run_id"), str):
+            run_id = lookup_value["run_id"]
+        elif lookup.status_code in {200, 404}:
+            run_response = await self._client.post(
+                "/runs", headers={**self._headers, "X-Evaluation-Correlation": correlation}
+            )
+            run_response.raise_for_status()
+            run_id = str(run_response.json()["run_id"])
+            message_response = await self._client.post(
+                f"/runs/{run_id}/messages", headers=self._headers, json={"content": case.query}
+            )
+            message_response.raise_for_status()
+        else:
+            lookup.raise_for_status()
         history: list[dict[str, Any]] = []
         detail: dict[str, Any] = {}
         for _ in range(self._max_polls):

@@ -57,6 +57,7 @@ async def test_runner_uses_only_public_authorized_http_contract() -> None:
         result = await PublicEvaluationApi(client, "opaque-token", poll_seconds=0)(case, 1)
     assert result.actual_output["run_id"] == "run-1"
     assert [item[:2] for item in seen] == [
+        ("GET", "/runs/by-correlation/evaluation:dev-public-http:1"),
         ("POST", "/runs"),
         ("POST", "/runs/run-1/messages"),
         ("GET", "/runs/run-1/history"),
