@@ -133,7 +133,9 @@ class PublicEvaluationApi:
                 run_response.raise_for_status()
                 run_id = str(run_response.json()["run_id"])
             message_response = await self._client.post(
-                f"/runs/{run_id}/messages", headers=self._headers, json={"content": case.query}
+                f"/runs/{run_id}/messages",
+                headers={**self._headers, "X-Evaluation-Correlation": correlation},
+                json={"content": case.query},
             )
             message_response.raise_for_status()
         else:
