@@ -3,7 +3,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0025_evaluation_message_correlation"
+revision: str = "0025_eval_msg_corr"
 down_revision: str | None = "0024_evaluation_run_correlation"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
