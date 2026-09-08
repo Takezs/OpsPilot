@@ -695,6 +695,8 @@ git commit -m "feat: publish reproducible opspilot evaluations"
 
 ### 任务 18：可观测性、部署、文档与 v1.0 验收
 
+**2026-09-08前置部署候选：** 一次性GO仍暂停；完成不可变评测镜像、文件角色凭据和配置/并发契约修复。非冻结greeting/refund01各6结果，peak3；三次真实审批退款均核对成功、public/PG seq=11一致且count=1。最终scratch564 passed/4 skipped，定向102+4、frontend19/8、Mypy122、Ruff208及0023全链通过。冻结语料只作已批准的静态完整性校验，正式receipt=0。详见`docs/task18-evaluation-preflight-20260907.md`；提交候选后等待Bugbot和新GO，步骤6正式执行及步骤7仍未开始。
+
 **2026-09-07 P1复审：** Payment控制面改为文件凭据、订单绑定HMAC与统一404；Compose E2E使用跨进程PG advisory lock并验证断连取消。auth03并发、单轮、连续三轮真实链路通过；最终scratch551 passed/4 skipped。详见`docs/task18-control-verification-20260907.md`。步骤6/7及冻结test继续禁止。
 
 **2026-09-06补充：** 按督导裁决撤去未提交的工具名词法强制；Payment reset增加与count一致的显式DEMO_E2E门控，默认仍404。纯Compose模式不启动第二套本地进程。语义Red3 failed、reset Red1 failed；聚焦126 passed，完整scratch 528 passed/4 skipped。隔离同镜像单轮1 passed、连续3 passed（114.96s），精确引用/连续seq/reconciliation/count=1均成立；RC/scratch已清理。本轮历史已解析20次，另有FF未解析证据，旧六次失败PG删除缺口保留。完整[验证与attempt清单](../../task18-compose-verification-20260906.md)。本次只申请步骤1–5复审并停止，步骤6/7继续禁止。

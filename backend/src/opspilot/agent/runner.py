@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
 
 import httpx
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, omit
 from openai.types.chat import ChatCompletionMessageParam
 
 from opspilot.agent.prompts import render_system_prompt, render_untrusted_tool_output
@@ -596,8 +596,10 @@ class DeepSeekAgentDecider:
         model: str = "deepseek-v4-flash",
         timeout_seconds: float = 60.0,
         proxy_url: str | None = None,
+        temperature: float | None = None,
     ) -> None:
         self.model = model
+        self.temperature = temperature
         http_client = httpx.AsyncClient(proxy=proxy_url) if proxy_url else None
         self._client = AsyncOpenAI(
             base_url=base_url,
@@ -619,6 +621,7 @@ class DeepSeekAgentDecider:
             model=self.model,
             messages=list(prompt.messages),
             response_format={"type": "json_object"},
+            temperature=self.temperature if self.temperature is not None else omit,
         )
         content = response.choices[0].message.content
         if content is None:

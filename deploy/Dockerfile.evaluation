@@ -1,0 +1,23 @@
+FROM python:3.12-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+RUN groupadd --gid 10001 opspilot && useradd --uid 10001 --gid opspilot --create-home opspilot
+WORKDIR /app
+COPY backend/pyproject.toml /app/backend/pyproject.toml
+COPY backend/src /app/backend/src
+COPY backend/alembic /app/backend/alembic
+COPY backend/alembic.ini /app/backend/alembic.ini
+COPY evaluation/datasets/manifest.json evaluation/datasets/test.jsonl evaluation/datasets/agent_tasks.jsonl /app/evaluation/datasets/
+COPY evaluation/generate_datasets.py /app/evaluation/generate_datasets.py
+COPY deploy/evaluation-identity.json /app/evaluation/identity.json
+COPY deploy/evaluation-configuration.json /app/evaluation/configuration.json
+RUN --mount=type=cache,target=/root/.cache/pip pip install --retries 10 --timeout 60 /app/backend \
+    && python -m opspilot.evaluation.artifacts --root /app/evaluation/datasets --identity /app/evaluation/identity.json \
+    && chmod -R a-w /app/evaluation \
+    && install -d -o opspilot -g opspilot -m 0750 /app/data/documents
+USER opspilot
+WORKDIR /app/backend
+CMD ["arq", "opspilot.worker.WorkerSettings"]
+
+FROM runtime AS fixture
+COPY backend/tests/e2e/evaluation_fixture_worker.py /app/evaluation_fixture_worker.py
+CMD ["python", "/app/evaluation_fixture_worker.py"]

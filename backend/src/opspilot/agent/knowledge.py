@@ -47,6 +47,7 @@ class RunKnowledgeSearch:
         *,
         context_token_budget: int,
         reranker_timeout_seconds: float = 5.0,
+        top_k: int | None = None,
     ) -> None:
         if context_token_budget <= 0:
             raise ValueError("context token budget must be positive")
@@ -56,16 +57,18 @@ class RunKnowledgeSearch:
         self._reranker_provider = reranker_provider
         self._context_token_budget = context_token_budget
         self._reranker_timeout_seconds = reranker_timeout_seconds
+        self._top_k = top_k
 
     async def __call__(self, arguments: SearchKnowledgeArgs) -> GroundedSearchResult:
+        top_k = self._top_k if self._top_k is not None else arguments.top_k
         async with self._session_factory() as session:
             principal = await _load_run_principal(session, self._run_id)
             result = await RetrievalService(session, self._embedding_provider).search(
                 arguments.query,
                 principal.knowledge_scope,
-                dense_limit=arguments.top_k,
-                fts_limit=arguments.top_k,
-                fusion_limit=arguments.top_k,
+                dense_limit=top_k,
+                fts_limit=top_k,
+                fusion_limit=top_k,
             )
             metadata = await load_candidate_metadata(session, result.rrf, principal.knowledge_scope)
             rerank_items = [

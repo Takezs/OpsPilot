@@ -319,4 +319,19 @@ def capture_frozen_dataset(root: Path) -> FrozenDatasetSnapshot:
 
 
 def frozen_dataset_identity(root: Path) -> dict[str, str]:
-    return capture_frozen_dataset(root).identity
+    # Build/startup identity checks must not deserialize held-out cases.
+    manifest_bytes = (root / "manifest.json").read_bytes()
+    manifest = DatasetManifest.model_validate_json(manifest_bytes)
+    test_sha = sha256_file(root / "test.jsonl")
+    generator_sha = sha256_file(_trusted_generator_path(root, manifest.generator))
+    if test_sha != manifest.test_sha256:
+        raise ValueError("test dataset SHA-256 mismatch")
+    if generator_sha != manifest.generator_sha256:
+        raise ValueError("generator SHA-256 mismatch")
+    return {
+        "manifest_sha256": _sha256_bytes(manifest_bytes),
+        "test_sha256": test_sha,
+        "agent_tasks_sha256": sha256_file(root / "agent_tasks.jsonl"),
+        "schema_version": manifest.schema_version,
+        "generator_sha256": generator_sha,
+    }

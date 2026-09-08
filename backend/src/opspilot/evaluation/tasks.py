@@ -185,6 +185,17 @@ async def process_evaluation_execution(ctx: dict[str, Any], execution_id: str) -
         raise RuntimeError("evaluation case processor is not configured")
     processor = cast(EvaluationCaseProcessor, processor_value)
     settings = Settings()
+    bind_configuration = getattr(processor, "bind_configuration", None)
+    if callable(bind_configuration):
+        async with async_session_factory() as session:
+            pending = await session.get(EvaluationTestExecution, parsed_id)
+            if pending is None or pending.status != EvaluationExecutionStatus.RUNNING:
+                return
+            locked_configuration = EvaluationConfiguration.model_validate(pending.configuration)
+            expected_configuration_sha = pending.configuration_sha
+        # Authentication/deployment mismatch is rejected before acquiring a
+        # lease and before any case/provider invocation.
+        processor = await bind_configuration(locked_configuration, expected_configuration_sha)
     owner = f"arq:{ctx.get('job_id', 'evaluation')}"
     token = uuid.uuid4().hex
     async with async_session_factory() as session:
@@ -224,9 +235,12 @@ async def process_evaluation_execution(ctx: dict[str, Any], execution_id: str) -
         if snapshot.identity != expected_identity:
             raise ValueError("frozen evaluation dataset identity mismatch")
         cases: tuple[EvaluationCase, ...] = (*snapshot.test_cases, *snapshot.agent_cases)
-        repetitions = EvaluationConfiguration.model_validate(configuration).repetitions
-        for case in cases:
-            case_repetitions = repetitions if isinstance(case, AgentEvaluationCase) else 1
+        locked_configuration = EvaluationConfiguration.model_validate(configuration)
+
+        async def execute_case(case: EvaluationCase) -> None:
+            case_repetitions = (
+                locked_configuration.repetitions if isinstance(case, AgentEvaluationCase) else 1
+            )
             for repetition in range(1, case_repetitions + 1):
                 async with async_session_factory() as session:
                     existing = await session.scalar(
@@ -281,6 +295,24 @@ async def process_evaluation_execution(ctx: dict[str, Any], execution_id: str) -
                         seconds=settings.evaluation_lease_seconds
                     )
                     await session.commit()
+
+        # Concurrency is case-level: repetitions of a single Agent case stay
+        # sequential, while distinct cases share this bounded worker pool.
+        pending_cases = iter(cases)
+
+        async def consume_cases() -> None:
+            for selected_case in pending_cases:
+                await execute_case(selected_case)
+
+        case_workers = [
+            asyncio.create_task(consume_cases())
+            for _ in range(min(locked_configuration.concurrency, len(cases)))
+        ]
+        try:
+            await asyncio.gather(*case_workers)
+        finally:
+            await asyncio.gather(*(_stop_task(task, detach=True) for task in case_workers))
+
         async with async_session_factory() as session:
             current = await _lock_fenced_execution(
                 session, parsed_id, owner, token, claimed_version

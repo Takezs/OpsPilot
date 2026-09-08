@@ -1,0 +1,7 @@
+{
+  "agent_tasks_sha256": "9cdb6843e7dd8fdff3aed6c277339967e6f94a52686601376279b6d5507d8810",
+  "generator_sha256": "d315a705934ca6b2fead21c40cab2e66d0ddfeb6f836d38fa109244aac76f9cd",
+  "manifest_sha256": "01edcc4024c2129592c7e767aeb5994d44613f5c12da1eb9508eab1bf130b078",
+  "schema_version": "1.0.0",
+  "test_sha256": "e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c"
+}

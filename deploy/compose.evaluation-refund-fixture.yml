@@ -1,0 +1,13 @@
+# Test-only fault controls; never include this overlay in a release deployment.
+services:
+  worker:
+    environment:
+      OPSPILOT_SYNTHETIC_REFUND_NAMESPACE: ${OPSPILOT_SYNTHETIC_REFUND_NAMESPACE:?}
+  order:
+    environment:
+      OPSPILOT_DEMO_E2E: "true"
+  payment:
+    environment:
+      OPSPILOT_DEMO_E2E: "true"
+      OPSPILOT_E2E_CONTROL_FILE: /run/opspilot-e2e/control
+    volumes: ["opspilot_e2e_control:/run/opspilot-e2e:ro"]

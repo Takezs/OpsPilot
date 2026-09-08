@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import Field, model_validator
@@ -36,6 +38,12 @@ class Settings(BaseSettings):
     operation_lease_seconds: int = 30
     evaluation_api_base_url: str = "http://127.0.0.1:8000/api/v1"
     evaluation_api_token: str = ""
+    runtime_secrets_file: str = ""
+    evaluation_configuration_file: str = ""
+    evaluation_configuration_sha: str = ""
+    evaluation_identity_file: str = ""
+    evaluation_user_credentials_file: str = ""
+    evaluation_reviewer_credentials_file: str = ""
     evaluation_dataset_root: str = "../evaluation/datasets"
     evaluation_lease_seconds: int = 300
     evaluation_fault_matrix: bool = Field(
@@ -44,6 +52,22 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def reject_weak_production_secret(self) -> Self:
+        if self.runtime_secrets_file:
+            try:
+                with Path(self.runtime_secrets_file).open("rb") as stream:
+                    raw = stream.read(16385)
+                if len(raw) > 16384:
+                    raise ValueError("oversized secrets file")
+                values = json.loads(raw)
+                expected = {"database_url", "jwt_secret", "deepseek_api_key", "bge_api_key"}
+                if not isinstance(values, dict) or set(values) != expected:
+                    raise ValueError("invalid secrets file")
+                if not all(isinstance(value, str) and value for value in values.values()):
+                    raise ValueError("invalid secrets file")
+                for key, value in values.items():
+                    setattr(self, key, value)
+            except (OSError, ValueError, TypeError):
+                raise ValueError("runtime credential file is invalid") from None
         if self.environment == "production" and (
             self.jwt_secret == "development-only-change-me-unsafe" or len(self.jwt_secret) < 32
         ):

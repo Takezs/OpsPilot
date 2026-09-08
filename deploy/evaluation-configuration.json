@@ -1,0 +1,1 @@
+{"concurrency":3,"embedding_model":"bge-m3","model":"deepseek-v4-flash","prompt_version":"task18-rc1","random_parameters":{"temperature":0.0},"repetitions":3,"reranker_model":"bge-reranker-v2-m3","top_k":5}

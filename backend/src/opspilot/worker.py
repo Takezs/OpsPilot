@@ -1,4 +1,6 @@
 from collections.abc import Callable
+from pathlib import Path
+from typing import cast
 
 import httpx
 from arq import func
@@ -14,7 +16,10 @@ from opspilot.agent.runner import (
 )
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
+from opspilot.evaluation.artifacts import verify_artifacts
+from opspilot.evaluation.preflight import runtime_health
 from opspilot.evaluation.runner import PublicEvaluationApi
+from opspilot.evaluation.runtime import configuration_settings, deployment_configuration
 from opspilot.evaluation.tasks import (
     drain_detached_evaluation_tasks,
     process_evaluation_execution,
@@ -75,6 +80,28 @@ async def startup_worker(ctx: dict[str, object]) -> None:
     # final runtime handlers receive the same redaction filter.
     install_safe_logging()
     settings = Settings()
+    evaluation_configuration = deployment_configuration(settings)
+    if evaluation_configuration is not None:
+        verify_artifacts(
+            Path(settings.evaluation_dataset_root), Path(settings.evaluation_identity_file)
+        )
+        settings = configuration_settings(settings, evaluation_configuration)
+        if (
+            settings.evaluation_api_token
+            or not settings.evaluation_user_credentials_file
+            or not settings.evaluation_reviewer_credentials_file
+        ):
+            raise ValueError("evaluation requires external role-specific credential files")
+        if settings.evaluation_api_base_url != "http://api:8000/api/v1":
+            raise ValueError("evaluation requires the explicit Compose API service URL")
+        health = await runtime_health(settings, evaluation_configuration)
+        if not all(health.values()):
+            raise ValueError("evaluation runtime preflight failed")
+    evaluation_temperature = (
+        float(cast(float, evaluation_configuration.random_parameters["temperature"]))
+        if evaluation_configuration is not None
+        else None
+    )
     order_client = httpx.AsyncClient(base_url=settings.order_service_url, timeout=5)
     payment_client = httpx.AsyncClient(base_url=settings.payment_service_url, timeout=5)
     email_client = httpx.AsyncClient(base_url=settings.email_service_url, timeout=5)
@@ -92,6 +119,7 @@ async def startup_worker(ctx: dict[str, object]) -> None:
         base_url=settings.deepseek_base_url,
         model=settings.deepseek_model,
         proxy_url=settings.deepseek_proxy_url,
+        temperature=evaluation_temperature if evaluation_temperature is not None else 0.0,
     )
     generation_service = GenerationService(generation_provider)
     decider = DeepSeekAgentDecider(
@@ -99,6 +127,7 @@ async def startup_worker(ctx: dict[str, object]) -> None:
         base_url=settings.deepseek_base_url,
         model=settings.deepseek_model,
         proxy_url=settings.deepseek_proxy_url,
+        temperature=evaluation_temperature,
     )
     ctx.update(
         embedding_provider=embedding_provider,
@@ -111,7 +140,18 @@ async def startup_worker(ctx: dict[str, object]) -> None:
         timeout=30,
     )
     ctx["evaluation_api_client"] = evaluation_api_client
-    if settings.evaluation_api_token:
+    if evaluation_configuration is not None:
+        processor = PublicEvaluationApi(
+            evaluation_api_client,
+            configuration=evaluation_configuration,
+            user_credentials_file=settings.evaluation_user_credentials_file,
+            reviewer_credentials_file=settings.evaluation_reviewer_credentials_file,
+        )
+        await processor.bind_configuration(
+            evaluation_configuration, settings.evaluation_configuration_sha
+        )
+        ctx["evaluation_case_processor"] = processor
+    elif settings.evaluation_api_token:
         ctx["evaluation_case_processor"] = PublicEvaluationApi(
             evaluation_api_client, settings.evaluation_api_token
         )
@@ -125,6 +165,7 @@ async def startup_worker(ctx: dict[str, object]) -> None:
             reranker_provider,
             context_token_budget=settings.generation_context_token_budget,
             reranker_timeout_seconds=settings.retrieval_reranker_timeout_seconds,
+            top_k=evaluation_configuration.top_k if evaluation_configuration is not None else None,
         )
 
         async def search_tool(arguments: SearchKnowledgeArgs) -> ToolResult:

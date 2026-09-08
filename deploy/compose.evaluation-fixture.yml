@@ -1,0 +1,4 @@
+services:
+  worker:
+    image: ${EVALUATION_FIXTURE_IMAGE:?immutable synthetic fixture image ID required}
+    command: [python, /app/evaluation_fixture_worker.py]

@@ -11,8 +11,10 @@ from opspilot.auth.dependencies import get_current_principal
 from opspilot.auth.schemas import Principal
 from opspilot.config import Settings
 from opspilot.db import async_session_factory
+from opspilot.evaluation.config import configuration_sha256
 from opspilot.evaluation.models import EvaluationCaseRecord, EvaluationRun, EvaluationTestExecution
 from opspilot.evaluation.report import build_report_artifacts
+from opspilot.evaluation.runtime import deployment_configuration
 from opspilot.evaluation.schemas import (
     DatasetManifest,
     EvaluationExecutionResponse,
@@ -30,6 +32,19 @@ from opspilot.evaluation.service import (
 )
 
 router = APIRouter(prefix="/evaluations", tags=["evaluations"])
+
+
+@router.get("/runtime")
+async def evaluation_runtime(
+    principal: Annotated[Principal, Depends(get_current_principal)],
+) -> dict[str, object]:
+    configuration = deployment_configuration(Settings())
+    if configuration is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "evaluation runtime unavailable")
+    return {
+        "configuration": configuration.model_dump(mode="json"),
+        "configuration_sha": configuration_sha256(configuration),
+    }
 
 
 def _response(row: EvaluationTestExecution) -> EvaluationExecutionResponse:
@@ -64,6 +79,14 @@ async def freeze_test(
     request: FreezeEvaluationRequest,
     principal: Annotated[Principal, Depends(get_current_principal)],
 ) -> EvaluationExecutionResponse:
+    settings = Settings()
+    deployed = deployment_configuration(settings)
+    if settings.environment == "production" and deployed is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "evaluation deployment unavailable"
+        )
+    if deployed is not None and deployed != request.configuration:
+        raise HTTPException(status.HTTP_409_CONFLICT, "evaluation configuration is not deployed")
     manifest = DatasetManifest.model_validate_json(
         (Path(Settings().evaluation_dataset_root) / "manifest.json").read_text(encoding="utf-8")
     )

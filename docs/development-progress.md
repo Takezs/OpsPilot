@@ -1,5 +1,7 @@
 # OpsPilot 开发进度
 
+> 2026-09-08 Task18步骤6前置候选修复完成：不可变镜像、文件角色凭据及配置绑定，case级并发3。最终scratch 564 passed/4 skipped（1388.02s），定向102 passed及PG/Redis重复投递/取消/恢复4 passed；Mypy122、Ruff check/format208、frontend19/8及typecheck/build、Alembic0001→0023通过。非冻结greeting和refund01分别6条唯一结果、peak3；refund01三次真实审批退款均OUTCOME_UNKNOWN→RECONCILING→SUCCEEDED、public/PG seq=11连续一致、count=1。隔离资源已清理。督导允许静态解析冻结语料；未通过Runner执行或评分，主receipt=0/case=77/attempt=0、矩阵COMPLETED|60及全部SHA不变。详见[前置验证](task18-evaluation-preflight-20260907.md)。提交独立候选后等待Bugbot及新GO，禁止正式执行、步骤7/tag/push。
+
 > 2026-09-06 Task18最新补充：步骤1–5 Compose控制面最小修复完成，等待督导go/no-go；Runner词法强制已按裁决撤去。隔离同镜像单轮1 passed/随后连续3 passed（114.96s），每轮精确引用、PG/history连续、reconciliation、refund count=1。本轮历史已解析20次（含新4次），另有仅FF的未解析命令，不再以旧6次口径代表总数。聚焦126、完整scratch 528 passed/4 skipped（1371.29s）、frontend19/8、Mypy117通过；Ruff check通过，format仅既有0019格式债；0023全链通过，scratch与RC已清理。详见[本轮验证及完整attempt清单](task18-compose-verification-20260906.md)。冻结test、receipt、步骤6/7、tag/push仍未执行。
 
 > 最后更新：2026-09-02

@@ -11,6 +11,7 @@ from opspilot.auth.dependencies import get_current_principal
 from opspilot.auth.schemas import Principal
 from opspilot.config import Settings
 from opspilot.db import get_session
+from opspilot.evaluation.runtime import configuration_settings, deployment_configuration
 from opspilot.knowledge.embedding import BgeM3EmbeddingProvider, EmbeddingProvider
 from opspilot.knowledge.models import KnowledgeBase
 from opspilot.retrieval.enrichment import CandidateMetadata, load_candidate_metadata
@@ -58,6 +59,9 @@ class RetrievalDebugResponse(BaseModel):
 
 async def get_embedding_provider() -> AsyncIterator[EmbeddingProvider]:
     settings = Settings()
+    configuration = deployment_configuration(settings)
+    if configuration is not None:
+        settings = configuration_settings(settings, configuration)
     provider = BgeM3EmbeddingProvider(
         settings.bge_base_url, settings.bge_api_key, settings.bge_embedding_model
     )
@@ -69,6 +73,9 @@ async def get_embedding_provider() -> AsyncIterator[EmbeddingProvider]:
 
 async def get_reranker_provider() -> AsyncIterator[RerankerProvider]:
     settings = Settings()
+    configuration = deployment_configuration(settings)
+    if configuration is not None:
+        settings = configuration_settings(settings, configuration)
     provider = BgeReranker(
         settings.bge_base_url,
         settings.bge_api_key,

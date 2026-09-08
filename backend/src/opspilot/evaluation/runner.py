@@ -2,12 +2,15 @@
 
 import asyncio
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from opspilot.evaluation.agent_metrics import ActualAgentOutcome, ToolCall, evaluate_agent_outcome
 from opspilot.evaluation.answer_metrics import evaluate_answer_facts, evaluate_citation_ids
+from opspilot.evaluation.config import configuration_sha256
+from opspilot.evaluation.credentials import authenticate_file
 from opspilot.evaluation.retrieval_metrics import (
     mean_reciprocal_rank,
     ndcg_at_k,
@@ -18,6 +21,7 @@ from opspilot.evaluation.schemas import (
     AgentEvaluationCase,
     ApprovalExpectation,
     EvaluationCase,
+    EvaluationConfiguration,
     ExpectedOutcome,
 )
 from opspilot.evaluation.tasks import EvaluationCaseResult
@@ -27,25 +31,63 @@ class PublicEvaluationApi:
     def __init__(
         self,
         client: httpx.AsyncClient,
-        token: str,
+        token: str = "",
         *,
         poll_seconds: float = 0.25,
         max_polls: int = 240,
+        configuration: EvaluationConfiguration | None = None,
+        user_credentials_file: str = "",
+        reviewer_credentials_file: str = "",
     ) -> None:
-        if not token:
+        if not token and not user_credentials_file:
             raise ValueError("evaluation API token is required")
         self._client = client
         self._headers = {"Authorization": f"Bearer {token}"}
         self._poll_seconds = poll_seconds
         self._max_polls = max_polls
+        self._configuration = configuration
+        self._user_credentials_file = user_credentials_file
+        self._reviewer_credentials_file = reviewer_credentials_file
+        self._reviewer_headers: dict[str, str] = {}
+
+    async def bind_configuration(
+        self, configuration: EvaluationConfiguration, expected_sha: str
+    ) -> "PublicEvaluationApi":
+        if configuration_sha256(configuration) != expected_sha:
+            raise ValueError("receipt configuration identity mismatch")
+        if self._configuration != configuration:
+            raise ValueError("receipt and production composition do not match")
+        await self._authenticate()
+        response = await self._client.get("/evaluations/runtime", headers=self._headers)
+        if response.status_code != 200:
+            raise ValueError("evaluation API runtime unavailable")
+        value = response.json()
+        if value.get("configuration_sha") != expected_sha or value.get("configuration") != (
+            configuration.model_dump(mode="json")
+        ):
+            raise ValueError("API and receipt configuration do not match")
+        return self
+
+    async def _authenticate(self) -> None:
+        if self._user_credentials_file:
+            self._headers = await authenticate_file(
+                self._client, Path(self._user_credentials_file), expected_role="USER"
+            )
+            self._reviewer_headers = await authenticate_file(
+                self._client, Path(self._reviewer_credentials_file), expected_role="REVIEWER"
+            )
 
     async def __call__(self, case: EvaluationCase, repetition: int) -> EvaluationCaseResult:
+        # Refresh short-lived credentials between cases, never elevate the USER
+        # workflow to ADMIN. Each request retains its own header dict.
+        await self._authenticate()
+        top_k = self._configuration.top_k if self._configuration is not None else 5
         ranked_ids: list[str] = []
         if case.relevant_chunk_ids:
             retrieval_response = await self._client.post(
                 "/retrieval/debug",
                 headers=self._headers,
-                json={"query": case.query, "top_k": 5},
+                json={"query": case.query, "top_k": top_k},
             )
             retrieval_response.raise_for_status()
             retrieval = retrieval_response.json()
@@ -85,6 +127,54 @@ class PublicEvaluationApi:
         )
         payload_value = assistant.get("payload")
         payload: dict[str, Any] = payload_value if isinstance(payload_value, dict) else {}
+        # Reviewer actions use a separate authenticated Principal. The USER
+        # token continues to own all Run, history and retrieval requests.
+        if (
+            isinstance(case, AgentEvaluationCase)
+            and self._reviewer_headers
+            and (
+                case.expected_approval
+                in {ApprovalExpectation.APPROVED, ApprovalExpectation.REJECTED}
+            )
+        ):
+            operations = detail.get("operations", [])
+            waiting = [row for row in operations if row.get("status") == "WAITING_APPROVAL"]
+            if waiting:
+                approvals = await self._client.get(
+                    "/approval-requests?status=PENDING", headers=self._reviewer_headers
+                )
+                approvals.raise_for_status()
+                for operation in waiting:
+                    approval = next(
+                        (row for row in approvals.json() if row["operation_id"] == operation["id"]),
+                        None,
+                    )
+                    if approval is None:
+                        raise ValueError("evaluation approval is unavailable")
+                    decision = (
+                        "APPROVE"
+                        if case.expected_approval == ApprovalExpectation.APPROVED
+                        else "REJECT"
+                    )
+                    response = await self._client.post(
+                        f"/approval-requests/{approval['id']}/decisions",
+                        headers=self._reviewer_headers,
+                        json={"decision": decision, "comment": "evaluation scenario"},
+                    )
+                    response.raise_for_status()
+                for _ in range(self._max_polls):
+                    response = await self._client.get(f"/runs/{run_id}", headers=self._headers)
+                    response.raise_for_status()
+                    detail = response.json()
+                    if all(
+                        row["status"]
+                        in {"SUCCEEDED", "FAILED", "REJECTED", "DENIED", "MANUAL_REVIEW"}
+                        for row in detail.get("operations", [])
+                    ):
+                        break
+                    await asyncio.sleep(self._poll_seconds)
+                else:
+                    raise TimeoutError("evaluation operation did not reach a terminal state")
         citation_ids = _citation_ids(payload.get("citations", []))
         citation_score = evaluate_citation_ids(citation_ids, case.expected_citation_ids)
         content = str(payload.get("content", ""))
@@ -207,6 +297,11 @@ class PublicEvaluationApi:
                 "ranked_chunk_ids": ranked_ids,
                 "final_state": final_state,
                 "operations": operations,
+                **(
+                    {"configuration_sha": configuration_sha256(self._configuration)}
+                    if self._configuration is not None
+                    else {}
+                ),
                 **actual_flags,
             },
             deterministic_scores=deterministic,

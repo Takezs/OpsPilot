@@ -1,0 +1,68 @@
+# Use only after the candidate image and the operator's preflight are approved.
+# EVALUATION_IMAGE must be an immutable image ID, never a mutable tag.
+services:
+  api:
+    image: ${EVALUATION_IMAGE:?immutable evaluation image ID required}
+    build: !reset null
+    environment: &evaluation_environment
+      RUNTIME_SECRETS_FILE: /run/secrets/evaluation_runtime
+      DATABASE_URL: ""
+      JWT_SECRET: ""
+      DEEPSEEK_API_KEY: ""
+      BGE_API_KEY: ""
+      EVALUATION_CONFIGURATION_FILE: /app/evaluation/configuration.json
+      EVALUATION_CONFIGURATION_SHA: ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693
+      EVALUATION_IDENTITY_FILE: /app/evaluation/identity.json
+      EVALUATION_DATASET_ROOT: /app/evaluation/datasets
+      EVALUATION_API_BASE_URL: http://api:8000/api/v1
+      EVALUATION_API_TOKEN: ""
+      OPSPILOT_DEMO_E2E: "false"
+      OPSPILOT_EVAL_FAULT_MATRIX: "false"
+      OPSPILOT_E2E_CONTROL_FILE: ""
+    secrets:
+      - evaluation_runtime
+  worker:
+    image: ${EVALUATION_IMAGE:?immutable evaluation image ID required}
+    build: !reset null
+    environment:
+      <<: *evaluation_environment
+      EVALUATION_USER_CREDENTIALS_FILE: /run/secrets/evaluation_user
+      EVALUATION_REVIEWER_CREDENTIALS_FILE: /run/secrets/evaluation_reviewer
+    secrets:
+      - evaluation_runtime
+      - evaluation_user
+      - evaluation_reviewer
+  outbox-publisher:
+    image: ${EVALUATION_IMAGE:?immutable evaluation image ID required}
+    build: !reset null
+    environment:
+      <<: *evaluation_environment
+    secrets:
+      - evaluation_runtime
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: !reset null
+      POSTGRES_PASSWORD_FILE: /run/secrets/evaluation_postgres
+    secrets:
+      - evaluation_postgres
+  payment:
+    environment:
+      OPSPILOT_DEMO_E2E: "false"
+      OPSPILOT_EVAL_FAULT_MATRIX: "false"
+      OPSPILOT_E2E_CONTROL_FILE: ""
+    volumes: !reset []
+  order:
+    environment:
+      OPSPILOT_DEMO_E2E: "false"
+      OPSPILOT_EVAL_FAULT_MATRIX: "false"
+secrets:
+  evaluation_runtime:
+    file: ${EVALUATION_RUNTIME_CREDENTIALS_PATH:?external runtime credential file required}
+  evaluation_postgres:
+    file: ${EVALUATION_POSTGRES_CREDENTIALS_PATH:?external PostgreSQL credential file required}
+  # Externally generated short-lived role identities. No ADMIN credential is
+  # mounted into API or Worker. The control operator authenticates separately.
+  evaluation_user:
+    file: ${EVALUATION_USER_CREDENTIALS_PATH:?external USER credential file required}
+  evaluation_reviewer:
+    file: ${EVALUATION_REVIEWER_CREDENTIALS_PATH:?external REVIEWER credential file required}

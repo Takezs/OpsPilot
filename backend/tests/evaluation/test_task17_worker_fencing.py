@@ -7,6 +7,7 @@ from sqlalchemy import delete, select, text, update
 
 from opspilot.auth.models import Role, User
 from opspilot.db import async_session_factory
+from opspilot.evaluation.config import configuration_sha256
 from opspilot.evaluation.models import (
     EvaluationCaseRecord,
     EvaluationExecutionAttempt,
@@ -47,7 +48,9 @@ def _case(case_id: str) -> EvaluationCase:
     )
 
 
-async def _create_execution() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, dict[str, str]]:
+async def _create_execution(
+    *, concurrency: int = 1
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, dict[str, str]]:
     user_id, run_id, execution_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     identity = {"snapshot": uuid.uuid4().hex}
     configuration = EvaluationConfiguration(
@@ -57,7 +60,7 @@ async def _create_execution() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, dict[str
         top_k=5,
         prompt_version="fence-v1",
         random_parameters={"temperature": 0.0},
-        concurrency=1,
+        concurrency=concurrency,
         repetitions=3,
     )
     now = datetime.now(UTC)
@@ -96,7 +99,7 @@ async def _create_execution() -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, dict[str
                 dataset_sha=uuid.uuid4().hex * 2,
                 configuration=configuration.model_dump(mode="json"),
                 dataset_identity=identity,
-                configuration_sha=uuid.uuid4().hex * 2,
+                configuration_sha=configuration_sha256(configuration),
                 status=EvaluationExecutionStatus.RUNNING,
                 frozen_by_user_id=user_id,
                 started_by_user_id=user_id,

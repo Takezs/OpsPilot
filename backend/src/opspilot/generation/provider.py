@@ -65,8 +65,10 @@ class DeepSeekGenerationProvider:
         model: str = "deepseek-v4-flash",
         timeout_seconds: float = 60.0,
         proxy_url: str | None = None,
+        temperature: float = 0.0,
     ) -> None:
         self.model = model
+        self.temperature = temperature
         http_client = httpx.AsyncClient(proxy=proxy_url) if proxy_url else None
         self._client = AsyncOpenAI(
             base_url=base_url,
@@ -83,7 +85,7 @@ class DeepSeekGenerationProvider:
                 {"role": "user", "content": prompt.user},
             ],
             response_format={"type": "json_object"},
-            temperature=0,
+            temperature=self.temperature,
         )
         content = response.choices[0].message.content
         if content is None:

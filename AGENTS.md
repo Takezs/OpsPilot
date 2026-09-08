@@ -1,5 +1,7 @@
 # OpsPilot Agent 开发规则
 
+> 2026-09-08 Task18 前置部署修复候选完成：不可变评测镜像、文件角色凭据、配置绑定及case并发已验证。独立scratch 564 passed/4 skipped（1388.02s），定向102+并发恢复4 passed，frontend19/8、Mypy122、Ruff208文件通过。非冻结greeting与refund01各6条结果，peak=3；refund01三次审批退款均核对成功、public/PG seq=11一致、count=1。主receipt=0、case=77、attempt=0；冻结文件仅静态校验，正式GO仍暂停。详见docs/task18-evaluation-preflight-20260907.md；提交候选后等待督导Bugbot，禁止正式冻结执行、步骤7/tag/push。
+
 > 2026-09-06最新Task18状态：步骤1–5 Compose控制面修复完成，等待督导go/no-go。按督导裁决撤去工具名词法强制，不阻止缺参clarify；仅DEMO_E2E/EVAL_FAULT_MATRIX显式启用时允许demo reset，默认关闭。聚焦126 passed；独立scratch完整528 passed/4 skipped；隔离Compose单轮1 passed及同镜像连续3 passed（114.96s）。本轮历史attempt已解析20次，另有FF未解析证据；旧最初六次失败PG行已被测试finally删除，不得宣称仍在。RC已清理，主审计基线不变。详见docs/task18-compose-verification-20260906.md。冻结test、receipt、步骤6/7、tag/push仍禁止。
 
 2026-09-07 P1复审：控制凭据使用Payment专属0400只读文件，HMAC绑定method/action/order；PG advisory lock覆盖整条Compose E2E并在断连时取消。auth03并发、单轮、连续三轮均通过；最终scratch 551 passed/4 skipped。详见docs/task18-control-verification-20260907.md。冻结test、receipt、步骤6/7、tag/push仍禁止。
