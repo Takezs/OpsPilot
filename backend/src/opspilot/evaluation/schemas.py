@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ExpectedOutcome(StrEnum):
+    CREATED = "CREATED"
     ANSWERED = "ANSWERED"
     CLARIFICATION = "CLARIFICATION"
     WAITING_APPROVAL = "WAITING_APPROVAL"
