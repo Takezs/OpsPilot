@@ -744,6 +744,8 @@ make eval-smoke
 
 - [ ] **步骤 6：冻结参数并运行最终测试集**
 
+2026-09-08：已获唯一GO并创建receipt，execution `360b3d08-0f2a-4105-87f1-cd02ed8bc93b` 两个Attempt（一次resume）均公开Run等待超时；12/320结果，状态FAILED，故本步骤完整验收仍未勾选。机会已消耗，禁止重新freeze或第三次resume，保留全部失败和延迟Run；详见`docs/task18-frozen-execution-20260908.md`，等待督导裁决。
+
 记录配置 SHA 后只运行一次冻结的 `test.jsonl`，保存原始结果和失败案例，不删除失败或手改指标。
 
 - [ ] **步骤 7：提交发布版本**

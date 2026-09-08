@@ -1,10 +1,16 @@
 {
   "schema_version": 1,
-  "stage": "pre-frozen-test",
+  "stage": "frozen-test-failed-awaiting-review",
   "dataset_test_sha256": "e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c",
   "canonical_configuration": {"concurrency":3,"embedding_model":"bge-m3","model":"deepseek-v4-flash","prompt_version":"task18-rc1","random_parameters":{"temperature":0.0},"repetitions":3,"reranker_model":"bge-reranker-v2-m3","top_k":5},
   "configuration_sha256": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
-  "frozen_test_executed": false,
+  "frozen_test_executed": true,
+  "formal_execution_id": "360b3d08-0f2a-4105-87f1-cd02ed8bc93b",
+  "formal_evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+  "formal_execution_status": "FAILED",
+  "formal_case_repetitions": 12,
+  "expected_case_repetitions": 320,
+  "resume_count": 1,
   "formal_dev_matrix_run_id": "0108b7b2-991d-49d3-9e6e-d2ff50ce5c38",
   "formal_results_sha256": "d9f1c5a26abbce5ee0e521146a39864c0fcbdc517533c7869d7aca84e843c220"
 }

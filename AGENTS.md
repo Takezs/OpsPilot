@@ -1,5 +1,7 @@
 # OpsPilot Agent 开发规则
 
+> 2026-09-08 唯一冻结test已启动并失败：execution360b3d08-0f2a-4105-87f1-cd02ed8bc93b，receipt=1，2个Attempt/仅1次resume，因相同公开Run等待窗口TimeoutError停止。12/320结果，缺308；禁止第三次resume、新receipt或恢复备份。所有原Run/Journal/失败保留，详见docs/task18-frozen-execution-20260908.md。冻结manifest仍不可变，文件false不代表机会未消耗。步骤7/tag/push禁止，等待督导裁决。
+
 > 2026-09-08 Task18 前置部署修复候选完成：不可变评测镜像、文件角色凭据、配置绑定及case并发已验证。独立scratch 564 passed/4 skipped（1388.02s），定向102+并发恢复4 passed，frontend19/8、Mypy122、Ruff208文件通过。非冻结greeting与refund01各6条结果，peak=3；refund01三次审批退款均核对成功、public/PG seq=11一致、count=1。主receipt=0、case=77、attempt=0；冻结文件仅静态校验，正式GO仍暂停。详见docs/task18-evaluation-preflight-20260907.md；提交候选后等待督导Bugbot，禁止正式冻结执行、步骤7/tag/push。
 
 > 2026-09-06最新Task18状态：步骤1–5 Compose控制面修复完成，等待督导go/no-go。按督导裁决撤去工具名词法强制，不阻止缺参clarify；仅DEMO_E2E/EVAL_FAULT_MATRIX显式启用时允许demo reset，默认关闭。聚焦126 passed；独立scratch完整528 passed/4 skipped；隔离Compose单轮1 passed及同镜像连续3 passed（114.96s）。本轮历史attempt已解析20次，另有FF未解析证据；旧最初六次失败PG行已被测试finally删除，不得宣称仍在。RC已清理，主审计基线不变。详见docs/task18-compose-verification-20260906.md。冻结test、receipt、步骤6/7、tag/push仍禁止。

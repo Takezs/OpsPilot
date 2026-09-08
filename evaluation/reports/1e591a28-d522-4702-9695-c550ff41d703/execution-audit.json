@@ -1,0 +1,177 @@
+{
+  "actual_case_repetitions": 12,
+  "attempt_count": 2,
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "completed_at": "2026-09-08T10:00:54.868198+00:00",
+      "error": "TimeoutError: evaluation failed",
+      "execution_id": "360b3d08-0f2a-4105-87f1-cd02ed8bc93b",
+      "id": "5acf4c5f-b6ad-4d83-a130-9fcac8d31708",
+      "started_at": "2026-09-08T09:59:38.059312+00:00",
+      "started_by_user_id": "2908d553-da8d-41a4-8d08-b0c11058bc16",
+      "status": "FAILED"
+    },
+    {
+      "attempt_number": 2,
+      "completed_at": "2026-09-08T10:04:04.318814+00:00",
+      "error": "TimeoutError: evaluation failed",
+      "execution_id": "360b3d08-0f2a-4105-87f1-cd02ed8bc93b",
+      "id": "df1ea3c4-0bb2-4719-9a1a-6231d94e736c",
+      "started_at": "2026-09-08T10:02:54.799891+00:00",
+      "started_by_user_id": "2908d553-da8d-41a4-8d08-b0c11058bc16",
+      "status": "FAILED"
+    }
+  ],
+  "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+  "dataset_sha": "e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c",
+  "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+  "execution_id": "360b3d08-0f2a-4105-87f1-cd02ed8bc93b",
+  "expected_case_repetitions": 320,
+  "failed_case_repetitions": 12,
+  "journal": [
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "1244cebf-fe62-49f3-a196-0d531b369216"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "1b755f08-93de-4c96-afe2-3022783c1572"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "25e161f5-74ca-4b21-a799-c1f02ac1cf0f"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "33361910-3833-4cd7-b9e0-7a407b4ff9a7"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "43e847b9-abc3-4a04-8040-085c6a4640eb"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "64a7ea99-b2bf-450f-9cc7-f21a4be2eb70"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "720e3252-755d-4f13-8371-6b49a8f9c7d4"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "7df92266-1684-4035-8e04-c9dd44bcec7b"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "b560631a-5715-4b90-b935-7374ece6b2a9"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "eb52b2bd-6db7-459b-b075-af92c7676244"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "f73d1a1c-90e0-47bb-9264-9099d0c44f91"
+    },
+    {
+      "event_count": 3,
+      "first_seq": 1,
+      "last_seq": 3,
+      "run_id": "fe6ac791-333a-43d3-b664-c3442eefddd5"
+    }
+  ],
+  "journal_contiguous": true,
+  "journal_runs": 12,
+  "manifest_final_test_executed": false,
+  "missing_case_repetitions": 308,
+  "operator": {
+    "backup_path": "E:\\OpsPilot-release-20260908\\before-freeze.dump",
+    "backup_sha256": "dce621b1db2ea0b168ff8627e7f347a1a9482d65d3861cde33ddd57d94b16928",
+    "commit": "6e6802ca7683afab6f472662e85eb6343c9c52f7",
+    "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+    "dataset_sha": "e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c",
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "execution_id": "360b3d08-0f2a-4105-87f1-cd02ed8bc93b",
+    "image": "sha256:ef979611da5879c6064a1c713f0a1b35a9e41ca6b438fbb30b8e478e54905a1d",
+    "preflight": {
+      "api": true,
+      "bge_embedding": true,
+      "bge_reranker": true,
+      "deepseek_chat": true,
+      "deepseek_models": true,
+      "postgres": true,
+      "redis": true
+    },
+    "principal_departments": [
+      "evaluation",
+      "support"
+    ],
+    "principal_max_access_level": 1,
+    "receipt_before": 0,
+    "secret_canary_absent": true
+  },
+  "receipt": {
+    "claim_token": null,
+    "completed_at": "2026-09-08T10:04:04.318814+00:00",
+    "configuration": {
+      "concurrency": 3,
+      "embedding_model": "bge-m3",
+      "model": "deepseek-v4-flash",
+      "prompt_version": "task18-rc1",
+      "random_parameters": {
+        "temperature": 0.0
+      },
+      "repetitions": 3,
+      "reranker_model": "bge-reranker-v2-m3",
+      "top_k": 5
+    },
+    "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+    "dataset_identity": {
+      "agent_tasks_sha256": "9cdb6843e7dd8fdff3aed6c277339967e6f94a52686601376279b6d5507d8810",
+      "generator_sha256": "d315a705934ca6b2fead21c40cab2e66d0ddfeb6f836d38fa109244aac76f9cd",
+      "manifest_sha256": "01edcc4024c2129592c7e767aeb5994d44613f5c12da1eb9508eab1bf130b078",
+      "schema_version": "1.0.0",
+      "test_sha256": "e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c"
+    },
+    "dataset_sha": "e0a5eb5a474eeaeeeeeb6a0efbed741e0d422f18fc48af0099ec0ec987ffbf8c",
+    "dataset_version": "2026-08-30.2",
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "failure_summary": "TimeoutError: evaluation failed",
+    "frozen_at": "2026-09-08T09:59:38.04661+00:00",
+    "frozen_by_user_id": "2908d553-da8d-41a4-8d08-b0c11058bc16",
+    "id": "360b3d08-0f2a-4105-87f1-cd02ed8bc93b",
+    "lease_expires_at": null,
+    "lease_owner": null,
+    "started_at": "2026-09-08T09:59:38.059312+00:00",
+    "started_by_user_id": "2908d553-da8d-41a4-8d08-b0c11058bc16",
+    "status": "FAILED",
+    "version": 4
+  },
+  "receipt_count": 1,
+  "resume_count": 1,
+  "status": "FAILED",
+  "unexpected_case_repetitions": 0
+}

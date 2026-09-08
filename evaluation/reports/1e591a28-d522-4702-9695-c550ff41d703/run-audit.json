@@ -1,0 +1,154 @@
+{
+  "completed_runs": 18,
+  "created_attempt_1": 13,
+  "created_attempt_2": 5,
+  "operation_count": 0,
+  "payment_control_count_endpoint_called": false,
+  "payment_refund_post_log_count": 0,
+  "runs": [
+    {
+      "created_at": "2026-09-08T09:59:41.057851+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "7df92266-1684-4035-8e04-c9dd44bcec7b",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T09:59:41.289399+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "eb52b2bd-6db7-459b-b075-af92c7676244",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T09:59:41.329087+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "25e161f5-74ca-4b21-a799-c1f02ac1cf0f",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T09:59:45.860444+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "720e3252-755d-4f13-8371-6b49a8f9c7d4",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T09:59:47.984862+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "fe6ac791-333a-43d3-b664-c3442eefddd5",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T09:59:49.88581+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "6dff165c-7bf2-41f8-bd66-414b24cca4d7",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T09:59:54.462663+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "b560631a-5715-4b90-b935-7374ece6b2a9",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:00:00.359598+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "e7bd1591-15fa-4970-8515-cffeea53fbe8",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:00:03.52374+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "43e847b9-abc3-4a04-8040-085c6a4640eb",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:00:09.670514+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "f73d1a1c-90e0-47bb-9264-9099d0c44f91",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:00:16.946252+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "33361910-3833-4cd7-b9e0-7a407b4ff9a7",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:00:22.389774+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "64a7ea99-b2bf-450f-9cc7-f21a4be2eb70",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:00:40.461768+00:00",
+      "creation_attempt": 1,
+      "event_count": 3,
+      "id": "c36187d9-13cb-4251-ad9a-c1bfcb040ddd",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:02:56.779943+00:00",
+      "creation_attempt": 2,
+      "event_count": 3,
+      "id": "c85726f4-5c1c-4aaa-acb8-0ad1571972c8",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:02:56.780114+00:00",
+      "creation_attempt": 2,
+      "event_count": 3,
+      "id": "1244cebf-fe62-49f3-a196-0d531b369216",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:02:56.84123+00:00",
+      "creation_attempt": 2,
+      "event_count": 3,
+      "id": "278bef3c-55b9-4f2b-b121-aee7b8ab54a0",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:03:48.14903+00:00",
+      "creation_attempt": 2,
+      "event_count": 3,
+      "id": "1b755f08-93de-4c96-afe2-3022783c1572",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    },
+    {
+      "created_at": "2026-09-08T10:03:57.611436+00:00",
+      "creation_attempt": 2,
+      "event_count": 3,
+      "id": "dcdac387-c74b-4d93-8882-193b519deef4",
+      "journal_contiguous": true,
+      "status": "COMPLETED"
+    }
+  ]
+}

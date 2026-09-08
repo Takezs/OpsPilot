@@ -1,5 +1,7 @@
 # OpsPilot Agent 交接说明
 
+> 2026-09-08 最优先：唯一冻结机会已消耗，receipt=1，execution360b3d08-0f2a-4105-87f1-cd02ed8bc93b FAILED。2个Attempt、1次resume后仍同TimeoutError，12/320结果。不得新建receipt、第三次resume、改配置或回滚备份；既有manifest false不能当作未执行。全部证据见docs/task18-frozen-execution-20260908.md及对应报告目录。停止等待督导裁决，未进入发布步骤7/tag/push。
+
 > 2026-09-08 前置部署修复候选门禁完成：独立scratch564 passed/4 skipped，定向102+并发恢复4、frontend19/8、Mypy122、Ruff208文件及0023全链通过。非冻结greeting/refund01各6结果，真实退款三轮seq=11/count=1，配置并发峰值3且重复投递无重复结果，secret canary通过，RC/scratch已清理。完整证据见docs/task18-evaluation-preflight-20260907.md。冻结语料仅静态完整性校验，未正式执行/评分；主receipt=0/case=77/attempt=0，Task17矩阵COMPLETED|60及报告SHA不变。官方send_message_to_thread现可用，阶段报告已送达。候选提交后停止等督导Bugbot及新GO；不得正式执行、步骤7/tag/push。
 
 > 2026-09-06 Task18最新交接：仅修复显式DEMO_E2E Payment reset门控及纯Compose测试编排，等待督导go/no-go。词法工具名强制已撤去，正常解释/否定/缺参clarify恢复；不改Prompt/意图协议。隔离单轮1 passed、同镜像连续3 passed（114.96s），refund count每次1。聚焦126、完整scratch 528 passed/4 skipped、frontend19/8、Mypy117通过；Ruff check通过，format仅既有0019格式债；0023全链通过。本轮历史20次已解析，另有FF未解析记录，最初六次失败PG行被旧finally删除的缺口保留。scratch/RC已清理，主receipt0/矩阵COMPLETED|60/报告SHA及冻结SHA不变。详见[本轮验证](task18-compose-verification-20260906.md)。仍禁止冻结test/receipt/步骤6/7/tag/push；提交后停止等待督导。

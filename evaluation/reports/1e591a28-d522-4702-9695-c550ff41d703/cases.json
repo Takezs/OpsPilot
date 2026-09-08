@@ -1,0 +1,450 @@
+[
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "I couldn't find order ORD-1001 in our system — the order lookup returned a 404 error, which usually means the order number doesn't exist or isn't available. Please double-check the order number and try again, or contact support with your order confirmation email if you believe this is an error.",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [
+        "eed0049b-d7c5-44bb-b872-a7c53225895a",
+        "50877548-b5c0-483e-94a1-00fdf414778c",
+        "fc8c447e-3a1a-465f-a8f5-c91f0a01a200",
+        "0aec1a25-3b16-42b2-8997-385d8c78370b",
+        "1d44f2d8-98ef-4cab-ac8d-bb2db1fb4a9c"
+      ],
+      "repetition": 1,
+      "run_id": "25e161f5-74ca-4b21-a799-c1f02ac1cf0f",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T09:59:47.770345+00:00",
+    "dataset_case_id": "test-001",
+    "deterministic_scores": {
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 0.0,
+      "required_fact_recall": 0.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "41994af6-05fb-4602-a38a-d2027ec6445a",
+    "latency_ms": 7166,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "Could you please provide the order number you'd like to refund?",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [],
+      "repetition": 1,
+      "run_id": "7df92266-1684-4035-8e04-c9dd44bcec7b",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T09:59:45.667242+00:00",
+    "dataset_case_id": "test-002",
+    "deterministic_scores": {
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "required_fact_recall": 1.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "5215769a-9feb-498d-8a0f-6e4ad387a947",
+    "latency_ms": 5059,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "I could not process a refund for ORD-1003 because the order could not be found. The order service returned a 404 error, and the payment service also returned a 404 when checking refund eligibility. Please verify the order number and try again.",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [
+        "0aec1a25-3b16-42b2-8997-385d8c78370b",
+        "1d44f2d8-98ef-4cab-ac8d-bb2db1fb4a9c",
+        "50877548-b5c0-483e-94a1-00fdf414778c",
+        "fc8c447e-3a1a-465f-a8f5-c91f0a01a200",
+        "eed0049b-d7c5-44bb-b872-a7c53225895a"
+      ],
+      "repetition": 1,
+      "run_id": "eb52b2bd-6db7-459b-b075-af92c7676244",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T09:59:48.607329+00:00",
+    "dataset_case_id": "test-003",
+    "deterministic_scores": {
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 0.0,
+      "required_fact_recall": 0.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "b3da425a-a44f-42d9-9ff2-3172734d9793",
+    "latency_ms": 8001,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "Could you confirm the order number? I could not find ORD-1004: both the order lookup and refund eligibility check returned 404 (order not found).",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [
+        "eed0049b-d7c5-44bb-b872-a7c53225895a",
+        "fc8c447e-3a1a-465f-a8f5-c91f0a01a200",
+        "50877548-b5c0-483e-94a1-00fdf414778c",
+        "0aec1a25-3b16-42b2-8997-385d8c78370b",
+        "1d44f2d8-98ef-4cab-ac8d-bb2db1fb4a9c"
+      ],
+      "repetition": 1,
+      "run_id": "720e3252-755d-4f13-8371-6b49a8f9c7d4",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T09:59:54.270122+00:00",
+    "dataset_case_id": "test-004",
+    "deterministic_scores": {
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 0.0,
+      "required_fact_recall": 0.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "2816a568-d2b6-40c7-a790-b79919240809",
+    "latency_ms": 8596,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "I couldn't find ORD-1005 in the order or payment systems (both returned 404). To process the refund safely, could you verify the order number and confirm the refund amount and currency? Also, what details should I include for the delivery uncertainty report?",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [
+        "0aec1a25-3b16-42b2-8997-385d8c78370b",
+        "1d44f2d8-98ef-4cab-ac8d-bb2db1fb4a9c",
+        "fc8c447e-3a1a-465f-a8f5-c91f0a01a200",
+        "eed0049b-d7c5-44bb-b872-a7c53225895a",
+        "50877548-b5c0-483e-94a1-00fdf414778c"
+      ],
+      "repetition": 1,
+      "run_id": "fe6ac791-333a-43d3-b664-c3442eefddd5",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T09:59:59.906371+00:00",
+    "dataset_case_id": "test-005",
+    "deterministic_scores": {
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 0.0,
+      "required_fact_recall": 0.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "2b1e3b70-2e89-41e7-aa6f-d7a682eb5c08",
+    "latency_ms": 12130,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "Please confirm whether you meant ORD-002, or provide additional context for ORD-1006.",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [
+        "0aec1a25-3b16-42b2-8997-385d8c78370b",
+        "1d44f2d8-98ef-4cab-ac8d-bb2db1fb4a9c",
+        "50877548-b5c0-483e-94a1-00fdf414778c",
+        "fc8c447e-3a1a-465f-a8f5-c91f0a01a200",
+        "eed0049b-d7c5-44bb-b872-a7c53225895a"
+      ],
+      "repetition": 1,
+      "run_id": "1244cebf-fe62-49f3-a196-0d531b369216",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T10:03:47.798625+00:00",
+    "dataset_case_id": "test-006",
+    "deterministic_scores": {
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 0.0,
+      "required_fact_recall": 0.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "7da06117-4b9e-4f58-959c-aca5880b0b02",
+    "latency_ms": 51874,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "I couldn't process the refund for ORD-1007. Both the order service and the refund eligibility check returned a 404 error, which means no order matching ORD-1007 was found in our systems. Please double-check the order number and try again.",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [
+        "fc8c447e-3a1a-465f-a8f5-c91f0a01a200",
+        "50877548-b5c0-483e-94a1-00fdf414778c",
+        "eed0049b-d7c5-44bb-b872-a7c53225895a",
+        "0aec1a25-3b16-42b2-8997-385d8c78370b",
+        "1d44f2d8-98ef-4cab-ac8d-bb2db1fb4a9c"
+      ],
+      "repetition": 1,
+      "run_id": "b560631a-5715-4b90-b935-7374ece6b2a9",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T10:00:03.419332+00:00",
+    "dataset_case_id": "test-007",
+    "deterministic_scores": {
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 0.0,
+      "required_fact_recall": 0.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "b29dfb84-45ed-4ed9-8625-fb94185ad212",
+    "latency_ms": 9143,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "I'd be happy to help with your refund. Could you please provide your order number?",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [],
+      "repetition": 1,
+      "run_id": "43e847b9-abc3-4a04-8040-085c6a4640eb",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T10:00:09.489456+00:00",
+    "dataset_case_id": "test-009",
+    "deterministic_scores": {
+      "citation_precision": 1.0,
+      "citation_recall": 1.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "required_fact_recall": 1.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "07f79a59-3938-44c0-ab26-0cd655a93c9d",
+    "latency_ms": 6065,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "I couldn't process the refund for ORD-1010 because the order was not found in our system (the order service returned a 404 error). Please verify the order number and try again.",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [
+        "0aec1a25-3b16-42b2-8997-385d8c78370b",
+        "1d44f2d8-98ef-4cab-ac8d-bb2db1fb4a9c",
+        "50877548-b5c0-483e-94a1-00fdf414778c",
+        "eed0049b-d7c5-44bb-b872-a7c53225895a",
+        "fc8c447e-3a1a-465f-a8f5-c91f0a01a200"
+      ],
+      "repetition": 1,
+      "run_id": "f73d1a1c-90e0-47bb-9264-9099d0c44f91",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T10:00:16.756171+00:00",
+    "dataset_case_id": "test-010",
+    "deterministic_scores": {
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 0.0,
+      "required_fact_recall": 0.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "53cc0431-c3e6-43bc-9eac-682fb4338307",
+    "latency_ms": 7262,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "I could not process the refund because order ORD-1011 was not found in the order system (404 error). Please verify the order number and try again.",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [
+        "50877548-b5c0-483e-94a1-00fdf414778c",
+        "eed0049b-d7c5-44bb-b872-a7c53225895a",
+        "fc8c447e-3a1a-465f-a8f5-c91f0a01a200",
+        "0aec1a25-3b16-42b2-8997-385d8c78370b",
+        "1d44f2d8-98ef-4cab-ac8d-bb2db1fb4a9c"
+      ],
+      "repetition": 1,
+      "run_id": "33361910-3833-4cd7-b9e0-7a407b4ff9a7",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T10:00:22.208252+00:00",
+    "dataset_case_id": "test-011",
+    "deterministic_scores": {
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 0.0,
+      "required_fact_recall": 0.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "915cf85e-04c0-4f81-8d4b-e1f72bd7498f",
+    "latency_ms": 5447,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "I could not process the refund for ORD-1012. Both the order lookup and the refund eligibility check returned a 404 error, meaning the order could not be found in the system. No refund has been issued. Please verify the order number and try again. I also cannot reliably confirm any delivery status, since no order information is available.",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [
+        "0aec1a25-3b16-42b2-8997-385d8c78370b",
+        "1d44f2d8-98ef-4cab-ac8d-bb2db1fb4a9c",
+        "50877548-b5c0-483e-94a1-00fdf414778c",
+        "fc8c447e-3a1a-465f-a8f5-c91f0a01a200",
+        "eed0049b-d7c5-44bb-b872-a7c53225895a"
+      ],
+      "repetition": 1,
+      "run_id": "64a7ea99-b2bf-450f-9cc7-f21a4be2eb70",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T10:00:40.275315+00:00",
+    "dataset_case_id": "test-012",
+    "deterministic_scores": {
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 0.0,
+      "required_fact_recall": 0.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "2c661fa1-7954-40e4-905b-d1d1757ba412",
+    "latency_ms": 18065,
+    "repetition": 1
+  },
+  {
+    "actual_output": {
+      "citation_ids": [],
+      "configuration_sha": "ce62b4409c5ac4e5e1d3be3b5577e59b123c0d06fd17f590830453a492c43693",
+      "content": "I could not find order ORD-1014 in either the order system or payment system (both returned \"not found\"). Could you please verify the order number and confirm the correct refund amount?",
+      "duplicate_side_effect": false,
+      "final_state": "COMPLETED",
+      "operations": [],
+      "ranked_chunk_ids": [
+        "fc8c447e-3a1a-465f-a8f5-c91f0a01a200",
+        "0aec1a25-3b16-42b2-8997-385d8c78370b",
+        "1d44f2d8-98ef-4cab-ac8d-bb2db1fb4a9c",
+        "eed0049b-d7c5-44bb-b872-a7c53225895a",
+        "50877548-b5c0-483e-94a1-00fdf414778c"
+      ],
+      "repetition": 1,
+      "run_id": "1b755f08-93de-4c96-afe2-3022783c1572",
+      "unapproved_execution": false
+    },
+    "created_at": "2026-09-08T10:03:57.425209+00:00",
+    "dataset_case_id": "test-014",
+    "deterministic_scores": {
+      "citation_precision": 0.0,
+      "citation_recall": 0.0,
+      "final_state_match": false,
+      "forbidden_fact_hit_rate": 0.0,
+      "mrr": 0.0,
+      "ndcg_at_5": 0.0,
+      "precision_at_5": 0.0,
+      "recall_at_5": 0.0,
+      "required_fact_recall": 0.0,
+      "task_success": false
+    },
+    "error": null,
+    "evaluation_run_id": "1e591a28-d522-4702-9695-c550ff41d703",
+    "id": "75043081-897d-41cc-82c3-971805e8b477",
+    "latency_ms": 9622,
+    "repetition": 1
+  }
+]
