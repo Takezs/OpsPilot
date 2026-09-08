@@ -128,8 +128,20 @@ async def _finish_reconciliation(
             reference = outcome.data.get("provider_reference")
             provider_reference = reference if isinstance(reference, str) else None
         elif status == "NOT_REFUNDED":
-            target = OperationStatus.RETRYING
-            event_type = "operation_reconciled_not_executed"
+            # A missing provider record is not evidence that execution is safe
+            # to repeat indefinitely. Keep the bounded recovery path: after
+            # two reconciliation observations, require manual review.
+            latest_attempt = await session.scalar(
+                select(func.max(OperationAttempt.attempt_number)).where(
+                    OperationAttempt.operation_id == operation_id
+                )
+            )
+            if (latest_attempt or 0) >= 4:
+                target = OperationStatus.MANUAL_REVIEW
+                event_type = "operation_reconciliation_retry_limit"
+            else:
+                target = OperationStatus.RETRYING
+                event_type = "operation_reconciled_not_executed"
 
     updated = await session.execute(
         update(Operation)
