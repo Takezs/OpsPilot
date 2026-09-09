@@ -1,5 +1,7 @@
 # OpsPilot Agent 交接说明
 
+> 2026-09-09 最新事实与实际改动以 [直接诊断报告](task18-root-cause-20260909.md) 为准：真实引用链成功；当前评测来源知识 ID 全部缺失，不能断言模型能力故障。评测器三处前置/计数/状态修复已通过定向 64 项，完整隔离门禁 589 passed/4 skipped，前端 19/8 通过；修复镜像已部署本机。保留原 receipt=1 和 320 行结果，不重写历史评分。
+
 > 2026-09-08 最优先：唯一冻结机会已消耗，receipt=1，execution360b3d08-0f2a-4105-87f1-cd02ed8bc93b FAILED。2个Attempt、1次resume后仍同TimeoutError，12/320结果。不得新建receipt、第三次resume、改配置或回滚备份；既有manifest false不能当作未执行。全部证据见docs/task18-frozen-execution-20260908.md及对应报告目录。停止等待督导裁决，未进入发布步骤7/tag/push。
 
 > 2026-09-08 前置部署修复候选门禁完成：独立scratch564 passed/4 skipped，定向102+并发恢复4、frontend19/8、Mypy122、Ruff208文件及0023全链通过。非冻结greeting/refund01各6结果，真实退款三轮seq=11/count=1，配置并发峰值3且重复投递无重复结果，secret canary通过，RC/scratch已清理。完整证据见docs/task18-evaluation-preflight-20260907.md。冻结语料仅静态完整性校验，未正式执行/评分；主receipt=0/case=77/attempt=0，Task17矩阵COMPLETED|60及报告SHA不变。官方send_message_to_thread现可用，阶段报告已送达。候选提交后停止等督导Bugbot及新GO；不得正式执行、步骤7/tag/push。

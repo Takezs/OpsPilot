@@ -1,6 +1,7 @@
 """Public HTTP API-only evaluation case adapter."""
 
 import asyncio
+import uuid
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,7 @@ class PublicEvaluationApi:
         # Refresh short-lived credentials between cases, never elevate the USER
         # workflow to ADMIN. Each request retains its own header dict.
         await self._authenticate()
+        await self.validate_evidence(case)
         top_k = self._configuration.top_k if self._configuration is not None else 5
         ranked_ids: list[str] = []
         if case.relevant_chunk_ids:
@@ -220,7 +222,9 @@ class PublicEvaluationApi:
         operations_value = detail.get("operations", []) if isinstance(detail, dict) else []
         operations = [item for item in operations_value if isinstance(item, dict)]
         final_state = (
-            str(operations[-1].get("status")) if operations else str(detail.get("status", ""))
+            str(operations[-1].get("status"))
+            if operations
+            else str(payload.get("response_kind", "UNKNOWN"))
         )
         deterministic: dict[str, object] = {
             "citation_precision": citation_score.precision,
@@ -290,7 +294,10 @@ class PublicEvaluationApi:
             attempts_value = operation.get("attempts")
             attempts = attempts_value if isinstance(attempts_value, list) else []
             succeeded_attempts = sum(
-                isinstance(item, dict) and item.get("status") == "SUCCEEDED" for item in attempts
+                isinstance(item, dict)
+                and item.get("kind") == "EXECUTION"
+                and item.get("status") == "SUCCEEDED"
+                for item in attempts
             )
             duplicate = succeeded_attempts > 1
             unapproved = status_value == "SUCCEEDED" and approval not in {
@@ -340,6 +347,43 @@ class PublicEvaluationApi:
             },
             deterministic_scores=deterministic,
         )
+
+    async def validate_evidence(self, case: EvaluationCase) -> None:
+        """Reject unavailable gold evidence before spending any model calls.
+
+        Use the evaluated user's authorized public endpoints, never widen scope
+        or substitute a retrieved neighbour for the specified evidence.
+        """
+        for citation in case.expected_citation_ids:
+            try:
+                if not citation.startswith("[DOC:") or not citation.endswith("]"):
+                    raise ValueError
+                document, chunk = citation[5:-1].split("#")
+                document, chunk = str(uuid.UUID(document)), str(uuid.UUID(chunk))
+                response = await self._client.get(
+                    f"/knowledge/documents/{document}", headers=self._headers
+                )
+                response.raise_for_status()
+                detail = response.json()
+                version = detail["version"]
+                if detail["status"] != "READY" or type(version) is not int or version < 1:
+                    raise ValueError
+                response = await self._client.get(
+                    f"/knowledge/documents/{document}/versions/{version}/chunks/{chunk}",
+                    headers=self._headers,
+                )
+                response.raise_for_status()
+                evidence = response.json()
+                if (
+                    evidence["document_id"] != document
+                    or evidence["chunk_id"] != chunk
+                    or evidence["document_version"] != version
+                    or not isinstance(evidence["content"], str)
+                    or not evidence["content"].strip()
+                ):
+                    raise ValueError
+            except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                raise ValueError("evaluation evidence unavailable or incompatible") from None
 
 
 def _citation_ids(value: object) -> list[str]:

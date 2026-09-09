@@ -1,5 +1,7 @@
 # OpsPilot 开发进度
 
+> 2026-09-09 直接诊断更新：真实公开 RAG 链已验证精确引用及仅存在 PG 的随机 code；当前库与评测预期 171 个 Chunk ID 交集为 0。修复评测器证据前置、协调成功误计重复副作用、COMPLETED/ANSWERED 状态混淆，定向 64 passed，Bugbot 无 P0/P1。隔离完整门禁 589 passed/4 skipped，前端 19/8、类型检查/构建、Ruff/Mypy 通过；修复已部署本机。详见 [根因与修复](task18-root-cause-20260909.md)。旧冻结数据和结果未修改，v1.0 发布未批准。
+
 > 2026-09-08 冻结test已执行一次，等待督导裁决：唯一receipt=1，execution360b3d08-0f2a-4105-87f1-cd02ed8bc93b FAILED；首次10结果，同config既有resume一次后12/320，重复TimeoutError，按督导指令停止。缺308，不能宣称完整验收通过。JSON/CSV/HTML确定性导出及全部原始case行已保存；未改模型/Prompt/数据，未清理失败。详见[正式执行报告](task18-frozen-execution-20260908.md)。步骤7/tag/push未开始。
 
 > 2026-09-08 Task18步骤6前置候选修复完成：不可变镜像、文件角色凭据及配置绑定，case级并发3。最终scratch 564 passed/4 skipped（1388.02s），定向102 passed及PG/Redis重复投递/取消/恢复4 passed；Mypy122、Ruff check/format208、frontend19/8及typecheck/build、Alembic0001→0023通过。非冻结greeting和refund01分别6条唯一结果、peak3；refund01三次真实审批退款均OUTCOME_UNKNOWN→RECONCILING→SUCCEEDED、public/PG seq=11连续一致、count=1。隔离资源已清理。督导允许静态解析冻结语料；未通过Runner执行或评分，主receipt=0/case=77/attempt=0、矩阵COMPLETED|60及全部SHA不变。详见[前置验证](task18-evaluation-preflight-20260907.md)。提交独立候选后等待Bugbot及新GO，禁止正式执行、步骤7/tag/push。
