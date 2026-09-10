@@ -1,0 +1,18 @@
+# Pin every local service to the packaged image; never rebuild or pull a moving tag.
+services:
+  postgres:
+    image: ${LOCAL_POSTGRES_IMAGE:?packaged PostgreSQL image required}
+  redis:
+    image: ${LOCAL_REDIS_IMAGE:?packaged Redis image required}
+  web:
+    image: ${LOCAL_WEB_IMAGE:?packaged web image required}
+    build: !reset null
+  order:
+    image: ${LOCAL_ORDER_IMAGE:?packaged order image required}
+    build: !reset null
+  payment:
+    image: ${LOCAL_PAYMENT_IMAGE:?packaged payment image required}
+    build: !reset null
+  email:
+    image: ${LOCAL_EMAIL_IMAGE:?packaged email image required}
+    build: !reset null
