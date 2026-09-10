@@ -1,5 +1,7 @@
 # OpsPilot 开发进度
 
+> 2026-09-10 GitHub 展示交付：用户明确授权更新默认 main（不强推、不创建 v1.0 tag）。新增面向读者的 README、启动与演示指南、真实知识库/检索界面截图；本机包启动验证通过，HTTP 8088=200，全部 Compose 服务健康。原 receipt=1/320 结果保持不变；GitHub 源码发布不等于最终评测批准。
+
 > 2026-09-09 直接诊断更新：真实公开 RAG 链已验证精确引用及仅存在 PG 的随机 code；当前库与评测预期 171 个 Chunk ID 交集为 0。修复评测器证据前置、协调成功误计重复副作用、COMPLETED/ANSWERED 状态混淆，定向 64 passed，Bugbot 无 P0/P1。隔离完整门禁 589 passed/4 skipped，前端 19/8、类型检查/构建、Ruff/Mypy 通过；修复已部署本机。详见 [根因与修复](task18-root-cause-20260909.md)。旧冻结数据和结果未修改，v1.0 发布未批准。
 
 > 2026-09-08 冻结test已执行一次，等待督导裁决：唯一receipt=1，execution360b3d08-0f2a-4105-87f1-cd02ed8bc93b FAILED；首次10结果，同config既有resume一次后12/320，重复TimeoutError，按督导指令停止。缺308，不能宣称完整验收通过。JSON/CSV/HTML确定性导出及全部原始case行已保存；未改模型/Prompt/数据，未清理失败。详见[正式执行报告](task18-frozen-execution-20260908.md)。步骤7/tag/push未开始。

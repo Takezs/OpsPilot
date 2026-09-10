@@ -1,5 +1,7 @@
 # OpsPilot Agent 交接说明
 
+> 2026-09-10 用户交付选择：优先 GitHub 默认 main 展示，已明确授权非强制更新；README/启动指南/真实截图与本机打包脚本纳入交付。禁止随包提交外部凭据、数据卷、模型缓存或用户临时文件；仍不创建 v1.0 tag、不重跑冻结评测。
+
 > 2026-09-09 最新事实与实际改动以 [直接诊断报告](task18-root-cause-20260909.md) 为准：真实引用链成功；当前评测来源知识 ID 全部缺失，不能断言模型能力故障。评测器三处前置/计数/状态修复已通过定向 64 项，完整隔离门禁 589 passed/4 skipped，前端 19/8 通过；修复镜像已部署本机。保留原 receipt=1 和 320 行结果，不重写历史评分。
 
 > 2026-09-08 最优先：唯一冻结机会已消耗，receipt=1，execution360b3d08-0f2a-4105-87f1-cd02ed8bc93b FAILED。2个Attempt、1次resume后仍同TimeoutError，12/320结果。不得新建receipt、第三次resume、改配置或回滚备份；既有manifest false不能当作未执行。全部证据见docs/task18-frozen-execution-20260908.md及对应报告目录。停止等待督导裁决，未进入发布步骤7/tag/push。
